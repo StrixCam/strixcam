@@ -1,0 +1,66 @@
+# Python virtual environments
+.venv/
+env/
+venv/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Compiled C extensions
+*.so
+
+# macOS / Linux / system files
+.DS_Store
+*.swp
+*.swo
+ehthumbs.db
+Icon?
+Thumbs.db
+
+# Editor/IDE configs
+.vscode/
+.idea/
+*.code-workspace
+
+# Log and runtime files
+*.log
+*.pid
+
+# Test output
+htmlcov/
+coverage.xml
+.cache/
+.pytest_cache/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Environment and lock files (managed by uv)
+uv.lock
+poetry.lock
+Pipfile.lock
+
+# Jupyter and notebooks (if you ever use them)
+.ipynb_checkpoints/
+
+# Generated media/output
+output/
+captures/
+videos/
+frames/
+
+# Personal backup files
+*.bak
+*.tmp
+*.old
+
+# Optional: ignore secrets if you ever store keys locally
+.env
+*.key
+*.pem

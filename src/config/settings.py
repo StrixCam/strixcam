@@ -3,8 +3,9 @@ from dataclasses import dataclass, field
 
 @dataclass
 class CameraSettings:
-	resolution: tuple[int, int] = (2304, 1296)
-	frame_rate: int = 56
+	resolution: tuple[int, int] = (1920, 1080)
+	frame_rate: int = 60
+	format: str = 'RGB888'
 
 
 @dataclass
