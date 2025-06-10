@@ -6,9 +6,9 @@ import cv2
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 from adapters.capture.picamera2 import Picamera2Adapter
-from domain.video.cropper import Cropper
-from domain.video.postprocessor import postprocess_frame
-from domain.video.preprocessor import preprocess_frame
+from domain.video.processor.cropper import Cropper
+from domain.video.processor.postprocessor import postprocess_frame
+from domain.video.processor.preprocessor import preprocess_frame
 
 
 def test_single_camera():
