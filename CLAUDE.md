@@ -60,6 +60,24 @@ clang-tidy -p build/debug src/path/to/file.cpp
 
 `compile_commands.json` is exported automatically to `build/<preset>/` and symlinked by clangd.
 
+## CI/CD & releasing
+
+PR-gated, Conventional-Commit driven. CI runs **inside the devcontainer** (the cross-build env), via `devcontainers/ci`. Two workflows:
+
+- `.github/workflows/ci.yml` — **pull requests only**. Required status checks on `main`: `format` (clang-format `--dry-run --Werror`) and `test` (cross-build the `test` preset + `ctest` under qemu; hardware-bound tests are excluded by name — they only pass on-device). `tidy` (clang-tidy) also runs but is **advisory** (`continue-on-error`) pending a clang-tidy cross-sysroot fix. Each job frees ~30GB host disk before building the ~37GB JetPack image.
+- `.github/workflows/release.yml` — on **push to `main`** (a merge) + manual `workflow_dispatch`. Conventional-commit bump (`feat:` → minor, `fix:`/`perf:` → patch, `BREAKING`/`type!:` → major, docs/chore-only → **skip**) → tag `vX.Y.Z` + GitHub Release, then cross-builds the production binary and uploads `sst_cam_firmware-<tag>-aarch64`. Default `GITHUB_TOKEN` only — no PAT/App.
+
+### Branch + commit + tag rules
+- `main` is protected: no direct push; PR + 1 approval + green `format`/`test` to merge.
+- Tags `v*` are immutable semver (no delete/move/force-push).
+- Use Conventional Commits. The **squash-merge subject** is what `release.yml` reads to choose the bump — a non-conventional subject cuts no release.
+
+### Releasing
+- Normal: merge a `feat:`/`fix:`/… PR → release auto-cuts on merge with the aarch64 binary.
+- Manual: `gh workflow run release.yml -f bump=minor` (or `-f version=vX.Y.Z`).
+- The devcontainer build is heavy and can flake on hosted runners — re-run with `gh run rerun <id> --failed` (a self-hosted runner is the durable fix).
+- Install/update on a Jetson: `deploy/install.sh` (see `deploy/README.md`).
+
 ## Dependencies
 
 **Conan** (portable, via `conanfile.py`): `nlohmann_json`, `spdlog`, `fmt`, `gtest` (test-only).
