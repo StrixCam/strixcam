@@ -1,0 +1,113 @@
+# =============================================================================
+# Publish the devcontainer image to GHCR so the PR CI jobs (format/tidy/test)
+# can reuse a prebuilt, digest-pinned image instead of unpacking the ~37 GB L4T
+# sysroot every run.
+#
+# SECURITY MODEL (do not weaken):
+#   - Triggers ONLY on push to main touching .devcontainer/** (+ manual dispatch).
+#     There is NO `pull_request` trigger, so a fork PR can never obtain the
+#     `packages: write` token or publish an image.
+#   - `packages: write` is granted at the JOB level, not workflow-wide.
+#   - The base image is digest-pinned in .devcontainer/Dockerfile; this job
+#     records the PUBLISHED image's digest in .devcontainer/image-digest so the
+#     CI consumers can pin by digest (a mutable-tag overwrite then can't feed a
+#     poisoned image — e.g. a clang-tidy that always exits 0 — to every job).
+#
+# MEASUREMENT GATE (see the plan / CLAUDE.md): the CI jobs are NOT yet rewired to
+# consume this image. Before wiring `imageName`/`cacheFrom` into ci.yml, MEASURE
+# a real pull's wall-time + peak disk on a hosted runner with free-disk applied.
+# An ephemeral runner that already needs jlumbroso/free-disk-space to fit the
+# *build* may ENOSPC on the ~37 GB *pull*, or not beat the per-run rebuild. If it
+# doesn't clearly win, keep the per-run build (the documented rollback) and leave
+# this workflow publishing for later.
+# =============================================================================
+name: devcontainer-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".devcontainer/**"
+  workflow_dispatch:
+
+# Note: a workflow-level permissions block is intentionally omitted so each job
+# can request the narrowest set it needs.
+
+env:
+  IMAGE: ghcr.io/scoutsporttechnology/sst-cam-firmware-devcontainer
+
+jobs:
+  publish:
+    name: build + push devcontainer image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # only to commit .devcontainer/image-digest back to main
+      packages: write # only to push the image to GHCR
+    steps:
+      # The ~37 GB L4T sysroot unpack exhausts a stock hosted runner's disk.
+      - name: Free up disk space (host)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Checkout (with proto submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build the devcontainer exactly as VS Code / CI does, and push it.
+      - name: Build + push devcontainer image
+        uses: devcontainers/ci@v0.3
+        with:
+          imageName: ${{ env.IMAGE }}
+          imageTag: latest
+          push: always
+
+      - name: Resolve published digest
+        id: digest
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect "${IMAGE}:latest" \
+            --format '{{.Manifest.Digest}}')
+          echo "Published ${IMAGE}@${digest}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          echo "${IMAGE}@${digest}" > .devcontainer/image-digest
+
+      # Commit the digest back to main so CI can pin by it. The branch ruleset
+      # must allow github-actions[bot] to push (same model as release.yml's tag
+      # ruleset bypass). If protected and the push is rejected, the digest is
+      # still in the run summary above for a manual bump.
+      - name: Record digest on main
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- .devcontainer/image-digest; then
+            echo "image-digest unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .devcontainer/image-digest
+          git commit -m "chore(devcontainer): record published image digest [skip ci]"
+          git push origin HEAD:main
+
+      - name: Summary
+        run: |
+          {
+            echo "### devcontainer image published"
+            echo ""
+            echo "- \`${IMAGE}@${{ steps.digest.outputs.digest }}\`"
+            echo ""
+            echo "CI consumers are not yet wired to this image — measure pull"
+            echo "wall-time + peak disk on a hosted runner before rewiring ci.yml"
+            echo "(see the workflow header / plan)."
+          } >> "$GITHUB_STEP_SUMMARY"

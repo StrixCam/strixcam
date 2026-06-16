@@ -1,0 +1,7 @@
+# Digest of the last devcontainer image published to GHCR by
+# .github/workflows/devcontainer-image.yml. Auto-written by that workflow on push
+# to main touching .devcontainer/**. The CI consumers (format/tidy/test) will pin
+# imageName/cacheFrom by this digest ONCE the pull is measured to beat the per-run
+# rebuild (see the workflow header). Until the first publish runs, this is a
+# placeholder and nothing consumes it.
+PENDING_FIRST_PUBLISH

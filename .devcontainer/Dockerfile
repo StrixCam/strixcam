@@ -1,4 +1,7 @@
-FROM nvcr.io/nvidia/jetpack-linux-aarch64-crosscompile-x86:6.1
+# Digest-pinned so a mutable-tag overwrite upstream can't silently feed a
+# different base into the cross-build / CI image (supply-chain hardening, U7).
+# To bump: pull the new :6.1, read its sha256 (docker images --digests), update.
+FROM nvcr.io/nvidia/jetpack-linux-aarch64-crosscompile-x86:6.1@sha256:6d5f2e4e3cf72e895032fbfc2753c4a94143897236c3ab9db5f1f1b230c8aa3e
 
 # ── Install build tools (as root) ───────────────────────────────────────────────
 # Add Kitware repo to get CMake >= 3.24 (Ubuntu 22.04 ships 3.22).
