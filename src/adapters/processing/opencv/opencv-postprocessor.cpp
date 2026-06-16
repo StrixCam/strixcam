@@ -29,16 +29,16 @@ auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
         spdlog::warn("OpenCvPostprocessor: only CPU memory is supported");
         return std::nullopt;
     }
-    const auto w = source.geometry.width;
-    const auto h = source.geometry.height;
-    if (w == 0 || h == 0) {
+    const auto src_width = source.geometry.width;
+    const auto src_height = source.geometry.height;
+    if (src_width == 0 || src_height == 0) {
         spdlog::warn("OpenCvPostprocessor: zero source geometry");
         return std::nullopt;
     }
-    if (crop.width == 0 || crop.height == 0 || crop.x + crop.width > w ||
-        crop.y + crop.height > h) {
+    if (crop.width == 0 || crop.height == 0 || crop.x + crop.width > src_width ||
+        crop.y + crop.height > src_height) {
         spdlog::warn("OpenCvPostprocessor: crop {{x={},y={},w={},h={}}} out of bounds for {}x{}",
-                     crop.x, crop.y, crop.width, crop.height, w, h);
+                     crop.x, crop.y, crop.width, crop.height, src_width, src_height);
         return std::nullopt;
     }
     if (config_.output_width == 0 || config_.output_height == 0) {

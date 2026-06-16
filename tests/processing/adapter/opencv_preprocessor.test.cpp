@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <utility>
@@ -18,91 +19,131 @@ using sst::processing::PreprocessConfig;
 using sst::tests::processing::MakeBgr8Frame;
 using sst::tests::processing::MakeNv12Frame;
 
+namespace {
+// Neutral mid-scale chroma for synthetic NV12 frames.
+constexpr std::uint8_t kNeutralChroma = 128;
+// Threshold separating the binary-path "low" and "high" luminance cases.
+constexpr std::uint8_t kMidThreshold = 127;
+
+// Asserts every pixel in `frame`'s single plane equals `value`.
+void ExpectPlaneAllEqual(const sst::capture::Frame& frame, std::uint8_t value) {
+    for (std::size_t i = 0; i < frame.planes[0].size; ++i) {
+        EXPECT_EQ(frame.planes[0].data[i], value);
+    }
+}
+
+// Asserts every pixel in `frame`'s single plane is within `tol` of `value`.
+void ExpectPlaneAllNear(const sst::capture::Frame& frame, std::uint8_t value, int tol) {
+    for (std::size_t i = 0; i < frame.planes[0].size; ++i) {
+        EXPECT_NEAR(frame.planes[0].data[i], value, tol);
+    }
+}
+}  // namespace
+
 TEST(OpenCvPreprocessorTest, RejectsNonNv12) {
-    OpenCvPreprocessor pre{PreprocessConfig{.ai_width = 32, .ai_height = 32}};
-    auto out = pre.Process(MakeBgr8Frame(64, 64, 0, 0, 0));
+    constexpr std::uint32_t kAiSize = 32;
+    constexpr std::uint32_t kSrcSize = 64;
+    OpenCvPreprocessor pre{PreprocessConfig{.ai_width = kAiSize, .ai_height = kAiSize}};
+    auto out = pre.Process(MakeBgr8Frame(kSrcSize, kSrcSize, 0, 0, 0));
     EXPECT_FALSE(out.has_value());
 }
 
 TEST(OpenCvPreprocessorTest, GrayscalePathDimensionsAndFormat) {
-    OpenCvPreprocessor pre{
-        PreprocessConfig{.ai_width = 32, .ai_height = 16, .ai_color_mode = ColorMode::Grayscale}};
-    auto frame = MakeNv12Frame(64, 32, /*y=*/128, /*u=*/128, /*v=*/128);
+    constexpr std::uint32_t kAiWidth = 32;
+    constexpr std::uint32_t kAiHeight = 16;
+    constexpr std::uint32_t kSrcWidth = 64;
+    constexpr std::uint32_t kSrcHeight = 32;
+    constexpr std::uint8_t kLuma = 128;
+    constexpr int kTol = 2;
+    OpenCvPreprocessor pre{PreprocessConfig{
+        .ai_width = kAiWidth, .ai_height = kAiHeight, .ai_color_mode = ColorMode::Grayscale}};
+    auto frame = MakeNv12Frame(kSrcWidth, kSrcHeight, kLuma, kNeutralChroma, kNeutralChroma);
 
     auto out = pre.Process(frame);
     ASSERT_TRUE(out.has_value());
 
     // source_frame is a value-copy of raw — still NV12.
     EXPECT_EQ(out->source_frame.format, sst::common::PixelFormat::NV12);
-    EXPECT_EQ(out->source_frame.geometry.width, 64U);
-    EXPECT_EQ(out->source_frame.geometry.height, 32U);
+    EXPECT_EQ(out->source_frame.geometry.width, kSrcWidth);
+    EXPECT_EQ(out->source_frame.geometry.height, kSrcHeight);
     EXPECT_EQ(out->source_frame.frame_id, frame.frame_id);
 
     // ai_frame is grayscale at the configured size.
     EXPECT_EQ(out->ai_frame.format, sst::common::PixelFormat::GRAY8);
-    EXPECT_EQ(out->ai_frame.geometry.width, 32U);
-    EXPECT_EQ(out->ai_frame.geometry.height, 16U);
+    EXPECT_EQ(out->ai_frame.geometry.width, kAiWidth);
+    EXPECT_EQ(out->ai_frame.geometry.height, kAiHeight);
     ASSERT_EQ(out->ai_frame.planes.size(), 1U);
-    EXPECT_EQ(out->ai_frame.planes[0].stride, 32U);
+    EXPECT_EQ(out->ai_frame.planes[0].stride, kAiWidth);
     EXPECT_EQ(out->ai_frame.frame_id, frame.frame_id);
     EXPECT_EQ(out->ai_frame.captured_at, frame.captured_at);
 
-    // All Y pixels were 128, so ai pixels should also be ~128.
-    for (std::size_t i = 0; i < out->ai_frame.planes[0].size; ++i) {
-        EXPECT_NEAR(out->ai_frame.planes[0].data[i], 128, 2);
-    }
+    // All Y pixels were kLuma, so ai pixels should also be ~kLuma.
+    ExpectPlaneAllNear(out->ai_frame, kLuma, kTol);
 }
 
 TEST(OpenCvPreprocessorTest, BinaryPathThresholdsHigh) {
-    OpenCvPreprocessor pre{PreprocessConfig{.ai_width = 16,
-                                            .ai_height = 16,
+    constexpr std::uint32_t kAiSize = 16;
+    constexpr std::uint32_t kSrcSize = 32;
+    constexpr std::uint8_t kHighLuma = 200;
+    constexpr std::uint8_t kWhite = 255;
+    OpenCvPreprocessor pre{PreprocessConfig{.ai_width = kAiSize,
+                                            .ai_height = kAiSize,
                                             .ai_color_mode = ColorMode::Binary,
-                                            .binary_threshold = 127}};
-    auto out = pre.Process(MakeNv12Frame(32, 32, /*y=*/200, /*u=*/128, /*v=*/128));
+                                            .binary_threshold = kMidThreshold}};
+    auto out = pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kHighLuma, kNeutralChroma, kNeutralChroma));
     ASSERT_TRUE(out.has_value());
     EXPECT_EQ(out->ai_frame.format, sst::common::PixelFormat::GRAY8);
-    for (std::size_t i = 0; i < out->ai_frame.planes[0].size; ++i) {
-        EXPECT_EQ(out->ai_frame.planes[0].data[i], 255);
-    }
+    ExpectPlaneAllEqual(out->ai_frame, kWhite);
 }
 
 TEST(OpenCvPreprocessorTest, BinaryPathThresholdsLow) {
-    OpenCvPreprocessor pre{PreprocessConfig{.ai_width = 16,
-                                            .ai_height = 16,
+    constexpr std::uint32_t kAiSize = 16;
+    constexpr std::uint32_t kSrcSize = 32;
+    constexpr std::uint8_t kLowLuma = 50;
+    OpenCvPreprocessor pre{PreprocessConfig{.ai_width = kAiSize,
+                                            .ai_height = kAiSize,
                                             .ai_color_mode = ColorMode::Binary,
-                                            .binary_threshold = 127}};
-    auto out = pre.Process(MakeNv12Frame(32, 32, /*y=*/50, /*u=*/128, /*v=*/128));
+                                            .binary_threshold = kMidThreshold}};
+    auto out = pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kLowLuma, kNeutralChroma, kNeutralChroma));
     ASSERT_TRUE(out.has_value());
-    for (std::size_t i = 0; i < out->ai_frame.planes[0].size; ++i) {
-        EXPECT_EQ(out->ai_frame.planes[0].data[i], 0);
-    }
+    ExpectPlaneAllEqual(out->ai_frame, 0);
 }
 
 TEST(OpenCvPreprocessorTest, RgbPathChannelsAndOrder) {
-    OpenCvPreprocessor pre{
-        PreprocessConfig{.ai_width = 8, .ai_height = 8, .ai_color_mode = ColorMode::RGB}};
+    constexpr std::uint32_t kAiSize = 8;
+    constexpr std::uint32_t kSrcSize = 32;
     // Red-ish in YUV (BT.601): Y=76, U=84, V=255.
-    auto out = pre.Process(MakeNv12Frame(32, 32, /*y=*/76, /*u=*/84, /*v=*/255));
+    constexpr std::uint8_t kRedLuma = 76;
+    constexpr std::uint8_t kRedU = 84;
+    constexpr std::uint8_t kRedV = 255;
+    constexpr int kRedHighFloor = 150;
+    constexpr int kBlueLowCeil = 80;
+    OpenCvPreprocessor pre{
+        PreprocessConfig{.ai_width = kAiSize, .ai_height = kAiSize, .ai_color_mode = ColorMode::RGB}};
+    auto out = pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kRedLuma, kRedU, kRedV));
     ASSERT_TRUE(out.has_value());
     EXPECT_EQ(out->ai_frame.format, sst::common::PixelFormat::RGB8);
     ASSERT_EQ(out->ai_frame.planes.size(), 1U);
-    EXPECT_EQ(out->ai_frame.planes[0].stride, 8U * 3U);
+    EXPECT_EQ(out->ai_frame.planes[0].stride, kAiSize * 3U);
 
-    const auto* px = out->ai_frame.planes[0].data;
+    const auto* pixels = out->ai_frame.planes[0].data;
     // R channel should be high, B channel should be low.
-    EXPECT_GT(px[0], 150);  // R
-    EXPECT_LT(px[2], 80);   // B
+    EXPECT_GT(pixels[0], kRedHighFloor);  // R
+    EXPECT_LT(pixels[2], kBlueLowCeil);   // B
 }
 
 TEST(OpenCvPreprocessorTest, StridedNv12RgbCopyFallback) {
+    constexpr std::uint32_t kAiSize = 16;
+    constexpr std::uint32_t kWidth = 32;
+    constexpr std::uint32_t kHeight = 32;
+    constexpr std::uint32_t kStridePad = 16;
+    constexpr std::uint32_t kStride = kWidth + kStridePad;
+    constexpr std::uint8_t kLuma = 100;
     OpenCvPreprocessor pre{
-        PreprocessConfig{.ai_width = 16, .ai_height = 16, .ai_color_mode = ColorMode::RGB}};
-    constexpr std::uint32_t kW = 32;
-    constexpr std::uint32_t kH = 32;
-    constexpr std::uint32_t kStride = kW + 16;
+        PreprocessConfig{.ai_width = kAiSize, .ai_height = kAiSize, .ai_color_mode = ColorMode::RGB}};
 
-    auto strided = MakeNv12Frame(kW, kH, 100, 128, 128, kStride);
-    auto contig = MakeNv12Frame(kW, kH, 100, 128, 128);
+    auto strided = MakeNv12Frame(kWidth, kHeight, kLuma, kNeutralChroma, kNeutralChroma, kStride);
+    auto contig = MakeNv12Frame(kWidth, kHeight, kLuma, kNeutralChroma, kNeutralChroma);
 
     auto out_strided = pre.Process(strided);
     auto out_contig = pre.Process(contig);
@@ -118,8 +159,10 @@ TEST(OpenCvPreprocessorTest, StridedNv12RgbCopyFallback) {
 }
 
 TEST(OpenCvPreprocessorTest, SourceFrameSharesOwnerWithRaw) {
-    OpenCvPreprocessor pre{PreprocessConfig{.ai_width = 16, .ai_height = 16}};
-    auto raw = MakeNv12Frame(32, 32, 128, 128, 128);
+    constexpr std::uint32_t kAiSize = 16;
+    constexpr std::uint32_t kSrcSize = 32;
+    OpenCvPreprocessor pre{PreprocessConfig{.ai_width = kAiSize, .ai_height = kAiSize}};
+    auto raw = MakeNv12Frame(kSrcSize, kSrcSize, kNeutralChroma, kNeutralChroma, kNeutralChroma);
 
     const auto before = raw.owner.use_count();
     auto out = pre.Process(raw);
@@ -133,9 +176,13 @@ TEST(OpenCvPreprocessorTest, SourceFrameSharesOwnerWithRaw) {
 }
 
 TEST(OpenCvPreprocessorTest, AiFrameOwnerOutlivesRaw) {
-    OpenCvPreprocessor pre{PreprocessConfig{.ai_width = 16, .ai_height = 16}};
+    constexpr std::uint32_t kAiSize = 16;
+    constexpr std::uint32_t kSrcSize = 32;
+    constexpr std::uint8_t kLuma = 200;
+    constexpr int kTol = 2;
+    OpenCvPreprocessor pre{PreprocessConfig{.ai_width = kAiSize, .ai_height = kAiSize}};
     auto out = [&] {
-        auto raw = MakeNv12Frame(32, 32, 200, 128, 128);
+        auto raw = MakeNv12Frame(kSrcSize, kSrcSize, kLuma, kNeutralChroma, kNeutralChroma);
         auto bundle = pre.Process(raw);
         // Manually drop the source_frame's owner so the GstBuffer-equivalent
         // backing is gone. ai_frame must still be readable.
@@ -145,9 +192,7 @@ TEST(OpenCvPreprocessorTest, AiFrameOwnerOutlivesRaw) {
 
     ASSERT_TRUE(out.has_value());
     ASSERT_NE(out->ai_frame.owner, nullptr);
-    for (std::size_t i = 0; i < out->ai_frame.planes[0].size; ++i) {
-        EXPECT_NEAR(out->ai_frame.planes[0].data[i], 200, 2);
-    }
+    ExpectPlaneAllNear(out->ai_frame, kLuma, kTol);
 }
 
 }  // namespace sst::adapters::processing

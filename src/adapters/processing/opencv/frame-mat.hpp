@@ -24,7 +24,7 @@ namespace sst::adapters::processing {
 //
 // Returns std::nullopt on invalid input: wrong format, wrong plane count,
 // zero or odd geometry.
-auto WrapNv12(const sst::capture::Frame& f) -> std::optional<cv::Mat>;
+auto WrapNv12(const sst::capture::Frame& frame) -> std::optional<cv::Mat>;
 
 // Build a Frame whose `owner` shared_ptr pins a freshly allocated
 // std::vector<uint8_t> that holds a deep copy of `mat`.
@@ -37,6 +37,6 @@ auto WrapNv12(const sst::capture::Frame& f) -> std::optional<cv::Mat>;
 // Format validity is the caller's responsibility (e.g. don't pass a 1-channel
 // mat with fmt = BGR8). Non-CV_8U mats are rejected via assertion.
 auto MakeOwnedFrame(const cv::Mat& mat, sst::common::PixelFormat fmt, std::uint64_t frame_id,
-                    sst::common::Timestamp ts) -> sst::capture::Frame;
+                    sst::common::Timestamp captured_at) -> sst::capture::Frame;
 
 }  // namespace sst::adapters::processing

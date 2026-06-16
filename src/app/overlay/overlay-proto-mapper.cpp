@@ -6,8 +6,8 @@ namespace sst::overlay {
 
 namespace {
 
-auto MapShape(sst_cam::OverlayShape s) -> OverlayShape {
-    switch (s) {
+auto MapShape(sst_cam::OverlayShape shape) -> OverlayShape {
+    switch (shape) {
         case sst_cam::SHAPE_RECT:
             return OverlayShape::kRect;
         case sst_cam::SHAPE_TEXT:
@@ -19,8 +19,8 @@ auto MapShape(sst_cam::OverlayShape s) -> OverlayShape {
     }
 }
 
-auto MapBinding(sst_cam::OverlayBinding b) -> OverlayBinding {
-    switch (b) {
+auto MapBinding(sst_cam::OverlayBinding binding) -> OverlayBinding {
+    switch (binding) {
         case sst_cam::BINDING_SCORE_A:
             return OverlayBinding::kScoreA;
         case sst_cam::BINDING_SCORE_B:
@@ -40,8 +40,8 @@ auto MapBinding(sst_cam::OverlayBinding b) -> OverlayBinding {
     }
 }
 
-auto MapAlign(sst_cam::TextAlign a) -> TextAlign {
-    switch (a) {
+auto MapAlign(sst_cam::TextAlign align) -> TextAlign {
+    switch (align) {
         case sst_cam::TEXT_ALIGN_CENTER:
             return TextAlign::kCenter;
         case sst_cam::TEXT_ALIGN_RIGHT:
@@ -51,46 +51,47 @@ auto MapAlign(sst_cam::TextAlign a) -> TextAlign {
     }
 }
 
-auto MapWeight(sst_cam::FontWeight w) -> FontWeight {
-    return w == sst_cam::FONT_WEIGHT_BOLD ? FontWeight::kBold : FontWeight::kNormal;
+auto MapWeight(sst_cam::FontWeight weight) -> FontWeight {
+    return weight == sst_cam::FONT_WEIGHT_BOLD ? FontWeight::kBold : FontWeight::kNormal;
 }
 
-auto MapRect(const sst_cam::OverlayRect& r) -> OverlayRect {
-    return OverlayRect{.x1 = r.x1(), .y1 = r.y1(), .x2 = r.x2(), .y2 = r.y2(), .z = r.z()};
+auto MapRect(const sst_cam::OverlayRect& rect) -> OverlayRect {
+    return OverlayRect{
+        .x1 = rect.x1(), .y1 = rect.y1(), .x2 = rect.x2(), .y2 = rect.y2(), .z = rect.z()};
 }
 
-auto MapStyle(const sst_cam::OverlayStyle& s) -> OverlayStyle {
+auto MapStyle(const sst_cam::OverlayStyle& style) -> OverlayStyle {
     // proto3 `optional`: absent opacity => documented default 1.0 (opaque), not
     // the scalar zero-value (0.0 = fully transparent). See overlay-rendering.md
     // "Element defaults". Clamp to [0,1] here, the single proto->domain
     // translation point: an out-of-range alpha reaching cairo_paint_with_alpha
     // puts the cairo_t into a permanent error state, silently dropping every
     // later element in the frame.
-    const float opacity = s.has_opacity() ? s.opacity() : 1.0F;
+    const float opacity = style.has_opacity() ? style.opacity() : 1.0F;
     return OverlayStyle{
-        .fill_color = s.fill_color(),
-        .text_color = s.text_color(),
+        .fill_color = style.fill_color(),
+        .text_color = style.text_color(),
         .opacity = std::clamp(opacity, 0.0F, 1.0F),
-        .corner_radius = s.corner_radius(),
-        .font_family = s.font_family(),
-        .font_size = s.font_size(),
-        .text_align = MapAlign(s.text_align()),
-        .font_weight = MapWeight(s.font_weight()),
-        .static_text = s.static_text(),
+        .corner_radius = style.corner_radius(),
+        .font_family = style.font_family(),
+        .font_size = style.font_size(),
+        .text_align = MapAlign(style.text_align()),
+        .font_weight = MapWeight(style.font_weight()),
+        .static_text = style.static_text(),
     };
 }
 
-auto MapElement(const sst_cam::OverlayElement& e) -> OverlayElement {
+auto MapElement(const sst_cam::OverlayElement& element) -> OverlayElement {
     return OverlayElement{
-        .id = e.id(),
-        .shape = MapShape(e.shape()),
-        .bounds = MapRect(e.bounds()),
-        .style = MapStyle(e.style()),
-        .binding = MapBinding(e.binding()),
+        .id = element.id(),
+        .shape = MapShape(element.shape()),
+        .bounds = MapRect(element.bounds()),
+        .style = MapStyle(element.style()),
+        .binding = MapBinding(element.binding()),
         // proto3 `optional`: absent visible => documented default true (renders),
         // not the scalar zero-value (false = hidden). See overlay-rendering.md
         // "Element defaults".
-        .visible = e.has_visible() ? e.visible() : true,
+        .visible = element.has_visible() ? element.visible() : true,
     };
 }
 

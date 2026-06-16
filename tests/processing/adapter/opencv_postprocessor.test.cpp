@@ -16,6 +16,24 @@ using sst::processing::PostprocessConfig;
 using sst::tests::processing::MakeBgr8Frame;
 using sst::tests::processing::MakeNv12Frame;
 
+// Number of interleaved channels in a BGR8/RGB8 pixel. Used to compute byte
+// offsets into the packed output plane.
+constexpr std::size_t kBgrChannels = 3;
+
+// Computes the byte offset of pixel (col, row) within a packed,
+// `channels`-per-pixel image of the given row width. All arithmetic is done in
+// std::size_t so the multiplication cannot overflow / implicitly widen from a
+// narrower type when used as a pointer offset.
+constexpr auto PixelOffset(std::size_t col, std::size_t row, std::size_t width,
+                           std::size_t channels) -> std::size_t {
+    return ((row * width) + col) * channels;
+}
+
+// NOLINTBEGIN(readability-magic-numbers)
+// The literals below are self-evident synthetic test data: frame/crop
+// dimensions, output resolutions, packed YUV/BGR byte values, and pixel sample
+// indices. Naming each one would obscure rather than clarify the test intent.
+
 TEST(OpenCvPostprocessorTest, RejectsNonNv12) {
     OpenCvPostprocessor post{PostprocessConfig{.output_width = 32, .output_height = 32}};
     auto out = post.Process(MakeBgr8Frame(64, 64, 0, 0, 0), CropRect{0, 0, 32, 32});
@@ -47,7 +65,7 @@ TEST(OpenCvPostprocessorTest, CropAndResizeProducesExpectedDimsAndFormat) {
     EXPECT_EQ(out->planes[0].size, 50U * 50U * 3U);
 
     // Sample center pixel: B low, R high (BGR order).
-    const auto* center = out->planes[0].data + (25 * 50 + 25) * 3;
+    const auto* center = out->planes[0].data + PixelOffset(25, 25, 50, kBgrChannels);
     EXPECT_LT(center[0], 80);   // B
     EXPECT_GT(center[2], 150);  // R
 }
@@ -66,11 +84,11 @@ TEST(OpenCvPostprocessorTest, RespectsSourceStride) {
 
     // Sample center pixel of both — strided should match contig within
     // a small tolerance (chroma upsampling can vary at boundaries).
-    const auto* a = out_strided->planes[0].data + (8 * 16 + 8) * 3;
-    const auto* b = out_contig->planes[0].data + (8 * 16 + 8) * 3;
-    EXPECT_NEAR(a[0], b[0], 2);
-    EXPECT_NEAR(a[1], b[1], 2);
-    EXPECT_NEAR(a[2], b[2], 2);
+    const auto* strided_px = out_strided->planes[0].data + PixelOffset(8, 8, 16, kBgrChannels);
+    const auto* contig_px = out_contig->planes[0].data + PixelOffset(8, 8, 16, kBgrChannels);
+    EXPECT_NEAR(strided_px[0], contig_px[0], 2);
+    EXPECT_NEAR(strided_px[1], contig_px[1], 2);
+    EXPECT_NEAR(strided_px[2], contig_px[2], 2);
 }
 
 TEST(OpenCvPostprocessorTest, OutputFrameOwnsBuffer) {
@@ -109,5 +127,6 @@ TEST(OpenCvPostprocessorTest, MetadataPropagated) {
     EXPECT_EQ(out->frame_id, src.frame_id);
     EXPECT_EQ(out->captured_at, src.captured_at);
 }
+// NOLINTEND(readability-magic-numbers)
 
 }  // namespace sst::adapters::processing
