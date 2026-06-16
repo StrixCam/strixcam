@@ -92,11 +92,11 @@ It runs `scripts/fix.sh` on staged C/C++ files and re-stages what it rewrote.
 
 PR-gated, Conventional-Commit driven. CI runs **inside the devcontainer** (the cross-build env), via `devcontainers/ci`. Two workflows:
 
-- `.github/workflows/ci.yml` — **pull requests only**. Required status checks on `main`: `format` (clang-format `--dry-run --Werror`) and `test` (cross-build the `test` preset + `ctest` under qemu; hardware-bound tests are excluded by name — they only pass on-device). `tidy` (clang-tidy) also runs but is **advisory** (`continue-on-error`) pending a clang-tidy cross-sysroot fix. Each job frees ~30GB host disk before building the ~37GB JetPack image.
+- `.github/workflows/ci.yml` — **pull requests only**. Required status checks on `main`: `format` (clang-format `--dry-run --Werror`), `test` (cross-build the `test` preset + `ctest` under qemu; hardware-bound tests are excluded by name — they only pass on-device), and `tidy` (clang-tidy). `tidy` is now a **hard gate**: the cross-toolchain header flags live in `scripts/tidy-args.sh`, the tree is clean under the full check set, and `.clang-tidy` promotes every diagnostic to an error (`WarningsAsErrors: '*'`) — a new lint violation fails the PR. clang-tidy is version-locked to `clang-tidy-14`. Auto-fix fixable findings dev-side with `scripts/fix.sh` before pushing (CI is verify-only). Each job frees ~30GB host disk before building the ~37GB JetPack image.
 - `.github/workflows/release.yml` — on **push to `main`** (a merge) + manual `workflow_dispatch`. Conventional-commit bump (`feat:` → minor, `fix:`/`perf:` → patch, `BREAKING`/`type!:` → major, docs/chore-only → **skip**) → tag `vX.Y.Z` + GitHub Release, then cross-builds the production binary and uploads `sst_cam_firmware-<tag>-aarch64`. Default `GITHUB_TOKEN` only — no PAT/App.
 
 ### Branch + commit + tag rules
-- `main` is protected: no direct push; PR + 1 approval + green `format`/`test` to merge.
+- `main` is protected: no direct push; PR + 1 approval + green `format`/`tidy`/`test` to merge.
 - Tags `v*` are immutable semver (no delete/move/force-push).
 - Use Conventional Commits. The **squash-merge subject** is what `release.yml` reads to choose the bump — a non-conventional subject cuts no release.
 
