@@ -18,9 +18,9 @@ constexpr const char* kMp4Extension = ".mp4";
 constexpr const char* kRawExtension = ".nv12";
 
 auto LastWriteUnix(const fs::path& path) -> std::uint64_t {
-    std::error_code ec;
-    const auto ftime = fs::last_write_time(path, ec);
-    if (ec) {
+    std::error_code err;
+    const auto ftime = fs::last_write_time(path, err);
+    if (err) {
         return 0;
     }
     // Approximate: map file_clock to system_clock seconds since epoch.
@@ -36,14 +36,14 @@ DownloadServer::DownloadServer(fs::path video_root, Clock clock)
 
 auto DownloadServer::Enumerate() const -> std::vector<RecordingSummary> {
     std::vector<RecordingSummary> out;
-    std::error_code ec;
-    if (!fs::exists(video_root_, ec)) {
+    std::error_code err;
+    if (!fs::exists(video_root_, err)) {
         return out;
     }
-    for (auto it = fs::recursive_directory_iterator(video_root_, ec);
-         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        const fs::path& path = it->path();
-        if (!it->is_regular_file(ec)) {
+    for (auto entry = fs::recursive_directory_iterator(video_root_, err);
+         !err && entry != fs::recursive_directory_iterator(); entry.increment(err)) {
+        const fs::path& path = entry->path();
+        if (!entry->is_regular_file(err)) {
             continue;
         }
         const auto ext = path.extension();
@@ -77,15 +77,15 @@ auto DownloadServer::Enumerate() const -> std::vector<RecordingSummary> {
 
 auto DownloadServer::ResolveRecordingPath(const std::string& recording_id) const
     -> std::optional<fs::path> {
-    std::error_code ec;
-    if (recording_id.empty() || !fs::exists(video_root_, ec)) {
+    std::error_code err;
+    if (recording_id.empty() || !fs::exists(video_root_, err)) {
         return std::nullopt;
     }
-    for (auto it = fs::recursive_directory_iterator(video_root_, ec);
-         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        const fs::path& path = it->path();
+    for (auto entry = fs::recursive_directory_iterator(video_root_, err);
+         !err && entry != fs::recursive_directory_iterator(); entry.increment(err)) {
+        const fs::path& path = entry->path();
         const auto ext = path.extension();
-        if (it->is_regular_file(ec) && (ext == kMp4Extension || ext == kRawExtension) &&
+        if (entry->is_regular_file(err) && (ext == kMp4Extension || ext == kRawExtension) &&
             path.stem().string() == recording_id) {
             return path;
         }
@@ -113,15 +113,15 @@ auto DownloadServer::MintToken(const std::string& recording_id, std::uint64_t tt
 
 auto DownloadServer::ValidateToken(const std::string& token) -> std::optional<fs::path> {
     std::lock_guard lock(mtx_);
-    const auto it = tokens_.find(token);
-    if (it == tokens_.end()) {
+    const auto entry = tokens_.find(token);
+    if (entry == tokens_.end()) {
         return std::nullopt;
     }
-    if (clock_() >= it->second.expires_at_unix) {
-        tokens_.erase(it);
+    if (clock_() >= entry->second.expires_at_unix) {
+        tokens_.erase(entry);
         return std::nullopt;
     }
-    return it->second.path;
+    return entry->second.path;
 }
 
 }  // namespace sst::network

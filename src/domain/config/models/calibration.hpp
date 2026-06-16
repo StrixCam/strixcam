@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -8,10 +9,16 @@
 
 namespace sst::config {
 
+// Pinhole camera model: a 3x3 intrinsic matrix (fx, fy, cx, cy + skew/homog
+// entries) and OpenCV's 5 radial/tangential distortion coefficients (k1, k2,
+// p1, p2, k3).
+inline constexpr std::size_t kIntrinsicMatrixSize = 9;
+inline constexpr std::size_t kDistortionCoeffCount = 5;
+
 struct CalibrationCameraDeviceData {
     std::optional<std::uint32_t> id{std::nullopt};
-    std::optional<std::array<float, 9>> intrinsic_matrix{std::nullopt};
-    std::optional<std::array<float, 5>> distortion_coefficients{std::nullopt};
+    std::optional<std::array<float, kIntrinsicMatrixSize>> intrinsic_matrix{std::nullopt};
+    std::optional<std::array<float, kDistortionCoeffCount>> distortion_coefficients{std::nullopt};
     std::optional<std::string> last_calibration_date{std::nullopt};
 };
 

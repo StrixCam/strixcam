@@ -26,10 +26,14 @@ struct PipelineConfig {
     // Polling interval used by a producer when Capture() returns nullopt
     // (no new frame ready). Tight enough to not miss frames at 30+ fps,
     // loose enough not to spin a core when the camera is idle.
-    std::chrono::milliseconds capture_idle_sleep{5};
+    std::chrono::milliseconds capture_idle_sleep{kDefaultCaptureIdleSleepMs};
     // Bound on how long the consumer waits for a new bundle from the cadence
     // camera before re-evaluating. Keeps shutdown latency low.
-    std::chrono::milliseconds consumer_pop_timeout{100};
+    std::chrono::milliseconds consumer_pop_timeout{kDefaultConsumerPopTimeoutMs};
+
+   private:
+    static constexpr int kDefaultCaptureIdleSleepMs = 5;
+    static constexpr int kDefaultConsumerPopTimeoutMs = 100;
 };
 
 // One capture → preprocess chain for a single camera. The orchestrator owns the

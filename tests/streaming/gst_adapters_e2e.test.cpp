@@ -31,15 +31,23 @@ using sst::adapters::streaming::GstRtspAppStreamServer;
 constexpr int kWidth = 640;
 constexpr int kHeight = 360;
 constexpr int kFps = 30;
+constexpr int kBgrChannels = 3;
+constexpr int kRtspTestPort = 18554;  // out of the way of any production server
+constexpr int kRtspBitrateKbps = 1500;
+constexpr int kRtmpBitrateKbps = 2000;
+constexpr std::int64_t kLocalIngestStreamId = 99;
 
 auto NextSuffix() -> std::string {
     static std::atomic<int> counter{0};
     return std::to_string(::getpid()) + "_" + std::to_string(counter.fetch_add(1));
 }
 
-auto MakeBgr8Frame(std::uint64_t frame_id, std::uint8_t value,
+// frame_id and value are distinct concepts with distinct widths; the helper is
+// only called below with clearly-named arguments, so the convertible-type swap
+// warning is a false positive here.
+auto MakeBgr8Frame(std::uint64_t frame_id, std::uint8_t value,  // NOLINT(bugprone-easily-swappable-parameters)
                    std::shared_ptr<std::vector<std::uint8_t>>& storage) -> sst::capture::Frame {
-    const std::size_t row_bytes = static_cast<std::size_t>(kWidth) * 3;
+    const std::size_t row_bytes = static_cast<std::size_t>(kWidth) * kBgrChannels;
     const std::size_t total = row_bytes * static_cast<std::size_t>(kHeight);
     storage = std::make_shared<std::vector<std::uint8_t>>(total, value);
     sst::capture::Frame frame;
@@ -78,11 +86,11 @@ TEST(StreamingE2E, AppStreamServerStartsAndAcceptsPushes) {
 
     sst::streaming::AppStreamConfig cfg;
     cfg.mount_point = "/test_" + NextSuffix();
-    cfg.port = 18554;  // out of the way of any production server
+    cfg.port = kRtspTestPort;
     cfg.width = kWidth;
     cfg.height = kHeight;
     cfg.framerate = kFps;
-    cfg.bitrate_kbps = 1500;
+    cfg.bitrate_kbps = kRtspBitrateKbps;
 
     ASSERT_TRUE(server.Start(cfg));
     EXPECT_TRUE(server.IsRunning());
@@ -110,7 +118,7 @@ TEST(StreamingE2E, RtmpStreamerRejectsEmptyUrl) {
     cfg.width = kWidth;
     cfg.height = kHeight;
     cfg.framerate = kFps;
-    cfg.bitrate_kbps = 2000;
+    cfg.bitrate_kbps = kRtmpBitrateKbps;
     EXPECT_FALSE(streamer.Start(cfg));
     EXPECT_FALSE(streamer.IsRunning());
 }
@@ -125,7 +133,7 @@ TEST(StreamingE2E, RtmpStreamerRejectsEmptyKey) {
     cfg.width = kWidth;
     cfg.height = kHeight;
     cfg.framerate = kFps;
-    cfg.bitrate_kbps = 2000;
+    cfg.bitrate_kbps = kRtmpBitrateKbps;
     EXPECT_FALSE(streamer.Start(cfg));
     EXPECT_FALSE(streamer.IsRunning());
 }
@@ -136,7 +144,7 @@ TEST(StreamingE2E, RtmpStreamerStartsAndPushesAgainstLocalIngest) {
     // PLAYING transition because `rtmpsink` can't connect.
     GstRtmpStreamer streamer;
     sst::streaming::PlatformStreamConfig cfg;
-    cfg.stream_id = 99;
+    cfg.stream_id = kLocalIngestStreamId;
     cfg.name = "local-test";
     cfg.url = "rtmp://localhost:1935/live";
     cfg.stream_key = "test-" + NextSuffix();
@@ -145,11 +153,11 @@ TEST(StreamingE2E, RtmpStreamerStartsAndPushesAgainstLocalIngest) {
     cfg.width = kWidth;
     cfg.height = kHeight;
     cfg.framerate = kFps;
-    cfg.bitrate_kbps = 2000;
+    cfg.bitrate_kbps = kRtmpBitrateKbps;
 
     ASSERT_TRUE(streamer.Start(cfg));
     EXPECT_TRUE(streamer.IsRunning());
-    EXPECT_EQ(streamer.Id(), 99);
+    EXPECT_EQ(streamer.Id(), kLocalIngestStreamId);
 
     PumpFrames(streamer, kFps * 2);  // 2 seconds of frames
 

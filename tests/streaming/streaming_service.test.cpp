@@ -21,6 +21,16 @@ using sst::streaming::IPlatformStreamer;
 using sst::streaming::PlatformStreamConfig;
 using sst::streaming::StreamingService;
 
+// 1080p30 platform-stream encode params, and the 720p app-stream geometry the
+// fan-out tests push frames at.
+constexpr std::int32_t kFullHdWidth = 1920;
+constexpr std::int32_t kFullHdHeight = 1080;
+constexpr std::int32_t kPlatformFps = 30;
+constexpr std::int32_t kPlatformBitrateKbps = 4000;
+constexpr int kAppStreamPort = 8556;
+constexpr std::int32_t kHdWidth = 1280;
+constexpr std::int32_t kHdHeight = 720;
+
 // ── Test doubles ──────────────────────────────────────────────────────────
 //
 // Stand in for the GStreamer adapters (which need NVENC and aren't available
@@ -116,17 +126,17 @@ class StreamingServiceTest : public ::testing::Test {
         service_ = std::make_unique<StreamingService>(std::move(app), sink_.MakeFactory());
     }
 
-    static auto MakePlatformConfig(std::int64_t id, std::string name = "test")
+    static auto MakePlatformConfig(std::int64_t stream_id, std::string name = "test")
         -> PlatformStreamConfig {
       PlatformStreamConfig cfg;
-      cfg.stream_id = id;
+      cfg.stream_id = stream_id;
       cfg.name = std::move(name);
       cfg.url = "rtmp://example.com/live";
       cfg.stream_key = "abcd-1234";
-      cfg.width = 1920;
-      cfg.height = 1080;
-      cfg.framerate = 30;
-      cfg.bitrate_kbps = 4000;
+      cfg.width = kFullHdWidth;
+      cfg.height = kFullHdHeight;
+      cfg.framerate = kPlatformFps;
+      cfg.bitrate_kbps = kPlatformBitrateKbps;
       return cfg;
     }
 
@@ -139,16 +149,16 @@ class StreamingServiceTest : public ::testing::Test {
 
 TEST_F(StreamingServiceTest, StartAppStreamForwardsConfigAndTracksRunning) {
     AppStreamConfig cfg;
-    cfg.port = 8556;
-    cfg.width = 1280;
-    cfg.height = 720;
+    cfg.port = kAppStreamPort;
+    cfg.width = kHdWidth;
+    cfg.height = kHdHeight;
 
     EXPECT_FALSE(service_->IsAppStreamRunning());
     EXPECT_TRUE(service_->StartAppStream(cfg));
     EXPECT_TRUE(service_->IsAppStreamRunning());
     EXPECT_EQ(app_->start_calls, 1);
-    EXPECT_EQ(app_->last_config.port, 8556);
-    EXPECT_EQ(app_->last_config.width, 1280U);
+    EXPECT_EQ(app_->last_config.port, kAppStreamPort);
+    EXPECT_EQ(app_->last_config.width, static_cast<std::uint32_t>(kHdWidth));
 
     // Idempotent: start while already running succeeds without re-Start.
     EXPECT_TRUE(service_->StartAppStream(cfg));
@@ -175,7 +185,7 @@ TEST_F(StreamingServiceTest, StopAppStream) {
 // ── Platform streams ──────────────────────────────────────────────────────
 
 TEST_F(StreamingServiceTest, StartPlatformStreamMintsStreamerAndTracksId) {
-    auto cfg = MakePlatformConfig(42, "youtube-main");
+    auto cfg = MakePlatformConfig(42, "youtube-main");  // NOLINT(readability-magic-numbers) arbitrary stream id
     EXPECT_TRUE(service_->StartPlatformStream(cfg));
 
     ASSERT_EQ(sink_.counters.size(), 1);
@@ -195,7 +205,7 @@ TEST_F(StreamingServiceTest, StartPlatformStreamRejectsInvalidId) {
 }
 
 TEST_F(StreamingServiceTest, StartPlatformStreamRejectsDuplicateId) {
-    auto cfg = MakePlatformConfig(7);
+    auto cfg = MakePlatformConfig(7);  // NOLINT(readability-magic-numbers) arbitrary stream id
     ASSERT_TRUE(service_->StartPlatformStream(cfg));
 
     EXPECT_FALSE(service_->StartPlatformStream(cfg));
@@ -230,7 +240,7 @@ TEST_F(StreamingServiceTest, ListActiveReflectsEachStartAndStop) {
 TEST_F(StreamingServiceTest, PushFansOutToAppStreamWhenRunning) {
     sst::capture::Frame frame;
     frame.format = sst::common::PixelFormat::BGR8;
-    frame.geometry = {.width = 1920, .height = 1080};
+    frame.geometry = {.width = kFullHdWidth, .height = kFullHdHeight};
 
     service_->Push(frame);  // app stream not started yet
     EXPECT_EQ(app_->push_calls, 0);
@@ -248,24 +258,24 @@ TEST_F(StreamingServiceTest, PushFansOutToAppStreamWhenRunning) {
 TEST_F(StreamingServiceTest, PushFansOutToEveryActivePlatformStream) {
     ASSERT_TRUE(service_->StartPlatformStream(MakePlatformConfig(1, "yt")));
     ASSERT_TRUE(service_->StartPlatformStream(MakePlatformConfig(2, "tw")));
-    auto* yt = sink_.counters[0].get();
-    auto* tw = sink_.counters[1].get();
+    auto* youtube = sink_.counters[0].get();
+    auto* twitch = sink_.counters[1].get();
 
     sst::capture::Frame frame;
     frame.format = sst::common::PixelFormat::BGR8;
-    frame.geometry = {.width = 1280, .height = 720};
+    frame.geometry = {.width = kHdWidth, .height = kHdHeight};
 
     service_->Push(frame);
     service_->Push(frame);
     service_->Push(frame);
 
-    EXPECT_EQ(yt->push_calls, 3);
-    EXPECT_EQ(tw->push_calls, 3);
+    EXPECT_EQ(youtube->push_calls, 3);
+    EXPECT_EQ(twitch->push_calls, 3);
 
     ASSERT_TRUE(service_->StopPlatformStream(1));
     service_->Push(frame);
-    EXPECT_EQ(yt->push_calls, 3);  // stopped, no more pushes
-    EXPECT_EQ(tw->push_calls, 4);
+    EXPECT_EQ(youtube->push_calls, 3);  // stopped, no more pushes
+    EXPECT_EQ(twitch->push_calls, 4);
 }
 
 }  // namespace

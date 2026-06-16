@@ -54,13 +54,13 @@ TEST(GstreamerAdapter, CaptureSingleFrameAndLog) {
         frame = *captured;
 
         if (prev) {
-            auto dt = std::chrono::duration_cast<std::chrono::milliseconds>(frame->captured_at -
-                                                                            prev->captured_at)
-                          .count();
-            if (dt > 0) {
+            auto delta_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                frame->captured_at - prev->captured_at)
+                                .count();
+            if (delta_ms > 0) {
                 constexpr double kMillisecondsPerSecond = 1000.0;
-                double fps = kMillisecondsPerSecond / static_cast<double>(dt);
-                spdlog::info("frame_id={} dt={} ms (~{:.1f} fps)", frame->frame_id, dt, fps);
+                double fps = kMillisecondsPerSecond / static_cast<double>(delta_ms);
+                spdlog::info("frame_id={} dt={} ms (~{:.1f} fps)", frame->frame_id, delta_ms, fps);
             }
         }
 

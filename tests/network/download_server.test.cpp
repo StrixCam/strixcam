@@ -30,21 +30,38 @@ namespace {
 
 using sst::network::DownloadServer;
 
+constexpr std::uint64_t kTokenTtlSeconds = 60;
+constexpr std::uint64_t kLongTokenTtlSeconds = 3600;
+constexpr std::uint64_t kFixedNow = 1000;
+constexpr std::uint64_t kFixedExpiry = kFixedNow + kTokenTtlSeconds;
+constexpr std::uint64_t kStubClockNow = 100;
+// Loopback accept-loop probe budget: kProbeAttempts × kProbeIntervalMs.
+constexpr int kProbeAttempts = 100;
+constexpr int kProbeIntervalMs = 20;
+
 auto MakeRoot() -> fs::path {
-    static std::atomic<int> n{0};
+    static std::atomic<int> counter{0};
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    fs::path root = fs::temp_directory_path() /
-                    ("sst_dl_" + std::to_string(stamp) + "_" + std::to_string(n.fetch_add(1)));
+    fs::path root =
+        fs::temp_directory_path() /
+        ("sst_dl_" + std::to_string(stamp) + "_" + std::to_string(counter.fetch_add(1)));
     fs::create_directories(root);
     return root;
 }
 
-auto WriteRecording(const fs::path& root, const std::string& match, const std::string& body)
-    -> void {
-    const fs::path dir = root / "user" / match;
+// Identifies a recording to write: the match name (used as the directory and
+// file stem) and its file body. A struct keeps the two same-typed strings from
+// being swapped at the call site.
+struct RecordingFile {
+    std::string match;
+    std::string body;
+};
+
+auto WriteRecording(const fs::path& root, const RecordingFile& recording) -> void {
+    const fs::path dir = root / "user" / recording.match;
     fs::create_directories(dir);
-    std::ofstream out(dir / (match + ".mp4"), std::ios::binary);
-    out << body;
+    std::ofstream out(dir / (recording.match + ".mp4"), std::ios::binary);
+    out << recording.body;
 }
 
 // Write a raw dual-camera file under the naming convention.
@@ -60,16 +77,16 @@ auto WriteRawFile(const fs::path& root, const std::string& group, std::uint32_t 
 // Enumeration finds MP4s on disk with their sizes.
 TEST(DownloadServerTest, EnumeratesRecordings) {
     const fs::path root = MakeRoot();
-    WriteRecording(root, "match-a", "aaaa");
-    WriteRecording(root, "match-b", "bbbbbb");
-    DownloadServer server(root, [] { return std::uint64_t{100}; });
+    WriteRecording(root, {.match = "match-a", .body = "aaaa"});
+    WriteRecording(root, {.match = "match-b", .body = "bbbbbb"});
+    DownloadServer server(root, [] { return kStubClockNow; });
 
     auto recs = server.Enumerate();
     ASSERT_EQ(recs.size(), 2U);
     std::uint64_t total = 0;
-    for (const auto& r : recs) {
-        total += r.size_bytes;
-        EXPECT_EQ(r.thumbnail_id, r.recording_id);
+    for (const auto& rec : recs) {
+        total += rec.size_bytes;
+        EXPECT_EQ(rec.thumbnail_id, rec.recording_id);
     }
     EXPECT_EQ(total, 10U);
     fs::remove_all(root);
@@ -78,9 +95,12 @@ TEST(DownloadServerTest, EnumeratesRecordings) {
 // Raw capture files enumerate as a pair sharing capture_group_id with distinct
 // camera_index + is_raw=true; final recordings stay is_raw=false. A raw file
 // also resolves to a download token.
+// gtest EXPECT_* macro expansion inflates cognitive complexity; the body is a
+// linear arrange/act/assert, so the metric is suppressed here.
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 TEST(DownloadServerTest, EnumeratesRawCapturePairAndFinalRecording) {
     const fs::path root = MakeRoot();
-    WriteRecording(root, "match-final", "final-bytes");
+    WriteRecording(root, {.match = "match-final", .body = "final-bytes"});
     WriteRawFile(root, "grp-9", 0, "cam0-raw-bytes");
     WriteRawFile(root, "grp-9", 1, "cam1-raw-bytes");
     DownloadServer server(root, [] { return std::uint64_t{0}; });
@@ -90,66 +110,71 @@ TEST(DownloadServerTest, EnumeratesRawCapturePairAndFinalRecording) {
 
     int raw_count = 0;
     int final_count = 0;
-    for (const auto& r : recs) {
-        if (r.is_raw) {
+    for (const auto& rec : recs) {
+        if (rec.is_raw) {
             ++raw_count;
-            EXPECT_EQ(r.capture_group_id, "grp-9");
-            EXPECT_TRUE(r.camera_index == 0U || r.camera_index == 1U);
+            EXPECT_EQ(rec.capture_group_id, "grp-9");
+            EXPECT_TRUE(rec.camera_index == 0U || rec.camera_index == 1U);
         } else {
             ++final_count;
-            EXPECT_EQ(r.recording_id, "match-final");
-            EXPECT_TRUE(r.capture_group_id.empty());
+            EXPECT_EQ(rec.recording_id, "match-final");
+            EXPECT_TRUE(rec.capture_group_id.empty());
         }
     }
     EXPECT_EQ(raw_count, 2);
     EXPECT_EQ(final_count, 1);
 
     // A raw file is downloadable too (token resolves by stem).
-    auto token = server.MintToken("raw__grp-9__cam0", /*ttl=*/60);
+    auto token = server.MintToken("raw__grp-9__cam0", /*ttl_seconds=*/kTokenTtlSeconds);
     EXPECT_TRUE(token.has_value());
 
     fs::remove_all(root);
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 // A token validates until it expires; an unknown token never validates.
 TEST(DownloadServerTest, TokenMintValidateExpire) {
     const fs::path root = MakeRoot();
-    WriteRecording(root, "match-a", "data");
-    std::uint64_t now = 1000;
+    WriteRecording(root, {.match = "match-a", .body = "data"});
+    std::uint64_t now = kFixedNow;
     DownloadServer server(root, [&now] { return now; });
 
-    auto token = server.MintToken("match-a", /*ttl=*/60);
+    auto token = server.MintToken("match-a", /*ttl_seconds=*/kTokenTtlSeconds);
     ASSERT_TRUE(token.has_value());
-    EXPECT_EQ(token->expires_at_unix, 1060U);
+    EXPECT_EQ(token->expires_at_unix, kFixedExpiry);
     EXPECT_TRUE(server.ValidateToken(token->token).has_value());
 
     EXPECT_FALSE(server.ValidateToken("bogus-token").has_value());
 
-    now = 1060;  // at expiry
+    now = kFixedExpiry;  // at expiry
     EXPECT_FALSE(server.ValidateToken(token->token).has_value());
 
     // A token for a non-existent recording is not minted.
-    EXPECT_FALSE(server.MintToken("ghost", 60).has_value());
+    EXPECT_FALSE(server.MintToken("ghost", kTokenTtlSeconds).has_value());
     fs::remove_all(root);
 }
 
 // End-to-end over loopback: a minted token authorizes a full + ranged GET;
 // missing/foreign tokens are rejected with 401. ENVIRONMENT-BOUND: passes
 // natively / on-device, fails under the container's qemu-user (see file header).
+// gtest EXPECT_* macro expansion inflates cognitive complexity; the body is a
+// linear arrange/act/assert, so the metric is suppressed here.
+// NOLINTBEGIN(readability-function-cognitive-complexity)
 TEST(DownloadServerTest, HttpServesByteRangeWithBearerToken) {
     const fs::path root = MakeRoot();
     const std::string body = "0123456789ABCDEF";
-    WriteRecording(root, "match-a", body);
+    WriteRecording(root, {.match = "match-a", .body = body});
     DownloadServer downloads(root, [] {
         return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::seconds>(
                                               std::chrono::system_clock::now().time_since_epoch())
                                               .count());
     });
-    auto token = downloads.MintToken("match-a", 3600);
+    auto token = downloads.MintToken("match-a", kLongTokenTtlSeconds);
     ASSERT_TRUE(token.has_value());
 
     sst::adapters::network::HttpDownloadServer http(
-        "127.0.0.1", 0, [&downloads](const std::string& t) { return downloads.ValidateToken(t); });
+        "127.0.0.1", 0,
+        [&downloads](const std::string& bearer) { return downloads.ValidateToken(bearer); });
     ASSERT_TRUE(http.Start());
     const std::uint16_t port = http.BoundPort();
     ASSERT_GT(port, 0);
@@ -160,12 +185,12 @@ TEST(DownloadServerTest, HttpServesByteRangeWithBearerToken) {
 
     // Wait for the listener to accept connections (qemu scheduling can lag).
     httplib::Result probe;
-    for (int i = 0; i < 100; ++i) {
+    for (int i = 0; i < kProbeAttempts; ++i) {
         probe = client.Get("/recordings/match-a");
         if (probe) {
             break;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::this_thread::sleep_for(std::chrono::milliseconds(kProbeIntervalMs));
     }
 
     // No token -> 401.
@@ -198,5 +223,6 @@ TEST(DownloadServerTest, HttpServesByteRangeWithBearerToken) {
     http.Stop();
     fs::remove_all(root);
 }
+// NOLINTEND(readability-function-cognitive-complexity)
 
 }  // namespace
