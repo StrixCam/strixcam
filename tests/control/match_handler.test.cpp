@@ -16,8 +16,12 @@
 
 namespace {
 
-using namespace sst::overlay;
 using sst::control::MatchHandler;
+using sst::overlay::IOverlayRenderer;
+using sst::overlay::IOverlaySink;
+using sst::overlay::OverlayController;
+using sst::overlay::RenderScene;
+using sst::overlay::RgbaImage;
 
 class FakeRenderer final : public IOverlayRenderer {
    public:

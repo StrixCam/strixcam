@@ -6,7 +6,9 @@
 
 namespace {
 
-using namespace sst::adapters::control;
+using sst::adapters::control::ParseGroupInterface;
+using sst::adapters::control::ParseGroupStarted;
+using sst::adapters::control::ParseQuotedField;
 
 TEST(WpaP2pParseTest, ParsesGroupStartedEvent) {
     const std::string event =

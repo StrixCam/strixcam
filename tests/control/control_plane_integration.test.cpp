@@ -26,7 +26,11 @@
 
 namespace {
 
-using namespace sst;
+namespace control = sst::control;
+namespace network = sst::network;
+namespace overlay = sst::overlay;
+namespace session = sst::session;
+namespace streaming = sst::streaming;
 
 // Overlay canvas edge (px) the controller renders at in this smoke test.
 constexpr std::uint32_t kCanvasEdge = 64;

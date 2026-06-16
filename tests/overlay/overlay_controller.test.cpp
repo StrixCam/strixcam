@@ -13,7 +13,17 @@
 
 namespace {
 
-using namespace sst::overlay;
+using sst::overlay::BindingData;
+using sst::overlay::IOverlayRenderer;
+using sst::overlay::IOverlaySink;
+using sst::overlay::OverlayBinding;
+using sst::overlay::OverlayController;
+using sst::overlay::OverlayElement;
+using sst::overlay::OverlayLayout;
+using sst::overlay::OverlayRect;
+using sst::overlay::OverlayShape;
+using sst::overlay::RenderScene;
+using sst::overlay::RgbaImage;
 
 constexpr std::uint32_t kRgbaBytesPerPixel = 4;
 

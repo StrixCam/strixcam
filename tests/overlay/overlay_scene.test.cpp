@@ -14,7 +14,17 @@
 
 namespace {
 
-using namespace sst::overlay;
+using sst::overlay::BindingData;
+using sst::overlay::OverlayBinding;
+using sst::overlay::OverlayElement;
+using sst::overlay::OverlayLayout;
+using sst::overlay::OverlayRect;
+using sst::overlay::OverlayScene;
+using sst::overlay::OverlayShape;
+using sst::overlay::OverlayTemplate;
+using sst::overlay::PeriodLabelState;
+using sst::overlay::RenderElement;
+using sst::overlay::RenderScene;
 
 constexpr const char* kScoreVs = "2 – 1";  // en dash, matches ResolveText
 

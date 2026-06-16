@@ -14,8 +14,12 @@
 
 namespace {
 
-using namespace sst::overlay;
 using sst::adapters::overlay::CairoOverlayRenderer;
+using sst::overlay::OverlayRect;
+using sst::overlay::OverlayShape;
+using sst::overlay::RenderElement;
+using sst::overlay::RenderScene;
+using sst::overlay::RgbaImage;
 
 struct Px {
     std::uint8_t r, g, b, a;

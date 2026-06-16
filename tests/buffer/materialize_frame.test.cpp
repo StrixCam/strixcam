@@ -53,7 +53,7 @@ auto MakeBgr8Frame(Dimensions dims, Bgr color) -> sst::capture::Frame {
     frame.geometry = {dims.width, dims.height};
     frame.captured_at = sst::common::Timestamp{kCaptureMs};
     frame.planes.push_back(sst::capture::FramePlane{
-        .stride = dims.width * kBgrChannels,
+        .stride = static_cast<std::uint32_t>(dims.width * kBgrChannels),
         .data = buf->data(),
         .size = buf->size(),
     });

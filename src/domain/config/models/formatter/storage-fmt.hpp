@@ -11,7 +11,7 @@ struct fmt::formatter<sst::config::StorageData> {
 
     template <typename FormatContext>
     auto format(const sst::config::StorageData& data, FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::StrOptToStr;
 
         return fmt::format_to(
             ctx.out(),

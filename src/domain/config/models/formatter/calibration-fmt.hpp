@@ -12,7 +12,9 @@ struct fmt::formatter<sst::config::CalibrationCameraDeviceData> {
 
     template <typename FormatContext>
     auto format(const sst::config::CalibrationCameraDeviceData& data, FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::ArrOptToStr;
+        using sst::config::NumOptToStr;
+        using sst::config::StrOptToStr;
         return fmt::format_to(ctx.out(),
                               "CalibrationCameraDeviceData{{\n"
                               "  id={},\n"
@@ -32,7 +34,8 @@ struct fmt::formatter<sst::config::CalibrationCamerasData> {
 
     template <typename FormatContext>
     auto format(const sst::config::CalibrationCamerasData& data, FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::NumOptToStr;
+        using sst::config::VecOptToStr;
         return fmt::format_to(
             ctx.out(),
             "CalibrationCamerasData{{\n"
@@ -59,7 +62,8 @@ struct fmt::formatter<sst::config::CalibrationMicrophoneDeviceData> {
     template <typename FormatContext>
     auto format(const sst::config::CalibrationMicrophoneDeviceData& data,
                 FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::NumOptToStr;
+        using sst::config::StrOptToStr;
         return fmt::format_to(ctx.out(),
                               "CalibrationMicrophoneDeviceData{{\n"
                               "  id={},\n"
@@ -77,7 +81,8 @@ struct fmt::formatter<sst::config::CalibrationMicrophonesData> {
 
     template <typename FormatContext>
     auto format(const sst::config::CalibrationMicrophonesData& data, FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::BoolOptToStr;
+        using sst::config::VecOptToStr;
         return fmt::format_to(ctx.out(),
                               "CalibrationMicrophonesData{{\n"
                               "  noise_reduction={},\n"
@@ -93,7 +98,7 @@ struct fmt::formatter<sst::config::CalibrationData> {
 
     template <typename FormatContext>
     auto format(const sst::config::CalibrationData& data, FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::ObjOptToStr;
         return fmt::format_to(ctx.out(),
                               "CalibrationData{{\n"
                               "  cameras={},\n"

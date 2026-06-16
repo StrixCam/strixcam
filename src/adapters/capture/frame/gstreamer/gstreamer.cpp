@@ -183,7 +183,7 @@ auto GStreamerAdapter::HandleBusMessages() -> bool {
         return false;
     }
     while (GstMessage* msg = gst_bus_pop_filtered(
-               gst_bus_, (GstMessageType)(GST_MESSAGE_ERROR | GST_MESSAGE_EOS))) {
+               gst_bus_, static_cast<GstMessageType>(GST_MESSAGE_ERROR | GST_MESSAGE_EOS))) {
         if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_ERROR) {
             GError* gerr = nullptr;
             gchar* dbg = nullptr;

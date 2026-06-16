@@ -26,7 +26,7 @@ auto ReadThermalCelsius() -> float {
     if (!stream) {
         return 0.0F;
     }
-    long milli = 0;
+    std::int64_t milli = 0;
     stream >> milli;
     if (!stream) {
         return 0.0F;

@@ -136,7 +136,7 @@ auto GstRtmpStreamer::Start(const sst::streaming::PlatformStreamConfig& config) 
 }
 
 auto GstRtmpStreamer::WatcherLoop() -> void {
-    using namespace std::chrono;
+    using std::chrono::milliseconds;
     // Capped exponential backoff so a permanently-down endpoint can't spin into a
     // reconnect storm (was an unbounded ~5 rebuilds/sec). Reset to base on a
     // healthy tick or a successful reconnect.
