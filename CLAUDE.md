@@ -55,10 +55,38 @@ Tests must verify behaviour end-to-end at the **module** boundary: feed real inp
 clang-format -i src/**/*.cpp src/**/*.hpp
 
 # Tidy (checks defined in .clang-tidy — bugprone, performance, modernize, readability, google-*)
-clang-tidy -p build/debug src/path/to/file.cpp
+# clang-tidy is PINNED to clang-tidy-14 (jammy). The enforced check set + the
+# warning baseline are version-locked; treat a version bump as a deliberate,
+# re-triaged change. Cross-toolchain flags live in scripts/tidy-args.sh.
+clang-tidy-14 -p build/test src/path/to/file.cpp
 ```
 
 `compile_commands.json` is exported automatically to `build/<preset>/` and symlinked by clangd.
+
+### Auto-fix before you push
+
+`tidy` is a **hard CI gate** (clang-tidy with `WarningsAsErrors`), and CI is
+verify-only — it never writes fixes back to your branch. Correct fixable
+findings **dev-side**, inside the devcontainer, before pushing:
+
+```bash
+scripts/fix.sh          # clang-format + clang-tidy-14 --fix on STAGED C/C++ only
+scripts/fix.sh --all    # the whole src/ + tests/ tree (bulk cleanup)
+```
+
+`scripts/fix.sh` and the CI `tidy` job both source `scripts/tidy-args.sh`, so
+their cross flags can never drift. `--fix` corrects only checks that ship
+fixits; the noisy blockers (`magic-numbers`, `easily-swappable-parameters`,
+`cognitive-complexity`, `branch-clone`) have no fixit and stay reported for you
+to resolve by hand.
+
+Enable the pre-commit hook once per clone (run inside the devcontainer):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+It runs `scripts/fix.sh` on staged C/C++ files and re-stages what it rewrote.
 
 ## CI/CD & releasing
 

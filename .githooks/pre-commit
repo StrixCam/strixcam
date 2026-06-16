@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Pre-commit hook: auto-format + auto-fix staged C/C++ before the commit lands,
+# so CI's `tidy` gate stays verify-only. Enable once per clone (inside the
+# devcontainer, where clang-tidy-14 + the cross toolchain live):
+#
+#   git config core.hooksPath .githooks
+#
+# Scoped to STAGED files only (scripts/fix.sh with no args) — it must not touch
+# unstaged dirty files. After fixing, it re-stages the files it modified so the
+# corrected content is what gets committed.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "${repo_root}"
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(cpp|cc|hpp|h)$' || true)"
+if [ -z "${staged}" ]; then
+  exit 0
+fi
+
+if ! command -v clang-tidy-14 >/dev/null 2>&1; then
+  echo "pre-commit: clang-tidy-14 not found — run commits inside the devcontainer." >&2
+  echo "pre-commit: (skipping auto-fix; CI will still verify)." >&2
+  exit 0
+fi
+
+scripts/fix.sh
+
+# Re-stage anything the fixers rewrote.
+echo "${staged}" | xargs -r git add --
+
+exit 0
