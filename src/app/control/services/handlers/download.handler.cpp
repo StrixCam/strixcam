@@ -11,7 +11,7 @@ namespace sst::control {
 // hence the swappable-parameters suppression below.
 DownloadHandler::DownloadHandler(sst::network::DownloadServer& downloads,
                                  std::string group_owner_ip,
-                                 std::uint32_t download_port,  // NOLINT(bugprone-easily-swappable-parameters)
+                                 std::uint32_t download_port,  // NOLINT(bugprone-easily-swappable-parameters) // floor-ok: distinct widths (u32 port vs u64 ttl) + self-documenting names; no natural non-adjacent reorder
                                  std::uint64_t token_ttl_seconds)
     : downloads_(downloads),
       group_owner_ip_(std::move(group_owner_ip)),

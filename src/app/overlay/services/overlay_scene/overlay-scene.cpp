@@ -43,7 +43,7 @@ auto OverlayScene::SetBindingData(const BindingData& data) -> void { data_ = dat
 // override vs. a wall-clock timestamp).
 auto OverlayScene::ActivateBanner(
     const std::string& template_id, const std::map<std::string, std::string>& params,
-    std::uint32_t duration_s_override,  // NOLINT(bugprone-easily-swappable-parameters)
+    std::uint32_t duration_s_override,  // NOLINT(bugprone-easily-swappable-parameters) // floor-ok: distinct widths (u32 duration vs u64 timestamp) + self-documenting names; no natural reorder
     std::uint64_t now_ms) -> bool {
     if (!has_layout_) {
         return false;
