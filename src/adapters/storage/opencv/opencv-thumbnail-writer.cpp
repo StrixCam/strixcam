@@ -51,9 +51,9 @@ auto OpenCvThumbnailWriter::Write(const sst::capture::Frame& frame,
             return false;
     }
 
-    std::error_code ec;
+    std::error_code err;
     if (!output_path.parent_path().empty()) {
-        std::filesystem::create_directories(output_path.parent_path(), ec);
+        std::filesystem::create_directories(output_path.parent_path(), err);
     }
     if (!cv::imwrite(output_path.string(), bgr)) {
         spdlog::error("OpenCvThumbnailWriter: imwrite({}) failed", output_path.string());

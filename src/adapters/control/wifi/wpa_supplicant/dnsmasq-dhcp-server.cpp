@@ -17,6 +17,8 @@ namespace {
 constexpr const char* kDhcpRangeStart = "192.168.49.10";
 constexpr const char* kDhcpRangeEnd = "192.168.49.50";
 constexpr const char* kLeaseTime = "1h";
+// Conventional shell "command not found" exit status, used when execvp fails.
+constexpr int kExecFailedExitCode = 127;
 }  // namespace
 
 DnsmasqDhcpServer::~DnsmasqDhcpServer() { Stop(); }
@@ -48,13 +50,15 @@ auto DnsmasqDhcpServer::Start(const std::string& group_interface, const std::str
     }
     if (pid == 0) {
         // Child: exec dnsmasq in the foreground, bound to the group interface.
-        std::array<const char*, 9> argv{
+        // Size is the count of the adjacent initializer elements (8 argv tokens +
+        // the nullptr terminator); a named constant adds no clarity.
+        std::array<const char*, 9> argv{  // NOLINT(readability-magic-numbers)
             "dnsmasq",      "--keep-in-foreground",  "--bind-interfaces",
             listen.c_str(), "--except-interface=lo", range.c_str(),
             router.c_str(), "--no-resolv",           nullptr};
         ::execvp("dnsmasq", const_cast<char* const*>(argv.data()));
         // Only reached if exec fails.
-        ::_exit(127);
+        ::_exit(kExecFailedExitCode);
     }
 
     // Parent: brief check that the child didn't immediately die (e.g. dnsmasq

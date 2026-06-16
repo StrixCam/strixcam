@@ -51,11 +51,11 @@ auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id) -> boo
         return false;
     }
 
-    std::error_code ec;
-    std::filesystem::create_directories(video_dir_, ec);
-    if (ec) {
+    std::error_code err;
+    std::filesystem::create_directories(video_dir_, err);
+    if (err) {
         spdlog::error("RawCaptureSink::Start: cannot create {}: {}", video_dir_.string(),
-                      ec.message());
+                      err.message());
         return false;
     }
 

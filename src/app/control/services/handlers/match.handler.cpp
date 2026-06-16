@@ -61,8 +61,8 @@ auto MatchHandler::HandleScoreUpdate(const sst_cam::ScoreUpdateCommand& cmd)
     }
 
     const std::int32_t delta = cmd.delta();
-    const bool applied = session_.ApplyMatchUpdate([&](LiveMatch& m) {
-        std::uint32_t& score = is_home ? m.score_a : m.score_b;
+    const bool applied = session_.ApplyMatchUpdate([&](LiveMatch& match) {
+        std::uint32_t& score = is_home ? match.score_a : match.score_b;
         // Clamp at zero — a negative delta can't drive the score below 0.
         if (delta < 0 && static_cast<std::uint32_t>(-delta) > score) {
             score = 0;
@@ -87,32 +87,32 @@ auto MatchHandler::HandleMatchControl(const sst_cam::MatchControlCommand& cmd)
     const std::uint32_t period = cmd.period();
     const auto action = cmd.action();
 
-    const bool applied = session_.ApplyMatchUpdate([&](LiveMatch& m) {
+    const bool applied = session_.ApplyMatchUpdate([&](LiveMatch& match) {
         switch (action) {
             case sst_cam::MATCH_KICKOFF:
-                m.period = period > 0 ? period : 1;
-                m.clock_seconds = 0;
-                m.clock_running = true;
-                m.segment = MatchSegment::kInPlay;
+                match.period = period > 0 ? period : 1;
+                match.clock_seconds = 0;
+                match.clock_running = true;
+                match.segment = MatchSegment::kInPlay;
                 break;
             case sst_cam::MATCH_PERIOD_START:
-                m.period = period > 0 ? period : m.period;
-                m.clock_running = true;
-                m.segment = MatchSegment::kInPlay;
+                match.period = period > 0 ? period : match.period;
+                match.clock_running = true;
+                match.segment = MatchSegment::kInPlay;
                 break;
             case sst_cam::MATCH_PERIOD_END:
-                m.clock_running = false;
-                m.segment = MatchSegment::kHalfTime;
+                match.clock_running = false;
+                match.segment = MatchSegment::kHalfTime;
                 break;
             case sst_cam::MATCH_FINAL_WHISTLE:
-                m.clock_running = false;
-                m.segment = MatchSegment::kFullTime;
+                match.clock_running = false;
+                match.segment = MatchSegment::kFullTime;
                 break;
             case sst_cam::MATCH_CLOCK_PAUSE:
-                m.clock_running = false;
+                match.clock_running = false;
                 break;
             case sst_cam::MATCH_CLOCK_RESUME:
-                m.clock_running = true;
+                match.clock_running = true;
                 break;
             default:
                 break;
@@ -147,9 +147,9 @@ auto MatchHandler::HandleBannerEvent(const sst_cam::BannerEventCommand& cmd)
 }
 
 auto MatchHandler::TickClock() -> void {
-    const bool advanced = session_.ApplyMatchUpdate([](LiveMatch& m) {
-        if (m.clock_running) {
-            ++m.clock_seconds;
+    const bool advanced = session_.ApplyMatchUpdate([](LiveMatch& match) {
+        if (match.clock_running) {
+            ++match.clock_seconds;
         }
     });
     if (advanced) {

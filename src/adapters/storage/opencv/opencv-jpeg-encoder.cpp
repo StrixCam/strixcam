@@ -56,9 +56,13 @@ auto ToBgr(const sst::capture::Frame& frame) -> cv::Mat {
 
 }  // namespace
 
-auto OpenCvJpegEncoder::Encode(const sst::capture::Frame& frame, std::uint32_t width,
-                               std::uint32_t height, std::uint32_t quality)
-    -> std::optional<std::vector<std::uint8_t>> {
+// width/height match the IJpegEncoder port signature (defined outside this
+// module); the override cannot change the parameter shape without breaking the
+// port contract and its callers, so the swappable-parameters check is suppressed.
+auto OpenCvJpegEncoder::Encode(
+    const sst::capture::Frame& frame, std::uint32_t width,
+    std::uint32_t height,  // NOLINT(bugprone-easily-swappable-parameters)
+    std::uint32_t quality) -> std::optional<std::vector<std::uint8_t>> {
     cv::Mat bgr = ToBgr(frame);
     if (bgr.empty()) {
         return std::nullopt;

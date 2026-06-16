@@ -39,27 +39,27 @@ auto ChunkAssembler::OfferInbound(const sst_cam::ChunkedPayload& chunk) -> Offer
         return {.accepted = true, .payload = chunk.data()};
     }
 
-    auto it = inbound_.find(corr);
-    if (it == inbound_.end()) {
+    auto entry = inbound_.find(corr);
+    if (entry == inbound_.end()) {
         EvictOldestInboundIfFull();
         InboundState state;
         state.total_chunks = total;
         state.parts.assign(total, std::string{});
         state.have.assign(total, false);
-        it = inbound_.emplace(corr, std::move(state)).first;
+        entry = inbound_.emplace(corr, std::move(state)).first;
         inbound_order_.push_back(corr);
-    } else if (it->second.total_chunks != total) {
+    } else if (entry->second.total_chunks != total) {
         // total_chunks disagreed mid-stream — reset to the new framing.
         spdlog::warn("ChunkAssembler: corr={} total_chunks changed {}->{}, resetting", corr,
-                     it->second.total_chunks, total);
+                     entry->second.total_chunks, total);
         InboundState state;
         state.total_chunks = total;
         state.parts.assign(total, std::string{});
         state.have.assign(total, false);
-        it->second = std::move(state);
+        entry->second = std::move(state);
     }
 
-    InboundState& state = it->second;
+    InboundState& state = entry->second;
     if (state.have[index]) {
         // Duplicate of an already-seen chunk: well-formed, so still accepted (the
         // app may have retransmitted after a lost ack), but adds nothing.
@@ -85,12 +85,16 @@ auto ChunkAssembler::OfferInbound(const sst_cam::ChunkedPayload& chunk) -> Offer
         out += part;
     }
 
-    inbound_.erase(it);
+    inbound_.erase(entry);
     inbound_order_.remove(corr);
     return {.accepted = true, .payload = std::move(out)};
 }
 
-auto ChunkAssembler::BeginOutbound(const std::string& correlation_id, const std::string& data,
+// Public API with distinct roles (transfer key vs. payload) consumed positionally
+// by external callers; reordering breaks the contract and a struct param would
+// obscure the call sites — hence the swappable-parameters suppression below.
+auto ChunkAssembler::BeginOutbound(const std::string& correlation_id,  // NOLINT(bugprone-easily-swappable-parameters)
+                                   const std::string& data,
                                    const SendChunkFn& send) -> std::uint32_t {
     const std::size_t chunk_size = std::max<std::size_t>(cfg_.max_chunk_payload_bytes, 1);
     // At least one chunk, even for an empty payload.
@@ -100,13 +104,13 @@ auto ChunkAssembler::BeginOutbound(const std::string& correlation_id, const std:
     std::vector<sst_cam::ChunkedPayload> chunks;
     chunks.reserve(total);
     for (std::uint32_t i = 0; i < total; ++i) {
-        sst_cam::ChunkedPayload c;
-        c.set_correlation_id(correlation_id);
-        c.set_chunk_index(i);
-        c.set_total_chunks(total);
+        sst_cam::ChunkedPayload chunk;
+        chunk.set_correlation_id(correlation_id);
+        chunk.set_chunk_index(i);
+        chunk.set_total_chunks(total);
         const std::size_t off = static_cast<std::size_t>(i) * chunk_size;
-        c.set_data(data.substr(off, chunk_size));
-        chunks.push_back(std::move(c));
+        chunk.set_data(data.substr(off, chunk_size));
+        chunks.push_back(std::move(chunk));
     }
 
     // Emit chunk 0 immediately.
@@ -127,12 +131,12 @@ auto ChunkAssembler::BeginOutbound(const std::string& correlation_id, const std:
 }
 
 auto ChunkAssembler::OnAck(const std::string& correlation_id, std::uint32_t chunk_index) -> bool {
-    auto it = outbound_.find(correlation_id);
-    if (it == outbound_.end()) {
+    auto entry = outbound_.find(correlation_id);
+    if (entry == outbound_.end()) {
         // Late / unknown ack (e.g. for a single-chunk response) — nothing to do.
         return false;
     }
-    OutboundState& state = it->second;
+    OutboundState& state = entry->second;
 
     const std::uint32_t last_sent = state.next_to_send - 1;
     if (chunk_index != last_sent) {
@@ -151,7 +155,7 @@ auto ChunkAssembler::OnAck(const std::string& correlation_id, std::uint32_t chun
     }
 
     // Last chunk was already sent and is now acked — transfer complete.
-    outbound_.erase(it);
+    outbound_.erase(entry);
     return true;
 }
 

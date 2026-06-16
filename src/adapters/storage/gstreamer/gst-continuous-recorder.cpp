@@ -22,6 +22,9 @@ constexpr int kFramerate = 30;
 // shows three concurrent encodes don't sustain.
 constexpr int kBitrateKbps = 8000;
 constexpr int kKeyIntMax = kFramerate * 2;
+// Bound the wait for mp4mux to flush its moov atom on Stop() so a stuck pipeline
+// can't hang shutdown indefinitely.
+constexpr int kFinalizeTimeoutSeconds = 5;
 
 auto GstFormatFor(sst::common::PixelFormat fmt) -> const char* {
     switch (fmt) {
@@ -142,7 +145,7 @@ auto GstContinuousRecorder::Stop() -> bool {
         GstBus* bus = gst_element_get_bus(pipeline_);
         if (bus != nullptr) {
             GstMessage* msg = gst_bus_timed_pop_filtered(
-                bus, 5 * GST_SECOND,
+                bus, kFinalizeTimeoutSeconds * GST_SECOND,
                 static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
             if (msg != nullptr) {
                 gst_message_unref(msg);

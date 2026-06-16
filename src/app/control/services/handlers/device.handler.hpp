@@ -26,7 +26,7 @@ class DeviceHandler final : public ICommandHandler {
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
 
    private:
-    auto HandleDeviceInfo() const -> sst_cam::CommandResponse;
+    [[nodiscard]] auto HandleDeviceInfo() const -> sst_cam::CommandResponse;
     auto HandleTelemetry() -> sst_cam::CommandResponse;
 
     sst::config::DeviceData device_;

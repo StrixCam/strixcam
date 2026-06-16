@@ -45,26 +45,26 @@ auto DeviceHandler::HandleDeviceInfo() const -> sst_cam::CommandResponse {
 }
 
 auto DeviceHandler::HandleTelemetry() -> sst_cam::CommandResponse {
-    const sst::control::SystemStats s = stats_.Read();
+    const sst::control::SystemStats stats = stats_.Read();
 
     sst_cam::CommandResponse resp;
     resp.set_status(sst_cam::ResponseStatus::OK);
-    auto* t = resp.mutable_telemetry();
-    t->set_storage_free_bytes(s.storage_free_bytes);
-    t->set_storage_total_bytes(s.storage_total_bytes);
-    t->set_temp_celsius(s.temp_celsius);
-    t->set_ram_used_pct(s.ram_used_pct);
-    t->set_cpu_used_pct(s.cpu_used_pct);
-    t->set_uptime_seconds(s.uptime_seconds);
-    t->set_battery_level_pct(s.battery_level_pct);
-    t->set_is_recording(is_recording_ && is_recording_());
-    t->set_is_streaming(is_streaming_ && is_streaming_());
-    t->set_is_raw_capturing(is_raw_capturing_ && is_raw_capturing_());
+    auto* telemetry = resp.mutable_telemetry();
+    telemetry->set_storage_free_bytes(stats.storage_free_bytes);
+    telemetry->set_storage_total_bytes(stats.storage_total_bytes);
+    telemetry->set_temp_celsius(stats.temp_celsius);
+    telemetry->set_ram_used_pct(stats.ram_used_pct);
+    telemetry->set_cpu_used_pct(stats.cpu_used_pct);
+    telemetry->set_uptime_seconds(stats.uptime_seconds);
+    telemetry->set_battery_level_pct(stats.battery_level_pct);
+    telemetry->set_is_recording(is_recording_ && is_recording_());
+    telemetry->set_is_streaming(is_streaming_ && is_streaming_());
+    telemetry->set_is_raw_capturing(is_raw_capturing_ && is_raw_capturing_());
 
     // WiFi fields stay WIFI_UNKNOWN until the WiFi Direct module reports state
     // (U12); the camera does not currently join an infrastructure network.
-    t->set_wifi_state(sst_cam::WifiState::WIFI_UNKNOWN);
-    t->set_internet_reachable(false);
+    telemetry->set_wifi_state(sst_cam::WifiState::WIFI_UNKNOWN);
+    telemetry->set_internet_reachable(false);
     return resp;
 }
 

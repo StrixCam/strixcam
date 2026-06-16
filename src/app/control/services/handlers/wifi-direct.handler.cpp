@@ -6,10 +6,14 @@
 
 namespace sst::control {
 
+// The two port params keep the order declared in wifi-direct.handler.hpp (outside
+// this change's scope); a struct/strong-type fix would have to live in that
+// header — hence the swappable-parameters suppression below.
 WifiDirectHandler::WifiDirectHandler(sst::session::ISessionManager& session, IWifiManager& wifi,
                                      IDhcpServer& dhcp,
                                      sst::streaming::IStreamingService& streaming,
-                                     std::uint32_t preview_port, std::uint32_t download_port)
+                                     std::uint32_t preview_port,  // NOLINT(bugprone-easily-swappable-parameters)
+                                     std::uint32_t download_port)
     : session_(session),
       wifi_(wifi),
       dhcp_(dhcp),

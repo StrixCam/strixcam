@@ -70,66 +70,66 @@ class FakeCleanup final : public sst::session::ISessionCleanup {
 // Empty output paths keep the test off the filesystem (PrepareOutputDirs is a
 // no-op for empty paths).
 auto EmptyPathConfig() -> SessionConfig {
-    SessionConfig c;
-    c.match_uuid = "m";
-    c.user_uuid = "u";
-    return c;
+    SessionConfig cfg;
+    cfg.match_uuid = "m";
+    cfg.user_uuid = "u";
+    return cfg;
 }
 
-auto AdvanceToConfigured(SessionManager& sm) -> void {
-    ASSERT_TRUE(sm.OnConnect());
-    ASSERT_TRUE(sm.OnWifiReady());
-    ASSERT_TRUE(sm.ApplySessionConfig(EmptyPathConfig()));
+auto AdvanceToConfigured(SessionManager& session_mgr) -> void {
+    ASSERT_TRUE(session_mgr.OnConnect());
+    ASSERT_TRUE(session_mgr.OnWifiReady());
+    ASSERT_TRUE(session_mgr.ApplySessionConfig(EmptyPathConfig()));
 }
 
-auto AdvanceToReady(SessionManager& sm) -> void {
-    AdvanceToConfigured(sm);
-    ASSERT_TRUE(sm.OnOverlayConfigured());
+auto AdvanceToReady(SessionManager& session_mgr) -> void {
+    AdvanceToConfigured(session_mgr);
+    ASSERT_TRUE(session_mgr.OnOverlayConfigured());
 }
 
 auto Cmd(sst_cam::RecordingAction action) -> sst_cam::Command {
-    sst_cam::Command c;
-    c.set_correlation_id("r");
-    c.mutable_recording_control()->set_action(action);
-    return c;
+    sst_cam::Command cmd;
+    cmd.set_correlation_id("r");
+    cmd.mutable_recording_control()->set_action(action);
+    return cmd;
 }
 
 TEST(RecordingHandlerTest, StartInReadyPhaseStartsRecorderAndTransitions) {
     FakeCleanup cleanup;
-    SessionManager sm(cleanup);
+    SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
-    RecordingHandler handler(sm, recorder);
-    AdvanceToReady(sm);
+    RecordingHandler handler(session_mgr, recorder);
+    AdvanceToReady(session_mgr);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
     EXPECT_EQ(recorder.start_calls, 1);
-    EXPECT_EQ(sm.Phase(), SessionPhase::kRecording);
+    EXPECT_EQ(session_mgr.Phase(), SessionPhase::kRecording);
 }
 
 // The gate (#16): a START before Ready must NOT touch the recorder — no stray
 // MP4/thumbnail spun up only to be rolled back.
 TEST(RecordingHandlerTest, StartBeforeReadyRejectedWithoutTouchingRecorder) {
     FakeCleanup cleanup;
-    SessionManager sm(cleanup);
+    SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
-    RecordingHandler handler(sm, recorder);
-    AdvanceToConfigured(sm);  // config present, but phase != Ready
+    RecordingHandler handler(session_mgr, recorder);
+    AdvanceToConfigured(session_mgr);  // config present, but phase != Ready
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
     EXPECT_EQ(recorder.start_calls, 0);
     EXPECT_EQ(recorder.stop_calls, 0);
-    EXPECT_EQ(sm.Phase(), SessionPhase::kConfigured);
+    EXPECT_EQ(session_mgr.Phase(), SessionPhase::kConfigured);
 }
 
 TEST(RecordingHandlerTest, StartWithNoSessionConfigErrors) {
     FakeCleanup cleanup;
-    SessionManager sm(cleanup);
+    SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
-    RecordingHandler handler(sm, recorder);
-    ASSERT_TRUE(sm.OnConnect());
-    ASSERT_TRUE(sm.OnWifiReady());  // WifiReady, no config yet
+    RecordingHandler handler(session_mgr, recorder);
+    ASSERT_TRUE(session_mgr.OnConnect());
+    ASSERT_TRUE(session_mgr.OnWifiReady());  // WifiReady, no config yet
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
@@ -140,39 +140,39 @@ TEST(RecordingHandlerTest, StartRolledBackWhenRecorderStartsButSmRejects) {
     // Recorder accepts the start, but force the SM to reject by being in a
     // non-Ready phase is already covered above; here the recorder itself fails.
     FakeCleanup cleanup;
-    SessionManager sm(cleanup);
+    SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     recorder.start_ok = false;
-    RecordingHandler handler(sm, recorder);
-    AdvanceToReady(sm);
+    RecordingHandler handler(session_mgr, recorder);
+    AdvanceToReady(session_mgr);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
     EXPECT_EQ(recorder.start_calls, 1);
-    EXPECT_EQ(sm.Phase(), SessionPhase::kReady);  // no transition on failed start
+    EXPECT_EQ(session_mgr.Phase(), SessionPhase::kReady);  // no transition on failed start
 }
 
 TEST(RecordingHandlerTest, StopStopsRecorderAndReturnsToReady) {
     FakeCleanup cleanup;
-    SessionManager sm(cleanup);
+    SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
-    RecordingHandler handler(sm, recorder);
-    AdvanceToReady(sm);
+    RecordingHandler handler(session_mgr, recorder);
+    AdvanceToReady(session_mgr);
     ASSERT_EQ(handler.Handle(Cmd(sst_cam::RECORDING_START)).status(), sst_cam::ResponseStatus::OK);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_STOP));
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
     EXPECT_EQ(recorder.stop_calls, 1);
-    EXPECT_EQ(sm.Phase(), SessionPhase::kReady);
+    EXPECT_EQ(session_mgr.Phase(), SessionPhase::kReady);
 }
 
 TEST(RecordingHandlerTest, PauseWhileNotRecordingErrors) {
     FakeCleanup cleanup;
-    SessionManager sm(cleanup);
+    SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     recorder.pause_ok = false;  // recorder reports it isn't recording
-    RecordingHandler handler(sm, recorder);
-    AdvanceToReady(sm);
+    RecordingHandler handler(session_mgr, recorder);
+    AdvanceToReady(session_mgr);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_PAUSE));
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);

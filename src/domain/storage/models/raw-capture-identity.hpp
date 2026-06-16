@@ -15,6 +15,10 @@ struct RawCaptureIdentity {
     std::uint32_t camera_index{0};
 };
 
+// `a`/`b` are the conventional operand names for a binary `operator==`; this is a
+// public free operator whose signature is referenced outside this module, so the
+// names stay 1-char.
+// NOLINTNEXTLINE(readability-identifier-length)
 inline auto operator==(const RawCaptureIdentity& a, const RawCaptureIdentity& b) -> bool {
     return a.capture_group_id == b.capture_group_id && a.camera_index == b.camera_index;
 }

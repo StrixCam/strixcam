@@ -15,79 +15,123 @@ namespace sst::buffer {
 
 namespace {
 
+// Strong-typed bundles so call sites can't transpose dimensions/components.
+struct Dimensions {
+    std::uint32_t width;
+    std::uint32_t height;
+};
+
+struct Bgr {
+    std::uint8_t blue;
+    std::uint8_t green;
+    std::uint8_t red;
+};
+
+struct Yuv {
+    std::uint8_t luma;
+    std::uint8_t chroma_u;
+    std::uint8_t chroma_v;
+};
+
+constexpr std::size_t kBgrChannels = 3;
+
 // Builds a 1-plane BGR8 Frame whose owner pins a vector<uint8_t>.
-auto MakeBgr8Frame(std::uint32_t w, std::uint32_t h, std::uint8_t b, std::uint8_t g, std::uint8_t r)
-    -> sst::capture::Frame {
-    auto buf = std::make_shared<std::vector<std::uint8_t>>(static_cast<std::size_t>(w) * h * 3);
-    for (std::size_t i = 0; i < buf->size(); i += 3) {
-        (*buf)[i + 0] = b;
-        (*buf)[i + 1] = g;
-        (*buf)[i + 2] = r;
+auto MakeBgr8Frame(Dimensions dims, Bgr color) -> sst::capture::Frame {
+    constexpr std::uint64_t kFrameId = 42;
+    constexpr std::chrono::milliseconds kCaptureMs{12345};
+    auto buf = std::make_shared<std::vector<std::uint8_t>>(static_cast<std::size_t>(dims.width) *
+                                                           dims.height * kBgrChannels);
+    for (std::size_t i = 0; i < buf->size(); i += kBgrChannels) {
+        (*buf)[i + 0] = color.blue;
+        (*buf)[i + 1] = color.green;
+        (*buf)[i + 2] = color.red;
     }
-    sst::capture::Frame f;
-    f.frame_id = 42;
-    f.format = sst::common::PixelFormat::BGR8;
-    f.memory = sst::common::MemoryType::CPU;
-    f.geometry = {w, h};
-    f.captured_at = sst::common::Timestamp{std::chrono::milliseconds{12345}};
-    f.planes.push_back(sst::capture::FramePlane{
-        .stride = w * 3,
+    sst::capture::Frame frame;
+    frame.frame_id = kFrameId;
+    frame.format = sst::common::PixelFormat::BGR8;
+    frame.memory = sst::common::MemoryType::CPU;
+    frame.geometry = {dims.width, dims.height};
+    frame.captured_at = sst::common::Timestamp{kCaptureMs};
+    frame.planes.push_back(sst::capture::FramePlane{
+        .stride = dims.width * kBgrChannels,
         .data = buf->data(),
         .size = buf->size(),
     });
-    f.owner = std::shared_ptr<void>(buf);
-    return f;
+    frame.owner = std::shared_ptr<void>(buf);
+    return frame;
 }
 
 // Builds a 2-plane NV12 Frame with optional row-stride padding (>= width).
-// Y plane filled with `y`, UV plane filled with alternating u, v.
-auto MakeNv12Frame(std::uint32_t w, std::uint32_t h, std::uint8_t y, std::uint8_t u, std::uint8_t v,
-                   std::uint32_t stride = 0) -> sst::capture::Frame {
+// Y plane filled with `color.luma`, UV plane filled with alternating u, v.
+auto MakeNv12Frame(Dimensions dims, Yuv color, std::uint32_t stride = 0) -> sst::capture::Frame {
+    constexpr std::uint64_t kFrameId = 7;
+    constexpr std::chrono::milliseconds kCaptureMs{99};
     if (stride == 0) {
-        stride = w;
+        stride = dims.width;
     }
-    const std::size_t y_size = static_cast<std::size_t>(stride) * h;
-    const std::size_t uv_size = static_cast<std::size_t>(stride) * (h / 2);
+    const std::size_t y_size = static_cast<std::size_t>(stride) * dims.height;
+    const std::size_t uv_size = static_cast<std::size_t>(stride) * (dims.height / 2);
     auto buf = std::make_shared<std::vector<std::uint8_t>>(y_size + uv_size);
 
-    // Fill Y plane (only the first `w` bytes of each row are meaningful).
-    for (std::uint32_t row = 0; row < h; ++row) {
-        for (std::uint32_t col = 0; col < w; ++col) {
-            (*buf)[row * stride + col] = y;
+    // Fill Y plane (only the first `width` bytes of each row are meaningful).
+    for (std::uint32_t row = 0; row < dims.height; ++row) {
+        for (std::uint32_t col = 0; col < dims.width; ++col) {
+            (*buf)[(static_cast<std::size_t>(row) * stride) + col] = color.luma;
         }
     }
     // Fill UV plane (interleaved, half-height).
-    for (std::uint32_t row = 0; row < h / 2; ++row) {
-        for (std::uint32_t col = 0; col < w; col += 2) {
-            (*buf)[y_size + row * stride + col + 0] = u;
-            (*buf)[y_size + row * stride + col + 1] = v;
+    for (std::uint32_t row = 0; row < dims.height / 2; ++row) {
+        for (std::uint32_t col = 0; col < dims.width; col += 2) {
+            (*buf)[y_size + (static_cast<std::size_t>(row) * stride) + col + 0] = color.chroma_u;
+            (*buf)[y_size + (static_cast<std::size_t>(row) * stride) + col + 1] = color.chroma_v;
         }
     }
 
-    sst::capture::Frame f;
-    f.frame_id = 7;
-    f.format = sst::common::PixelFormat::NV12;
-    f.memory = sst::common::MemoryType::CPU;
-    f.geometry = {w, h};
-    f.captured_at = sst::common::Timestamp{std::chrono::milliseconds{99}};
-    f.planes.push_back(sst::capture::FramePlane{
+    sst::capture::Frame frame;
+    frame.frame_id = kFrameId;
+    frame.format = sst::common::PixelFormat::NV12;
+    frame.memory = sst::common::MemoryType::CPU;
+    frame.geometry = {dims.width, dims.height};
+    frame.captured_at = sst::common::Timestamp{kCaptureMs};
+    frame.planes.push_back(sst::capture::FramePlane{
         .stride = stride,
         .data = buf->data(),
         .size = y_size,
     });
-    f.planes.push_back(sst::capture::FramePlane{
+    frame.planes.push_back(sst::capture::FramePlane{
         .stride = stride,
         .data = buf->data() + y_size,
         .size = uv_size,
     });
-    f.owner = std::shared_ptr<void>(buf);
-    return f;
+    frame.owner = std::shared_ptr<void>(buf);
+    return frame;
+}
+
+// Asserts every BGR triple in `plane` matches `color`.
+void ExpectBgrFill(const sst::capture::FramePlane& plane, Bgr color) {
+    for (std::size_t i = 0; i < plane.size; i += kBgrChannels) {
+        EXPECT_EQ(plane.data[i + 0], color.blue);
+        EXPECT_EQ(plane.data[i + 1], color.green);
+        EXPECT_EQ(plane.data[i + 2], color.red);
+    }
+}
+
+// Asserts the meaningful `dims` region of a strided Y plane equals `luma`.
+void ExpectYPlaneFill(const sst::capture::FramePlane& plane, Dimensions dims, std::uint8_t luma) {
+    for (std::uint32_t row = 0; row < dims.height; ++row) {
+        for (std::uint32_t col = 0; col < dims.width; ++col) {
+            EXPECT_EQ(plane.data[(static_cast<std::size_t>(row) * plane.stride) + col], luma);
+        }
+    }
 }
 
 }  // namespace
 
 TEST(MaterializeFrameTest, RoundTripPixelsNv12) {
-    auto src = MakeNv12Frame(64, 32, /*y=*/180, /*u=*/100, /*v=*/200);
+    // Self-evident small NV12 test geometry and fill values.
+    auto src = MakeNv12Frame(
+        {.width = 64, .height = 32},                       // NOLINT(readability-magic-numbers)
+        {.luma = 180, .chroma_u = 100, .chroma_v = 200});  // NOLINT(readability-magic-numbers)
 
     auto out = MaterializeFrame(src);
 
@@ -99,7 +143,10 @@ TEST(MaterializeFrameTest, RoundTripPixelsNv12) {
 }
 
 TEST(MaterializeFrameTest, RoundTripPixelsBgr8) {
-    auto src = MakeBgr8Frame(32, 32, /*b=*/10, /*g=*/20, /*r=*/30);
+    // Self-evident small BGR8 test geometry and fill values.
+    auto src =
+        MakeBgr8Frame({.width = 32, .height = 32},            // NOLINT(readability-magic-numbers)
+                      {.blue = 10, .green = 20, .red = 30});  // NOLINT(readability-magic-numbers)
 
     auto out = MaterializeFrame(src);
 
@@ -110,50 +157,52 @@ TEST(MaterializeFrameTest, RoundTripPixelsBgr8) {
 
 TEST(MaterializeFrameTest, OutputOwnsMemoryReleasesInputOwner) {
     auto out = [] {
-        auto src = MakeBgr8Frame(16, 16, 1, 2, 3);
+        auto src = MakeBgr8Frame({.width = 16, .height = 16},  // NOLINT(readability-magic-numbers)
+                                 {.blue = 1, .green = 2, .red = 3});
         return MaterializeFrame(src);
     }();  // src and its vector are dropped here.
 
     ASSERT_EQ(out.planes.size(), 1U);
     ASSERT_NE(out.owner, nullptr);
     // Reading every byte must not crash and must match the fill.
-    for (std::size_t i = 0; i < out.planes[0].size; i += 3) {
-        EXPECT_EQ(out.planes[0].data[i + 0], 1);
-        EXPECT_EQ(out.planes[0].data[i + 1], 2);
-        EXPECT_EQ(out.planes[0].data[i + 2], 3);
-    }
+    ExpectBgrFill(out.planes[0], {.blue = 1, .green = 2, .red = 3});
 }
 
 TEST(MaterializeFrameTest, MultiPlaneStridesPreserved) {
-    constexpr std::uint32_t kW = 32;
-    constexpr std::uint32_t kH = 16;
-    constexpr std::uint32_t kStride = kW + 16;
-    auto src = MakeNv12Frame(kW, kH, 50, 60, 70, kStride);
+    constexpr std::uint32_t kWidth = 32;
+    constexpr std::uint32_t kHeight = 16;
+    constexpr std::uint32_t kStridePad = 16;
+    constexpr std::uint32_t kStride = kWidth + kStridePad;
+    constexpr std::uint8_t kLuma = 50;
+    constexpr std::uint8_t kChromaU = 60;
+    constexpr std::uint8_t kChromaV = 70;
+    auto src = MakeNv12Frame({.width = kWidth, .height = kHeight},
+                             {.luma = kLuma, .chroma_u = kChromaU, .chroma_v = kChromaV}, kStride);
 
     auto out = MaterializeFrame(src);
 
     ASSERT_EQ(out.planes.size(), 2U);
     EXPECT_EQ(out.planes[0].stride, kStride);
     EXPECT_EQ(out.planes[1].stride, kStride);
-    EXPECT_EQ(out.geometry.width, kW);
-    EXPECT_EQ(out.geometry.height, kH);
+    EXPECT_EQ(out.geometry.width, kWidth);
+    EXPECT_EQ(out.geometry.height, kHeight);
 
     // Pixel at (row, col) in Y plane must match input.
-    for (std::uint32_t row = 0; row < kH; ++row) {
-        for (std::uint32_t col = 0; col < kW; ++col) {
-            EXPECT_EQ(out.planes[0].data[row * kStride + col], 50);
-        }
-    }
+    ExpectYPlaneFill(out.planes[0], {.width = kWidth, .height = kHeight}, kLuma);
 }
 
 TEST(MaterializeFrameTest, MetadataPropagated) {
-    auto src = MakeBgr8Frame(8, 8, 0, 0, 0);
-    src.frame_id = 0xDEADBEEF;
-    src.captured_at = sst::common::Timestamp{std::chrono::milliseconds{555}};
+    constexpr std::uint64_t kFrameId = 0xDEADBEEF;
+    constexpr std::chrono::milliseconds kCaptureMs{555};
+    // 8x8 is a self-evident minimal test frame.
+    auto src = MakeBgr8Frame({.width = 8, .height = 8},  // NOLINT(readability-magic-numbers)
+                             {.blue = 0, .green = 0, .red = 0});
+    src.frame_id = kFrameId;
+    src.captured_at = sst::common::Timestamp{kCaptureMs};
 
     auto out = MaterializeFrame(src);
 
-    EXPECT_EQ(out.frame_id, 0xDEADBEEFU);
+    EXPECT_EQ(out.frame_id, kFrameId);
     EXPECT_EQ(out.format, sst::common::PixelFormat::BGR8);
     EXPECT_EQ(out.memory, sst::common::MemoryType::CPU);
     EXPECT_EQ(out.geometry.width, 8U);
@@ -162,7 +211,9 @@ TEST(MaterializeFrameTest, MetadataPropagated) {
 }
 
 TEST(MaterializeFrameTest, OriginalOwnerNotMutated) {
-    auto src = MakeBgr8Frame(8, 8, 0, 0, 0);
+    // 8x8 is a self-evident minimal test frame.
+    auto src = MakeBgr8Frame({.width = 8, .height = 8},  // NOLINT(readability-magic-numbers)
+                             {.blue = 0, .green = 0, .red = 0});
     const auto before = src.owner.use_count();
 
     auto out = MaterializeFrame(src);

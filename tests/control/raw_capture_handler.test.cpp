@@ -47,14 +47,14 @@ class FakeRawSink final : public sst::storage::IRawCaptureSink {
 };
 
 auto RawCmd(sst_cam::RecordingAction action, const std::string& group = "") -> sst_cam::Command {
-    sst_cam::Command c;
-    c.set_correlation_id("r");
-    auto* raw = c.mutable_raw_capture();
+    sst_cam::Command cmd;
+    cmd.set_correlation_id("r");
+    auto* raw = cmd.mutable_raw_capture();
     raw->set_action(action);
     if (!group.empty()) {
         raw->set_capture_group_id(group);
     }
-    return c;
+    return cmd;
 }
 
 TEST(RawCaptureHandlerTest, StartWithGroupIdStartsSink) {
@@ -115,10 +115,10 @@ TEST(RawCaptureHandlerTest, UnsetActionIsErrorNeverStart) {
     RawCaptureHandler handler(sink);
     // mutable_raw_capture() with no set_action(): has_action() is false, which
     // the proto3 default would otherwise read as RECORDING_ACTION_UNKNOWN.
-    sst_cam::Command c;
-    c.set_correlation_id("r");
-    c.mutable_raw_capture()->set_capture_group_id("g");  // group present, action absent
-    auto resp = handler.Handle(c);
+    sst_cam::Command cmd;
+    cmd.set_correlation_id("r");
+    cmd.mutable_raw_capture()->set_capture_group_id("g");  // group present, action absent
+    auto resp = handler.Handle(cmd);
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
     EXPECT_EQ(sink.starts, 0);  // absent action MUST NOT start
 }

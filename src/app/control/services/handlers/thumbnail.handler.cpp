@@ -37,9 +37,9 @@ auto ThumbnailHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
         return resp;
     }
 
-    sst_cam::ThumbnailResponse* tr = resp.mutable_thumbnail();
-    tr->set_jpeg_bytes(std::string(jpeg->begin(), jpeg->end()));
-    tr->set_capture_timestamp(now_ms_ ? now_ms_() : 0);
+    sst_cam::ThumbnailResponse* thumb = resp.mutable_thumbnail();
+    thumb->set_jpeg_bytes(std::string(jpeg->begin(), jpeg->end()));
+    thumb->set_capture_timestamp(now_ms_ ? now_ms_() : 0);
     resp.set_status(sst_cam::ResponseStatus::OK);
     return resp;
 }

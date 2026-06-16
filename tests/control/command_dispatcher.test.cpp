@@ -63,22 +63,22 @@ class InvalidArgHandler final : public ICommandHandler {
 };
 
 auto MakeDispatcher() -> CommandDispatcher {
-    CommandDispatcher d;
-    d.Register(std::make_shared<DeviceInfoHandler>());
-    d.Register(std::make_shared<ThrowingHandler>());
-    d.Register(std::make_shared<InvalidArgHandler>());
-    return d;
+    CommandDispatcher dispatcher;
+    dispatcher.Register(std::make_shared<DeviceInfoHandler>());
+    dispatcher.Register(std::make_shared<ThrowingHandler>());
+    dispatcher.Register(std::make_shared<InvalidArgHandler>());
+    return dispatcher;
 }
 
 // AE1 / R6: a command whose capability isn't wired returns UNSUPPORTED with the
 // same correlation_id and no payload — never silence.
 TEST(CommandDispatcherTest, UnregisteredCommandReturnsUnsupported) {
-    auto d = MakeDispatcher();
+    auto dispatcher = MakeDispatcher();
     sst_cam::Command cmd;
     cmd.set_correlation_id("corr-unsupported");
     cmd.mutable_list_recordings();  // no handler registered for this case
 
-    auto resp = d.Dispatch(cmd);
+    auto resp = dispatcher.Dispatch(cmd);
 
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::UNSUPPORTED);
     EXPECT_EQ(resp.correlation_id(), "corr-unsupported");
@@ -87,11 +87,11 @@ TEST(CommandDispatcherTest, UnregisteredCommandReturnsUnsupported) {
 
 // An empty command (no oneof set) is also UNSUPPORTED, not a crash.
 TEST(CommandDispatcherTest, EmptyCommandReturnsUnsupported) {
-    auto d = MakeDispatcher();
+    auto dispatcher = MakeDispatcher();
     sst_cam::Command cmd;
     cmd.set_correlation_id("corr-empty");
 
-    auto resp = d.Dispatch(cmd);
+    auto resp = dispatcher.Dispatch(cmd);
 
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::UNSUPPORTED);
     EXPECT_EQ(resp.correlation_id(), "corr-empty");
@@ -99,12 +99,12 @@ TEST(CommandDispatcherTest, EmptyCommandReturnsUnsupported) {
 
 // R4: a recognized command returns exactly one OK response with matching id.
 TEST(CommandDispatcherTest, RegisteredCommandReturnsOkWithEcho) {
-    auto d = MakeDispatcher();
+    auto dispatcher = MakeDispatcher();
     sst_cam::Command cmd;
     cmd.set_correlation_id("corr-ok");
     cmd.mutable_get_device_info();
 
-    auto resp = d.Dispatch(cmd);
+    auto resp = dispatcher.Dispatch(cmd);
 
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
     EXPECT_EQ(resp.correlation_id(), "corr-ok");
@@ -114,12 +114,12 @@ TEST(CommandDispatcherTest, RegisteredCommandReturnsOkWithEcho) {
 
 // R6: a handler that throws yields ERROR with a non-empty error_message.
 TEST(CommandDispatcherTest, ThrowingHandlerReturnsError) {
-    auto d = MakeDispatcher();
+    auto dispatcher = MakeDispatcher();
     sst_cam::Command cmd;
     cmd.set_correlation_id("corr-throw");
     cmd.mutable_recording_control()->set_action(sst_cam::RecordingAction::RECORDING_START);
 
-    auto resp = d.Dispatch(cmd);
+    auto resp = dispatcher.Dispatch(cmd);
 
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
     EXPECT_EQ(resp.correlation_id(), "corr-throw");
@@ -129,12 +129,12 @@ TEST(CommandDispatcherTest, ThrowingHandlerReturnsError) {
 // R5: a handler reporting invalid-argument surfaces as ERROR + message, with
 // the correlation_id still enforced by the dispatcher.
 TEST(CommandDispatcherTest, HandlerInvalidArgumentMapsToError) {
-    auto d = MakeDispatcher();
+    auto dispatcher = MakeDispatcher();
     sst_cam::Command cmd;
     cmd.set_correlation_id("corr-badarg");
     cmd.mutable_score_update()->set_team_id("nope");
 
-    auto resp = d.Dispatch(cmd);
+    auto resp = dispatcher.Dispatch(cmd);
 
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
     EXPECT_EQ(resp.correlation_id(), "corr-badarg");
@@ -144,22 +144,22 @@ TEST(CommandDispatcherTest, HandlerInvalidArgumentMapsToError) {
 // Two commands with distinct correlation_ids get responses with the respective
 // ids — no cross-talk.
 TEST(CommandDispatcherTest, DistinctCorrelationIdsDoNotCrossTalk) {
-    auto d = MakeDispatcher();
+    auto dispatcher = MakeDispatcher();
 
-    sst_cam::Command a;
-    a.set_correlation_id("aaa");
-    a.mutable_get_device_info();
-    sst_cam::Command b;
-    b.set_correlation_id("bbb");
-    b.mutable_list_recordings();
+    sst_cam::Command cmd_a;
+    cmd_a.set_correlation_id("aaa");
+    cmd_a.mutable_get_device_info();
+    sst_cam::Command cmd_b;
+    cmd_b.set_correlation_id("bbb");
+    cmd_b.mutable_list_recordings();
 
-    auto ra = d.Dispatch(a);
-    auto rb = d.Dispatch(b);
+    auto resp_a = dispatcher.Dispatch(cmd_a);
+    auto resp_b = dispatcher.Dispatch(cmd_b);
 
-    EXPECT_EQ(ra.correlation_id(), "aaa");
-    EXPECT_EQ(ra.status(), sst_cam::ResponseStatus::OK);
-    EXPECT_EQ(rb.correlation_id(), "bbb");
-    EXPECT_EQ(rb.status(), sst_cam::ResponseStatus::UNSUPPORTED);
+    EXPECT_EQ(resp_a.correlation_id(), "aaa");
+    EXPECT_EQ(resp_a.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(resp_b.correlation_id(), "bbb");
+    EXPECT_EQ(resp_b.status(), sst_cam::ResponseStatus::UNSUPPORTED);
 }
 
 }  // namespace
