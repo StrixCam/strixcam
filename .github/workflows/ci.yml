@@ -133,22 +133,13 @@ jobs:
             if [ -z "$files" ]; then
               echo "No C++ translation units found to tidy"; exit 1
             fi
-            # clang-tidy (host x86 clang) must parse aarch64 cross TUs, so point
-            # it at the Bootlin gcc toolchain + target + sysroot — otherwise it
-            # can't resolve libstdc++/system headers and errors on every file.
-            # Paths come from the container env (set by the toolchain/Dockerfile),
-            # with the known defaults as fallback.
-            TC_BIN="${BOOTLIN_TOOLCHAIN_BIN:-/l4t/toolchain/aarch64--glibc--stable-2022.08-1/bin}"
-            TC_ROOT="$(dirname "$TC_BIN")"
-            SR="${CROSS_SYSROOT:-/l4t/targetfs}"
-            # No blanket --warnings-as-errors='*' (the repo's .clang-tidy decides
-            # severity via WarningsAsErrors); enforcing all checks would block
-            # merges on pre-existing lint debt.
-            echo "$files" | xargs clang-tidy -p build/test \
-              --extra-arg=--target=aarch64-linux-gnu \
-              --extra-arg=--sysroot="$SR" \
-              --extra-arg=--gcc-toolchain="$TC_ROOT" \
-              --extra-arg=-Qunused-arguments
+            # Cross-toolchain flags live in scripts/tidy-args.sh — the single
+            # source of truth shared with scripts/fix.sh so the two can't drift.
+            # shellcheck source=scripts/tidy-args.sh
+            source scripts/tidy-args.sh
+            # No blanket --warnings-as-errors='*' here: the repo's .clang-tidy
+            # decides severity via WarningsAsErrors.
+            echo "$files" | xargs clang-tidy-14 -p build/test "${TIDY_EXTRA_ARGS[@]}"
 
   # ---------------------------------------------------------------------------
   # test — cross-build the test preset and run GTest under qemu (ctest)

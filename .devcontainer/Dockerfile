@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
         clangd \
         clang-format \
-        clang-tidy \
+        clang-tidy-14 \
         protobuf-compiler \
     && wget -qO - https://apt.kitware.com/keys/kitware-archive-latest.asc \
        | gpg --dearmor - > /usr/share/keyrings/kitware-archive-keyring.gpg \
