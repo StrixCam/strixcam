@@ -49,14 +49,10 @@ class FakeEncoder final : public sst::storage::IJpegEncoder {
    public:
     bool fail{false};
     std::uint32_t last_w{0}, last_h{0}, last_q{0};
-    // Signature is fixed by the IJpegEncoder port (external header); the override
-    // must mirror its three adjacent std::uint32_t params verbatim.
-    auto Encode(const sst::capture::Frame& /*frame*/,
-                std::uint32_t width,  // NOLINT(bugprone-easily-swappable-parameters)
-                std::uint32_t height, std::uint32_t quality)
-        -> std::optional<std::vector<std::uint8_t>> override {
-        last_w = width;
-        last_h = height;
+    auto Encode(const sst::capture::Frame& /*frame*/, sst::common::OutputSize size,
+                std::uint32_t quality) -> std::optional<std::vector<std::uint8_t>> override {
+        last_w = size.width;
+        last_h = size.height;
         last_q = quality;
         if (fail) {
             return std::nullopt;

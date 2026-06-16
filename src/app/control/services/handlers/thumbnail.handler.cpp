@@ -29,7 +29,8 @@ auto ThumbnailHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
         return resp;
     }
 
-    auto jpeg = encoder_.Encode(*frame, req.width(), req.height(), req.quality());
+    auto jpeg = encoder_.Encode(*frame, sst::common::OutputSize{req.width(), req.height()},
+                                req.quality());
     if (!jpeg || jpeg->empty()) {
         resp.set_status(sst_cam::ResponseStatus::ERROR);
         resp.set_error_message("thumbnail JPEG encode failed");

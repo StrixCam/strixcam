@@ -37,7 +37,7 @@ TEST(JpegEncoderTest, EncodesBgrFrameToJpegBytes) {
     constexpr std::uint8_t kFill = 120;
     auto [frame, storage] = MakeBgrFrame(kSrcWidth, kSrcHeight, kFill);
     OpenCvJpegEncoder encoder;
-    auto bytes = encoder.Encode(frame, /*width=*/0, /*height=*/0, /*quality=*/0);
+    auto bytes = encoder.Encode(frame, sst::common::OutputSize{0, 0}, /*quality=*/0);
     ASSERT_TRUE(bytes.has_value());
     ASSERT_GE(bytes->size(), 2U);
     EXPECT_EQ((*bytes)[0], 0xFF);  // JPEG Start Of Image marker
@@ -59,7 +59,7 @@ TEST(JpegEncoderTest, ResizesToRequestedDimensions) {
     constexpr std::uint32_t kQuality = 80;
     auto [frame, storage] = MakeBgrFrame(kSrcDim, kSrcDim, kFill);
     OpenCvJpegEncoder encoder;
-    auto small = encoder.Encode(frame, kOutDim, kOutDim, kQuality);
+    auto small = encoder.Encode(frame, sst::common::OutputSize{kOutDim, kOutDim}, kQuality);
     ASSERT_TRUE(small.has_value());
     EXPECT_FALSE(small->empty());
 
@@ -76,7 +76,7 @@ TEST(JpegEncoderTest, EmptyFrameReturnsNullopt) {
     frame.geometry = {.width = kDim, .height = kDim};
     frame.format = sst::common::PixelFormat::BGR8;
     OpenCvJpegEncoder encoder;
-    EXPECT_FALSE(encoder.Encode(frame, 0, 0, 0).has_value());
+    EXPECT_FALSE(encoder.Encode(frame, sst::common::OutputSize{0, 0}, 0).has_value());
 }
 
 }  // namespace
