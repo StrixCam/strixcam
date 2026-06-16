@@ -172,8 +172,9 @@ TEST(ControlPlaneIntegrationTest, RoutesFullLifecycleToReady) {
 
     control::CommandDispatcher dispatcher;
     dispatcher.Register(std::make_shared<control::SessionHandler>(manager));
-    dispatcher.Register(std::make_shared<control::WifiDirectHandler>(manager, wifi, dhcp, streaming,
-                                                                     kPreviewPort, kDownloadPort));
+    dispatcher.Register(std::make_shared<control::WifiDirectHandler>(
+        manager, wifi, dhcp, streaming, sst::control::PreviewPort{kPreviewPort},
+        sst::control::DownloadPort{kDownloadPort}));
     dispatcher.Register(std::make_shared<control::OverlayHandler>(manager, controller,
                                                                   [] { return std::uint64_t{0}; }));
 

@@ -126,7 +126,9 @@ TEST(WifiDirectHandlerTest, StartReportsGeneratedCredentials) {
     FakeWifi wifi;
     FakeDhcp dhcp;
     FakeStreaming streaming;
-    WifiDirectHandler handler(manager, wifi, dhcp, streaming, kPreviewPort, kDownloadPort);
+    WifiDirectHandler handler(manager, wifi, dhcp, streaming,
+                              sst::control::PreviewPort{kPreviewPort},
+                              sst::control::DownloadPort{kDownloadPort});
 
     auto resp = handler.Handle(StartCmd());
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
@@ -158,7 +160,9 @@ TEST(WifiDirectHandlerTest, GroupFailureErrors) {
     wifi.ok = false;
     FakeDhcp dhcp;
     FakeStreaming streaming;
-    WifiDirectHandler handler(manager, wifi, dhcp, streaming, kPreviewPort, kDownloadPort);
+    WifiDirectHandler handler(manager, wifi, dhcp, streaming,
+                              sst::control::PreviewPort{kPreviewPort},
+                              sst::control::DownloadPort{kDownloadPort});
 
     auto resp = handler.Handle(StartCmd());
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
@@ -176,7 +180,9 @@ TEST(WifiDirectHandlerTest, StartRollsBackWhenSessionRejects) {
     FakeWifi wifi;
     FakeDhcp dhcp;
     FakeStreaming streaming;
-    WifiDirectHandler handler(manager, wifi, dhcp, streaming, kPreviewPort, kDownloadPort);
+    WifiDirectHandler handler(manager, wifi, dhcp, streaming,
+                              sst::control::PreviewPort{kPreviewPort},
+                              sst::control::DownloadPort{kDownloadPort});
 
     auto resp = handler.Handle(StartCmd());
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
@@ -197,7 +203,9 @@ TEST(WifiDirectHandlerTest, StopTearsDownGroupAndDhcp) {
     FakeWifi wifi;
     FakeDhcp dhcp;
     FakeStreaming streaming;
-    WifiDirectHandler handler(manager, wifi, dhcp, streaming, kPreviewPort, kDownloadPort);
+    WifiDirectHandler handler(manager, wifi, dhcp, streaming,
+                              sst::control::PreviewPort{kPreviewPort},
+                              sst::control::DownloadPort{kDownloadPort});
     handler.Handle(StartCmd());
 
     auto resp = handler.Handle(StopCmd());
@@ -217,7 +225,9 @@ TEST(WifiDirectHandlerTest, PreviewFailureIsDegradedNotFatal) {
     FakeDhcp dhcp;
     FakeStreaming streaming;
     streaming.app_start_ok = false;  // RTSP preview fails to start
-    WifiDirectHandler handler(manager, wifi, dhcp, streaming, kPreviewPort, kDownloadPort);
+    WifiDirectHandler handler(manager, wifi, dhcp, streaming,
+                              sst::control::PreviewPort{kPreviewPort},
+                              sst::control::DownloadPort{kDownloadPort});
 
     auto resp = handler.Handle(StartCmd());
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
