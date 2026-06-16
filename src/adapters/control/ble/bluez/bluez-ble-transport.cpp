@@ -282,7 +282,8 @@ auto BluezBleTransport::SendResponse(const sst_cam::CommandResponse& response) -
     }
     const std::string wire = response.SerializeAsString();
     const std::uint32_t total = assembler_.BeginOutbound(
-        response.correlation_id(), wire, [this](const sst_cam::ChunkedPayload& chunk) {
+        sst::control::CorrelationId{response.correlation_id()}, wire,
+        [this](const sst_cam::ChunkedPayload& chunk) {
             // This closure is retained inside the assembler and invoked later by
             // OnAck. By then Stop()/disconnect may have reset gatt_app_; guard
             // against the null deref (the disconnect path also Reset()s the

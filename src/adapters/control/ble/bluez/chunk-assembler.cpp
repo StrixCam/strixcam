@@ -90,12 +90,9 @@ auto ChunkAssembler::OfferInbound(const sst_cam::ChunkedPayload& chunk) -> Offer
     return {.accepted = true, .payload = std::move(out)};
 }
 
-// Public API with distinct roles (transfer key vs. payload) consumed positionally
-// by external callers; reordering breaks the contract and a struct param would
-// obscure the call sites — hence the swappable-parameters suppression below.
-auto ChunkAssembler::BeginOutbound(const std::string& correlation_id,  // NOLINT(bugprone-easily-swappable-parameters)
-                                   const std::string& data,
-                                   const SendChunkFn& send) -> std::uint32_t {
+auto ChunkAssembler::BeginOutbound(const sst::control::CorrelationId& correlation_id,
+                                   const std::string& data, const SendChunkFn& send)
+    -> std::uint32_t {
     const std::size_t chunk_size = std::max<std::size_t>(cfg_.max_chunk_payload_bytes, 1);
     // At least one chunk, even for an empty payload.
     const std::uint32_t total =
@@ -105,7 +102,7 @@ auto ChunkAssembler::BeginOutbound(const std::string& correlation_id,  // NOLINT
     chunks.reserve(total);
     for (std::uint32_t i = 0; i < total; ++i) {
         sst_cam::ChunkedPayload chunk;
-        chunk.set_correlation_id(correlation_id);
+        chunk.set_correlation_id(correlation_id.value);
         chunk.set_chunk_index(i);
         chunk.set_total_chunks(total);
         const std::size_t off = static_cast<std::size_t>(i) * chunk_size;
@@ -124,7 +121,7 @@ auto ChunkAssembler::BeginOutbound(const std::string& correlation_id,  // NOLINT
         state.chunks = std::move(chunks);
         state.next_to_send = 1;
         state.send = send;
-        outbound_[correlation_id] = std::move(state);
+        outbound_[correlation_id.value] = std::move(state);
     }
 
     return total;

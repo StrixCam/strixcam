@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "bluetooth.pb.h"
+#include "domain/control/models/correlation-id.hpp"
 
 namespace sst::adapters::control {
 
@@ -65,7 +66,7 @@ class ChunkAssembler {
     // Split `data` for `correlation_id` and emit chunk 0 via `send`. Multi-chunk
     // transfers retain state until acked; a single-chunk transfer is fire-and-
     // forget. Returns the total chunk count.
-    auto BeginOutbound(const std::string& correlation_id, const std::string& data,
+    auto BeginOutbound(const sst::control::CorrelationId& correlation_id, const std::string& data,
                        const SendChunkFn& send) -> std::uint32_t;
 
     // Process a ChunkAck. If it acks the most-recently-sent chunk, the next

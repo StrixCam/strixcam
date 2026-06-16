@@ -145,7 +145,8 @@ TEST(ChunkAssemblerTest, OutboundIsGatedByChunkAck) {
     auto send = [&](const sst_cam::ChunkedPayload& chunk) { sent.push_back(chunk.chunk_index()); };
 
     const std::string data = "abcdefghij";  // 10 bytes -> 3 chunks of 4
-    const std::uint32_t total = assembler.BeginOutbound("r1", data, send);
+    const std::uint32_t total =
+        assembler.BeginOutbound(sst::control::CorrelationId{"r1"}, data, send);
     ASSERT_EQ(total, 3U);
 
     EXPECT_EQ(sent, (std::vector<std::uint32_t>{0}));      // only chunk 0 out so far
@@ -164,7 +165,7 @@ TEST(ChunkAssemblerTest, SingleChunkOutboundNeedsNoAck) {
     std::vector<std::uint32_t> sent;
     auto send = [&](const sst_cam::ChunkedPayload& chunk) { sent.push_back(chunk.chunk_index()); };
 
-    EXPECT_EQ(assembler.BeginOutbound("r2", "tiny", send), 1U);
+    EXPECT_EQ(assembler.BeginOutbound(sst::control::CorrelationId{"r2"}, "tiny", send), 1U);
     EXPECT_EQ(sent.size(), 1U);
     EXPECT_EQ(assembler.PendingOutboundCount(), 0U);
     // A stray ack for an unknown transfer is harmless.
@@ -304,7 +305,7 @@ TEST(ChunkAssemblerTest, ResetClearsInboundAndOutboundState) {
 
     // A multi-chunk outbound transfer awaiting acks.
     auto send = [](const sst_cam::ChunkedPayload&) {};
-    ASSERT_EQ(assembler.BeginOutbound("out", "abcdefghij", send), 3U);
+    ASSERT_EQ(assembler.BeginOutbound(sst::control::CorrelationId{"out"}, "abcdefghij", send), 3U);
     EXPECT_EQ(assembler.PendingOutboundCount(), 1U);
 
     assembler.Reset();
@@ -346,7 +347,8 @@ TEST(ChunkAssemblerTest, OutboundSendClosureToleratesNulledTarget) {
     auto gatt = std::make_unique<FakeGatt>();
     auto send = MakeGuardedSend(&gatt);
 
-    ASSERT_EQ(assembler.BeginOutbound("g", "abcdefgh", send), 2U);  // 8 bytes / 4 -> 2 chunks
+    ASSERT_EQ(assembler.BeginOutbound(sst::control::CorrelationId{"g"}, "abcdefgh", send),
+              2U);  // 8 bytes / 4 -> 2 chunks
     EXPECT_EQ(gatt->notifications, 1);                              // chunk 0 sent immediately
 
     // Simulate Stop(): the GATT app is destroyed. The retained closure must not
