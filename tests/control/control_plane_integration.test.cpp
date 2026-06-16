@@ -167,7 +167,8 @@ TEST(ControlPlaneIntegrationTest, RoutesFullLifecycleToReady) {
     FakeRenderer renderer;
     FakeSink sink;
     FakeStreaming streaming;
-    overlay::OverlayController controller(renderer, sink, kCanvasEdge, kCanvasEdge);
+    overlay::OverlayController controller(renderer, sink,
+                                          sst::common::OutputSize{kCanvasEdge, kCanvasEdge});
 
     control::CommandDispatcher dispatcher;
     dispatcher.Register(std::make_shared<control::SessionHandler>(manager));

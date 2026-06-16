@@ -6,14 +6,9 @@
 
 namespace sst::overlay {
 
-// Public constructor declared in overlay-controller.hpp and instantiated from
-// tests; reordering would change that cross-file signature. width/height is the
-// conventional, self-documenting order for output dimensions.
-OverlayController::OverlayController(
-    IOverlayRenderer& renderer, IOverlaySink& sink,
-    std::uint32_t out_width,  // NOLINT(bugprone-easily-swappable-parameters)
-    std::uint32_t out_height)
-    : renderer_(renderer), sink_(sink), out_width_(out_width), out_height_(out_height) {}
+OverlayController::OverlayController(IOverlayRenderer& renderer, IOverlaySink& sink,
+                                    common::OutputSize out_size)
+    : renderer_(renderer), sink_(sink), out_size_(out_size) {}
 
 auto OverlayController::SetLayout(OverlayLayout layout) -> void {
     std::lock_guard lock(mtx_);
@@ -60,7 +55,7 @@ auto OverlayController::Refresh(std::uint64_t now_ms) -> bool {
     last_signature_ = sig;
     pushed_once_ = true;
 
-    RgbaImage frame = renderer_.Render(scene, out_width_, out_height_);
+    RgbaImage frame = renderer_.Render(scene, out_size_.width, out_size_.height);
     sink_.PushFrame(frame);
     ++push_count_;
     return true;

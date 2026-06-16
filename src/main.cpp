@@ -139,9 +139,10 @@ auto main() -> int {
     // each final BGR frame (CPU composite, single path for all output branches).
     sst::adapters::overlay::CairoOverlayRenderer overlay_renderer;
     sst::adapters::overlay::CachingOverlaySink overlay_sink;
-    sst::overlay::OverlayController overlay_controller(overlay_renderer, overlay_sink,
-                                                       sst::runtime_defaults::kOverlayWidth,
-                                                       sst::runtime_defaults::kOverlayHeight);
+    sst::overlay::OverlayController overlay_controller(
+        overlay_renderer, overlay_sink,
+        sst::common::OutputSize{sst::runtime_defaults::kOverlayWidth,
+                                sst::runtime_defaults::kOverlayHeight});
 
     // ── Downloads ──────────────────────────────────────────────────────
     sst::network::DownloadServer download_server(video_root, NowUnixSeconds);

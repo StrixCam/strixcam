@@ -56,7 +56,7 @@ struct Fixture {
     FakeRenderer renderer;
     FakeSink sink;
     sst::session::SessionManager sm{cleanup};
-    OverlayController controller{renderer, sink, kOverlayDim, kOverlayDim};
+    OverlayController controller{renderer, sink, sst::common::OutputSize{kOverlayDim, kOverlayDim}};
 
     Fixture() {
         sst::session::SessionConfig cfg;

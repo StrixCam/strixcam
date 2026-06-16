@@ -7,13 +7,8 @@
 
 namespace sst::adapters::overlay {
 
-// Public constructor declared in gst-overlay-compositor.hpp and instantiated from
-// tests; reordering would change that cross-file signature. width/height is the
-// conventional, self-documenting order for frame dimensions.
-GstOverlayCompositor::GstOverlayCompositor(
-    std::uint32_t width,  // NOLINT(bugprone-easily-swappable-parameters)
-    std::uint32_t height)
-    : width_(width), height_(height) {
+GstOverlayCompositor::GstOverlayCompositor(sst::common::OutputSize size)
+    : width_(size.width), height_(size.height) {
     gst_init(nullptr, nullptr);
 
     appsrc_ = gst_element_factory_make("appsrc", "overlay_src");

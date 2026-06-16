@@ -15,7 +15,7 @@ constexpr std::uint32_t kRgbaBytesPerPixel = 4;
 constexpr std::uint8_t kFillByte = 0x80;  // mid-gray test fill
 
 TEST(GstOverlayE2E, AppSrcAcceptsRgbaPush) {
-    sst::adapters::overlay::GstOverlayCompositor compositor(kWidth, kHeight);
+    sst::adapters::overlay::GstOverlayCompositor compositor(sst::common::OutputSize{kWidth, kHeight});
     ASSERT_NE(compositor.AppSrc(), nullptr);
 
     sst::overlay::RgbaImage frame;

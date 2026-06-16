@@ -74,7 +74,7 @@ auto ScoreLayout() -> OverlayLayout {
 TEST(OverlayControllerTest, PushesOnlyOnChange) {
     FakeRenderer renderer;
     FakeSink sink;
-    OverlayController controller(renderer, sink, kCanvasSize, kCanvasSize);
+    OverlayController controller(renderer, sink, sst::common::OutputSize{kCanvasSize, kCanvasSize});
     controller.SetLayout(ScoreLayout());
 
     BindingData data;
@@ -105,7 +105,7 @@ TEST(OverlayControllerTest, NoPushWhenNothingChanges) {
     FakeSink sink;
     constexpr std::uint32_t kOutputSize = 64;
     constexpr int kRefreshAttempts = 5;
-    OverlayController controller(renderer, sink, kOutputSize, kOutputSize);
+    OverlayController controller(renderer, sink, sst::common::OutputSize{kOutputSize, kOutputSize});
     controller.SetLayout(ScoreLayout());
     controller.SetBindingData(BindingData{});
     EXPECT_TRUE(controller.Refresh(0));
