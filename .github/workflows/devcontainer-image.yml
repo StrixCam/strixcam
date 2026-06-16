@@ -30,6 +30,13 @@ on:
       - ".devcontainer/**"
   workflow_dispatch:
 
+# Serialize publishes: two overlapping .devcontainer/** pushes would otherwise
+# race on the :latest tag and the digest commit's push to main. Do not cancel an
+# in-progress publish — a half-pushed image is worse than a queued one.
+concurrency:
+  group: devcontainer-image
+  cancel-in-progress: false
+
 # Note: a workflow-level permissions block is intentionally omitted so each job
 # can request the narrowest set it needs.
 
@@ -44,9 +51,12 @@ jobs:
       contents: write # only to commit .devcontainer/image-digest back to main
       packages: write # only to push the image to GHCR
     steps:
+      # Third-party actions are SHA-pinned (tag in trailing comment) — this is a
+      # privileged push-to-main + packages:write job, so a mutable-ref overwrite
+      # upstream must not silently run in it. Bump deliberately (e.g. Dependabot).
       # The ~37 GB L4T sysroot unpack exhausts a stock hosted runner's disk.
       - name: Free up disk space (host)
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
         with:
           tool-cache: true
           large-packages: true
@@ -54,12 +64,12 @@ jobs:
           swap-storage: true
 
       - name: Checkout (with proto submodule)
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           submodules: recursive
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -67,7 +77,7 @@ jobs:
 
       # Build the devcontainer exactly as VS Code / CI does, and push it.
       - name: Build + push devcontainer image
-        uses: devcontainers/ci@v0.3
+        uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3
         with:
           imageName: ${{ env.IMAGE }}
           imageTag: latest
@@ -79,6 +89,12 @@ jobs:
           set -euo pipefail
           digest=$(docker buildx imagetools inspect "${IMAGE}:latest" \
             --format '{{.Manifest.Digest}}')
+          # imagetools exits 0 even when the template yields an empty string; a
+          # blank digest would commit "ghcr.io/...@" and break every consumer.
+          case "${digest}" in
+            sha256:*) ;;
+            *) echo "ERROR: imagetools returned no sha256 digest: '${digest}'" >&2; exit 1 ;;
+          esac
           echo "Published ${IMAGE}@${digest}"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
           echo "${IMAGE}@${digest}" > .devcontainer/image-digest
@@ -100,7 +116,11 @@ jobs:
           git commit -m "chore(devcontainer): record published image digest [skip ci]"
           git push origin HEAD:main
 
+      # if: always() so the digest is surfaced even when "Record digest on main"
+      # fails (e.g. the branch ruleset rejects the bot push) — the header comment
+      # promises the digest is recoverable from the summary for a manual bump.
       - name: Summary
+        if: always()
         run: |
           {
             echo "### devcontainer image published"

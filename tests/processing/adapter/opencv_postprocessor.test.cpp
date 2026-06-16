@@ -52,7 +52,7 @@ TEST(OpenCvPostprocessorTest, CropAndResizeProducesExpectedDimsAndFormat) {
     OpenCvPostprocessor post{PostprocessConfig{
         .output_width = 50, .output_height = 50, .output_format = sst::common::PixelFormat::BGR8}};
     // Red-ish in YUV (BT.601): Y=76, U=84, V=255.
-    auto src = MakeNv12Frame(200, 200, /*y=*/76, /*u=*/84, /*v=*/255);
+    auto src = MakeNv12Frame(200, 200, /*luma=*/76, /*chroma_u=*/84, /*chroma_v=*/255);
 
     auto out = post.Process(src, CropRect{0, 0, 100, 100});
     ASSERT_TRUE(out.has_value());

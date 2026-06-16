@@ -33,5 +33,7 @@ Checks: >
 # Promote every emitted diagnostic to an error. Combined with the clean tree,
 # any newly introduced lint violation fails `tidy` (and blocks the PR).
 WarningsAsErrors: '*'
-HeaderFilterRegex: 'src/.*'
+# Gate headers under both src/ and tests/ — a warning resident in a shared test
+# header (e.g. tests/processing/synthetic_frames.hpp) must not slip the gate.
+HeaderFilterRegex: '(src|tests)/.*'
 FormatStyle: google

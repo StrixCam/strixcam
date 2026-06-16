@@ -95,9 +95,9 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     auto resp = handler.Handle(TelemetryCommand());
 
     ASSERT_EQ(resp.payload_case(), sst_cam::CommandResponse::kTelemetry);
-    EXPECT_EQ(resp.telemetry().storage_free_bytes(), 1000U);
-    EXPECT_EQ(resp.telemetry().storage_total_bytes(), 4000U);
-    EXPECT_EQ(resp.telemetry().uptime_seconds(), 12345U);
+    EXPECT_EQ(resp.telemetry().storage_free_bytes(), kStorageFreeBytes);
+    EXPECT_EQ(resp.telemetry().storage_total_bytes(), kStorageTotalBytes);
+    EXPECT_EQ(resp.telemetry().uptime_seconds(), kUptimeSeconds);
     EXPECT_TRUE(resp.telemetry().is_recording());
     EXPECT_FALSE(resp.telemetry().is_streaming());
     // Set independently of is_recording (which is true here): proves field 14 is

@@ -88,8 +88,7 @@ auto HttpDownloadServer::Start() -> bool {
         return true;
     }
     // Bind synchronously so we can report bind failure to the caller.
-    const int bound =
-        static_cast<const int>(server_->bind_to_port(bind_address_, port_));
+    const int bound = static_cast<int>(server_->bind_to_port(bind_address_, port_));
     if (bound <= 0) {
         spdlog::error("HttpDownloadServer: bind {}:{} failed", bind_address_, port_);
         return false;
