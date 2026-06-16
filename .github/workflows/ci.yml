@@ -84,12 +84,10 @@ jobs:
   tidy:
     name: tidy
     runs-on: ubuntu-latest
-    # Advisory for now: the cross-toolchain flags below fixed clang-tidy's header
-    # resolution (no more "Error while processing"), but a residual diagnostic
-    # remains. It is visible in the Actions UI for this job (the devcontainers/ci
-    # step output) — finish it in the devcontainer, then drop continue-on-error
-    # to make tidy a hard gate again.
-    continue-on-error: true
+    # Hard gate: the cross-toolchain flags (scripts/tidy-args.sh) resolve all
+    # std/system headers, the tree is clean, and .clang-tidy promotes every
+    # diagnostic to an error via WarningsAsErrors. A new lint violation fails the
+    # PR. clang-tidy is version-locked to clang-tidy-14 (see .clang-tidy).
     steps:
       # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
       # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
