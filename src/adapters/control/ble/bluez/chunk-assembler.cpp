@@ -141,7 +141,7 @@ auto ChunkAssembler::OnAck(const std::string& correlation_id, std::uint32_t chun
         return false;
     }
 
-    const std::uint32_t total = static_cast<std::uint32_t>(state.chunks.size());
+    const auto total = static_cast<std::uint32_t>(state.chunks.size());
     if (state.next_to_send < total) {
         if (state.send) {
             state.send(state.chunks[state.next_to_send]);

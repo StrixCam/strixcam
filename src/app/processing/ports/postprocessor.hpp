@@ -13,9 +13,9 @@ class IPostprocessor {
     virtual ~IPostprocessor() = default;
 
     IPostprocessor(const IPostprocessor&) = delete;
-    IPostprocessor& operator=(const IPostprocessor&) = delete;
+    auto operator=(const IPostprocessor&) -> IPostprocessor& = delete;
     IPostprocessor(IPostprocessor&&) = delete;
-    IPostprocessor& operator=(IPostprocessor&&) = delete;
+    auto operator=(IPostprocessor&&) -> IPostprocessor& = delete;
 
     // Crop a region of `source` and resize it to the configured output
     // resolution and format. `crop` is in source-frame pixel coordinates.

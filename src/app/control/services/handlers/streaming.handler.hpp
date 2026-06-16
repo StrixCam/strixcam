@@ -19,7 +19,8 @@ class StreamingHandler final : public ICommandHandler {
    public:
     explicit StreamingHandler(sst::streaming::IStreamingService& streaming);
 
-    auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
+    [[nodiscard]] auto HandledCases() const
+        -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
 
    private:

@@ -63,7 +63,7 @@ auto PumpFrames(Sink& sink, int frame_count) -> void {
     auto next = std::chrono::steady_clock::now();
     for (int i = 0; i < frame_count; ++i) {
         std::shared_ptr<std::vector<std::uint8_t>> storage;
-        const std::uint8_t value = static_cast<std::uint8_t>(i & 0xFF);
+        const auto value = static_cast<std::uint8_t>(i & 0xFF);
         auto frame = MakeBgr8Frame(static_cast<std::uint64_t>(i), value, storage);
         sink.Push(frame);
         next += interval;

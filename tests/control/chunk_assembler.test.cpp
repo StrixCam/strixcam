@@ -36,7 +36,7 @@ auto SplitCommand(const sst_cam::Command& cmd, const std::string& corr, std::siz
     -> std::vector<sst_cam::ChunkedPayload> {
     const std::string wire = cmd.SerializeAsString();
     std::vector<sst_cam::ChunkedPayload> out;
-    const std::uint32_t total =
+    const auto total =
         static_cast<std::uint32_t>((wire.size() + chunk_size - 1) / chunk_size);
     for (std::uint32_t i = 0; i < total; ++i) {
         out.push_back(MakeChunk(corr, i, total, wire.substr(i * chunk_size, chunk_size)));

@@ -109,19 +109,20 @@ auto WpaWifiManager::SendCommand(std::string_view cmd) -> std::optional<std::str
     return std::string(buf.data(), static_cast<std::size_t>(n));
 }
 
-auto WpaWifiManager::ReadUntil(std::string_view marker) -> std::optional<std::string> {
-    for (int i = 0; i < kMaxEventReads; ++i) {
-        std::array<char, kRecvBufSize> buf{};
-        const auto n = ::recv(sock_, buf.data(), buf.size() - 1, 0);
-        if (n <= 0) {
-            return std::nullopt;  // timeout / closed
-        }
-        std::string msg(buf.data(), static_cast<std::size_t>(n));
-        if (msg.find(marker) != std::string::npos) {
-            return msg;
-        }
+auto WpaWifiManager::ReadUntil(std::string_view marker) const
+    -> std::optional<std::string> {
+  for (int i = 0; i < kMaxEventReads; ++i) {
+    std::array<char, kRecvBufSize> buf{};
+    const auto n = ::recv(sock_, buf.data(), buf.size() - 1, 0);
+    if (n <= 0) {
+      return std::nullopt;  // timeout / closed
     }
-    return std::nullopt;
+    std::string msg(buf.data(), static_cast<std::size_t>(n));
+    if (msg.find(marker) != std::string::npos) {
+      return msg;
+    }
+  }
+  return std::nullopt;
 }
 
 auto WpaWifiManager::StartP2pGroupOwner() -> std::optional<sst::network::WifiDirectGroup> {

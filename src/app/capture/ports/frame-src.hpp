@@ -20,7 +20,7 @@ class ICaptureFrame {
         Stop();
         Start();
     };
-    virtual auto IsRunning() const -> bool = 0;
+    [[nodiscard]] virtual auto IsRunning() const -> bool = 0;
     virtual auto Capture() -> std::optional<Frame> = 0;
 };
 

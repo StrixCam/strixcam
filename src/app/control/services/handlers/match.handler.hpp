@@ -22,7 +22,8 @@ class MatchHandler final : public ICommandHandler {
     MatchHandler(sst::session::ISessionManager& session,
                  sst::overlay::OverlayController& controller, Clock now_ms);
 
-    auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
+    [[nodiscard]] auto HandledCases() const
+        -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
 
     // Display-only clock tick (driven ~1 Hz by the runtime, U14). Advances the

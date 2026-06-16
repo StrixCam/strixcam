@@ -27,8 +27,8 @@ TEST(ProtoRoundtrip, CommandPushOverlayLayoutOneofSurvives) {
 
     EXPECT_EQ(parsed.correlation_id(), cmd.correlation_id());
     EXPECT_EQ(parsed.payload_case(), sst_cam::Command::kPushOverlayLayout);
-    EXPECT_EQ(parsed.push_overlay_layout().layout().canvas_width(), 1920u);
-    EXPECT_EQ(parsed.push_overlay_layout().layout().canvas_height(), 1080u);
+    EXPECT_EQ(parsed.push_overlay_layout().layout().canvas_width(), 1920U);
+    EXPECT_EQ(parsed.push_overlay_layout().layout().canvas_height(), 1080U);
 }
 
 TEST(ProtoRoundtrip, ChunkedPayloadPreservesBytesAndIndices) {
@@ -47,8 +47,8 @@ TEST(ProtoRoundtrip, ChunkedPayloadPreservesBytesAndIndices) {
     ASSERT_TRUE(parsed.ParseFromString(wire));
 
     EXPECT_EQ(parsed.correlation_id(), "corr-123");
-    EXPECT_EQ(parsed.chunk_index(), 2u);
-    EXPECT_EQ(parsed.total_chunks(), 5u);
+    EXPECT_EQ(parsed.chunk_index(), 2U);
+    EXPECT_EQ(parsed.total_chunks(), 5U);
     EXPECT_EQ(parsed.data(), blob);
 }
 

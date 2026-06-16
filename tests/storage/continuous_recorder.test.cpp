@@ -39,7 +39,9 @@ class FakeRecorder final : public sst::storage::IContinuousRecorder {
         return true;
     }
     [[nodiscard]] auto IsRunning() const -> bool override { return running; }
-    auto Push(const sst::capture::Frame&) -> void override { ++pushes; }
+    auto Push(const sst::capture::Frame& /*frame*/) -> void override {
+      ++pushes;
+    }
 
     bool start_ok{true};
     bool running{false};
@@ -52,10 +54,11 @@ class FakeRecorder final : public sst::storage::IContinuousRecorder {
 
 class FakeThumbnailWriter final : public sst::storage::IThumbnailWriter {
    public:
-    auto Write(const sst::capture::Frame&, const fs::path& path) -> bool override {
-        ++writes;
-        written_path = path;
-        return true;
+    auto Write(const sst::capture::Frame& /*frame*/, const fs::path& path)
+        -> bool override {
+      ++writes;
+      written_path = path;
+      return true;
     }
     int writes{0};
     fs::path written_path;

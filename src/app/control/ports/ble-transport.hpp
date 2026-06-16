@@ -24,7 +24,7 @@ class IBleTransport {
 
     virtual auto Start() -> void = 0;
     virtual auto Stop() -> void = 0;
-    virtual auto IsRunning() const -> bool = 0;
+    [[nodiscard]] virtual auto IsRunning() const -> bool = 0;
 
     virtual auto SetOnCommand(CommandHandler handler) -> void = 0;
 

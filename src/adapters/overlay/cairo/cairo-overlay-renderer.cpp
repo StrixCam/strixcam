@@ -36,18 +36,24 @@ auto ParseHexColor(const std::string& hex) -> Rgb {
         return {};
     }
     auto hex_byte = [&](std::size_t off) -> int {
-        auto nib = [](char c) -> int {
-            if (c >= '0' && c <= '9') return c - '0';
-            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-            return -1;
-        };
-        const int hi = nib(s[off]);
-        const int lo = nib(s[off + 1]);
-        if (hi < 0 || lo < 0) {
-            return -1;
+      auto nib = [](char c) -> int {
+        if (c >= '0' && c <= '9') {
+          return c - '0';
         }
-        return (hi << 4) | lo;
+        if (c >= 'a' && c <= 'f') {
+          return c - 'a' + 10;
+        }
+        if (c >= 'A' && c <= 'F') {
+          return c - 'A' + 10;
+        }
+        return -1;
+      };
+      const int hi = nib(s[off]);
+      const int lo = nib(s[off + 1]);
+      if (hi < 0 || lo < 0) {
+        return -1;
+      }
+      return (hi << 4) | lo;
     };
     const int r = hex_byte(0);
     const int g = hex_byte(2);
@@ -90,7 +96,7 @@ void DrawText(cairo_t* cr, const RenderElement& e) {
     const double y = e.bounds.y1;
     const double w = e.bounds.x2 - e.bounds.x1;
     const double h = e.bounds.y2 - e.bounds.y1;
-    const double opacity = static_cast<double>(e.style.opacity);
+    const auto opacity = static_cast<double>(e.style.opacity);
 
     const bool have_glyphs = text_color.valid && !e.text.empty();
     // Nothing to paint: no background fill and no drawable glyphs.
@@ -195,7 +201,7 @@ void DrawElement(cairo_t* cr, const RenderElement& e) {
     const double y = e.bounds.y1;
     const double w = e.bounds.x2 - e.bounds.x1;
     const double h = e.bounds.y2 - e.bounds.y1;
-    const double opacity = static_cast<double>(e.style.opacity);
+    const auto opacity = static_cast<double>(e.style.opacity);
 
     switch (e.shape) {
         case OverlayShape::kRect: {

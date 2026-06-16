@@ -33,15 +33,16 @@ class FakeEncoder final : public sst::storage::IJpegEncoder {
    public:
     bool fail{false};
     std::uint32_t last_w{0}, last_h{0}, last_q{0};
-    auto Encode(const sst::capture::Frame&, std::uint32_t w, std::uint32_t h, std::uint32_t q)
+    auto Encode(const sst::capture::Frame& /*frame*/, std::uint32_t w,
+                std::uint32_t h, std::uint32_t q)
         -> std::optional<std::vector<std::uint8_t>> override {
-        last_w = w;
-        last_h = h;
-        last_q = q;
-        if (fail) {
-            return std::nullopt;
-        }
-        return std::vector<std::uint8_t>{0xFF, 0xD8, 0x01, 0x02};
+      last_w = w;
+      last_h = h;
+      last_q = q;
+      if (fail) {
+        return std::nullopt;
+      }
+      return std::vector<std::uint8_t>{0xFF, 0xD8, 0x01, 0x02};
     }
 };
 

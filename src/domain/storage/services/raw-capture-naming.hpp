@@ -6,8 +6,6 @@
 
 #include "domain/storage/models/raw-capture-identity.hpp"
 
-namespace sst::storage {
-
 // On-disk naming convention for raw dual-camera capture files, shared by the
 // writer (raw-capture sink) and the enumerator (download server) so the two
 // never drift on the format.
@@ -20,7 +18,7 @@ namespace sst::storage {
 // fixed capture geometry); no per-frame header. Double-underscore delimiters
 // keep parsing unambiguous as long as the group id contains no `__` (app mints
 // UUIDs, which do not).
-namespace raw_capture_naming {
+namespace sst::storage::raw_capture_naming {
 
 inline constexpr std::string_view kPrefix = "raw__";
 inline constexpr std::string_view kCameraMarker = "__cam";
@@ -67,6 +65,4 @@ inline auto ParseFileName(std::string_view file_name) -> std::optional<RawCaptur
     return RawCaptureIdentity{.capture_group_id = std::string(group), .camera_index = camera_index};
 }
 
-}  // namespace raw_capture_naming
-
-}  // namespace sst::storage
+}  // namespace sst::storage::raw_capture_naming

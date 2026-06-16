@@ -116,17 +116,18 @@ class StreamingServiceTest : public ::testing::Test {
         service_ = std::make_unique<StreamingService>(std::move(app), sink_.MakeFactory());
     }
 
-    auto MakePlatformConfig(std::int64_t id, std::string name = "test") -> PlatformStreamConfig {
-        PlatformStreamConfig cfg;
-        cfg.stream_id = id;
-        cfg.name = std::move(name);
-        cfg.url = "rtmp://example.com/live";
-        cfg.stream_key = "abcd-1234";
-        cfg.width = 1920;
-        cfg.height = 1080;
-        cfg.framerate = 30;
-        cfg.bitrate_kbps = 4000;
-        return cfg;
+    static auto MakePlatformConfig(std::int64_t id, std::string name = "test")
+        -> PlatformStreamConfig {
+      PlatformStreamConfig cfg;
+      cfg.stream_id = id;
+      cfg.name = std::move(name);
+      cfg.url = "rtmp://example.com/live";
+      cfg.stream_key = "abcd-1234";
+      cfg.width = 1920;
+      cfg.height = 1080;
+      cfg.framerate = 30;
+      cfg.bitrate_kbps = 4000;
+      return cfg;
     }
 
     FakeAppStreamServer* app_{nullptr};

@@ -21,18 +21,19 @@ using sst::control::MatchHandler;
 
 class FakeRenderer final : public IOverlayRenderer {
    public:
-    auto Render(const RenderScene&, std::uint32_t w, std::uint32_t h) -> RgbaImage override {
-        RgbaImage img;
-        img.width = w;
-        img.height = h;
-        img.stride = w * 4;
-        img.pixels.assign(static_cast<std::size_t>(img.stride) * h, 0);
-        return img;
+    auto Render(const RenderScene& /*scene*/, std::uint32_t w, std::uint32_t h)
+        -> RgbaImage override {
+      RgbaImage img;
+      img.width = w;
+      img.height = h;
+      img.stride = w * 4;
+      img.pixels.assign(static_cast<std::size_t>(img.stride) * h, 0);
+      return img;
     }
 };
 class FakeSink final : public IOverlaySink {
    public:
-    auto PushFrame(const RgbaImage&) -> void override {}
+    auto PushFrame(const RgbaImage& /*frame*/) -> void override {}
 };
 class FakeCleanup final : public sst::session::ISessionCleanup {
    public:

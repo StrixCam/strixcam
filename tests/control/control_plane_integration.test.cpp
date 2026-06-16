@@ -50,34 +50,43 @@ class FakeWifi final : public control::IWifiManager {
 };
 class FakeDhcp final : public control::IDhcpServer {
    public:
-    auto Start(const std::string&, const std::string&) -> bool override { return true; }
+    auto Start(const std::string& /*group_interface*/,
+               const std::string& /*go_ip*/) -> bool override {
+      return true;
+    }
     auto Stop() -> void override {}
 };
 class FakeRenderer final : public overlay::IOverlayRenderer {
    public:
-    auto Render(const overlay::RenderScene&, std::uint32_t w, std::uint32_t h)
-        -> overlay::RgbaImage override {
-        overlay::RgbaImage img;
-        img.width = w;
-        img.height = h;
-        img.stride = w * 4;
-        img.pixels.assign(static_cast<std::size_t>(img.stride) * h, 0);
-        return img;
+    auto Render(const overlay::RenderScene& /*scene*/, std::uint32_t w,
+                std::uint32_t h) -> overlay::RgbaImage override {
+      overlay::RgbaImage img;
+      img.width = w;
+      img.height = h;
+      img.stride = w * 4;
+      img.pixels.assign(static_cast<std::size_t>(img.stride) * h, 0);
+      return img;
     }
 };
 class FakeSink final : public overlay::IOverlaySink {
    public:
-    auto PushFrame(const overlay::RgbaImage&) -> void override {}
+    auto PushFrame(const overlay::RgbaImage& /*frame*/) -> void override {}
 };
 class FakeStreaming final : public streaming::IStreamingService {
    public:
-    auto StartAppStream(const streaming::AppStreamConfig&) -> bool override { return true; }
+    auto StartAppStream(const streaming::AppStreamConfig& /*config*/)
+        -> bool override {
+      return true;
+    }
     auto StopAppStream() -> bool override { return true; }
     [[nodiscard]] auto IsAppStreamRunning() const -> bool override { return false; }
-    auto StartPlatformStream(const streaming::PlatformStreamConfig&) -> bool override {
-        return true;
+    auto StartPlatformStream(const streaming::PlatformStreamConfig& /*config*/)
+        -> bool override {
+      return true;
     }
-    auto StopPlatformStream(std::int64_t) -> bool override { return true; }
+    auto StopPlatformStream(std::int64_t /*stream_id*/) -> bool override {
+      return true;
+    }
     [[nodiscard]] auto ListActivePlatformStreams() const
         -> std::vector<streaming::ActivePlatformStream> override {
         return {};
