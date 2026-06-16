@@ -11,17 +11,21 @@
 # explicitly in CI + scripts/fix.sh). See CLAUDE.md "Linting & formatting".
 #
 # Enforced families (none removed — the tree passes all of them):
-#   bugprone-*     real defect classes  — FLOOR, never relaxed
-#   performance-*  real cost classes    — FLOOR, never relaxed
+#   bugprone-*     real defect classes  — FLOOR: fix, or a justified + sanctioned
+#                  per-site NOLINT — never a blanket removal from this list.
+#   performance-*  real cost classes    — FLOOR: same rule as bugprone-* above.
 #   modernize-*    C++20 idiom
 #   readability-*  clarity — includes magic-numbers, identifier-length and
 #                  cognitive-complexity, which were driven to zero, NOT relaxed
 #   google-*       Google C++ style
 #
-# Genuine false positives / idiomatic-fire sites (e.g. the self-evident 0..15
-# UUID byte-index sequence, interface-fixed parameter order, dense self-evident
-# gtest literals) are suppressed per-line with a justified `// NOLINT(<check>)`,
-# never by dropping a check from this list.
+# Floor suppressions are per-LINE only and must be sanctioned. A bugprone-* /
+# performance-* NOLINT is allowed only when the line also carries the sanction
+# marker `// floor-ok: <reason>` giving the per-site justification (e.g. the
+# self-evident 0..15 UUID byte-index sequence, an external library-fixed
+# parameter order, or dense self-evident gtest literals). New unsanctioned floor
+# NOLINTs fail CI via scripts/check-floor-nolints.sh — the marker is what the
+# guard greps for. Never drop a check from the list to silence a finding.
 Checks: >
   -*,
   bugprone-*,

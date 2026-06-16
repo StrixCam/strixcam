@@ -105,6 +105,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          # Full history so the floor-NOLINT guard can diff against the PR base.
+          fetch-depth: 0
+
+      # Cheap, host-side gate — no devcontainer needed. Fails the PR if it adds a
+      # bugprone-*/performance-* NOLINT without a `// floor-ok:` sanction marker
+      # (see .clang-tidy floor policy). Diff-scoped against the PR base, so only
+      # newly introduced suppressions are gated.
+      - name: Floor-NOLINT guard (diff-scoped)
+        run: scripts/check-floor-nolints.sh "${{ github.event.pull_request.base.sha }}"
 
       - name: Restore Conan cache
         uses: actions/cache@v4
