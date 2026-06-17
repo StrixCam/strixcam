@@ -281,17 +281,18 @@ auto BluezBleTransport::SendResponse(const sst_cam::CommandResponse& response) -
         return;
     }
     const std::string wire = response.SerializeAsString();
-    const std::uint32_t total = assembler_.BeginOutbound(
-        sst::control::CorrelationId{response.correlation_id()}, wire,
-        [this](const sst_cam::ChunkedPayload& chunk) {
-            // This closure is retained inside the assembler and invoked later by
-            // OnAck. By then Stop()/disconnect may have reset gatt_app_; guard
-            // against the null deref (the disconnect path also Reset()s the
-            // assembler to drop these closures, but a race can still fire one).
-            if (gatt_app_) {
-                gatt_app_->SendNotification(ToBytes(chunk));
-            }
-        });
+    const std::uint32_t total =
+        assembler_.BeginOutbound(sst::control::CorrelationId{response.correlation_id()}, wire,
+                                 [this](const sst_cam::ChunkedPayload& chunk) {
+                                     // This closure is retained inside the assembler and invoked
+                                     // later by OnAck. By then Stop()/disconnect may have reset
+                                     // gatt_app_; guard against the null deref (the disconnect path
+                                     // also Reset()s the assembler to drop these closures, but a
+                                     // race can still fire one).
+                                     if (gatt_app_) {
+                                         gatt_app_->SendNotification(ToBytes(chunk));
+                                     }
+                                 });
     spdlog::debug("BluezBleTransport: response corr={} status={} -> {} chunk(s)",
                   response.correlation_id(), static_cast<int>(response.status()), total);
 }

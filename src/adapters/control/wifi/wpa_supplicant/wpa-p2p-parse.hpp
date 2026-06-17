@@ -10,8 +10,10 @@ namespace sst::adapters::control {
 // Public signature with distinct roles (haystack vs. key) consumed positionally
 // by external callers; reordering would break the contract and a struct param
 // would only obscure it — hence the swappable-parameters suppression below.
-inline auto ParseQuotedField(std::string_view text,  // NOLINT(bugprone-easily-swappable-parameters) // floor-ok: fixed (haystack, key) convention consumed positionally by external callers
-                             std::string_view key) -> std::optional<std::string> {
+inline auto ParseQuotedField(
+    std::string_view text,  // NOLINT(bugprone-easily-swappable-parameters) // floor-ok: fixed
+                            // (haystack, key) convention consumed positionally by external callers
+    std::string_view key) -> std::optional<std::string> {
     const std::string needle = std::string(key) + "=\"";
     const auto pos = text.find(needle);
     if (pos == std::string_view::npos) {

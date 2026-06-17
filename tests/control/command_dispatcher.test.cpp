@@ -22,9 +22,8 @@ using sst::control::ICommandHandler;
 // Handles get_device_info → OK with a device_info payload.
 class DeviceInfoHandler final : public ICommandHandler {
    public:
-    [[nodiscard]] auto HandledCases() const
-        -> std::vector<sst_cam::Command::PayloadCase> override {
-      return {sst_cam::Command::kGetDeviceInfo};
+    [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override {
+        return {sst_cam::Command::kGetDeviceInfo};
     }
     auto Handle(const sst_cam::Command& /*cmd*/) -> sst_cam::CommandResponse override {
         sst_cam::CommandResponse resp;
@@ -37,9 +36,8 @@ class DeviceInfoHandler final : public ICommandHandler {
 // Handles recording_control by throwing — simulates an internal failure.
 class ThrowingHandler final : public ICommandHandler {
    public:
-    [[nodiscard]] auto HandledCases() const
-        -> std::vector<sst_cam::Command::PayloadCase> override {
-      return {sst_cam::Command::kRecordingControl};
+    [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override {
+        return {sst_cam::Command::kRecordingControl};
     }
     auto Handle(const sst_cam::Command& /*cmd*/) -> sst_cam::CommandResponse override {
         throw std::runtime_error("recorder exploded");
@@ -50,9 +48,8 @@ class ThrowingHandler final : public ICommandHandler {
 // boundary where a domain status maps onto ResponseStatus (R5).
 class InvalidArgHandler final : public ICommandHandler {
    public:
-    [[nodiscard]] auto HandledCases() const
-        -> std::vector<sst_cam::Command::PayloadCase> override {
-      return {sst_cam::Command::kScoreUpdate};
+    [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override {
+        return {sst_cam::Command::kScoreUpdate};
     }
     auto Handle(const sst_cam::Command& /*cmd*/) -> sst_cam::CommandResponse override {
         sst_cam::CommandResponse resp;

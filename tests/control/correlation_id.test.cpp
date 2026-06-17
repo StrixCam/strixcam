@@ -1,8 +1,7 @@
 // CorrelationId wrapper + formatter (U5, R2).
 
-#include <gtest/gtest.h>
-
 #include <fmt/format.h>
+#include <gtest/gtest.h>
 
 #include "domain/control/models/correlation-id.hpp"
 #include "domain/control/models/formatter/correlation-id-fmt.hpp"

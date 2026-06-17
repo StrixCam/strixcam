@@ -348,8 +348,8 @@ TEST(ChunkAssemblerTest, OutboundSendClosureToleratesNulledTarget) {
     auto send = MakeGuardedSend(&gatt);
 
     ASSERT_EQ(assembler.BeginOutbound(sst::control::CorrelationId{"g"}, "abcdefgh", send),
-              2U);  // 8 bytes / 4 -> 2 chunks
-    EXPECT_EQ(gatt->notifications, 1);                              // chunk 0 sent immediately
+              2U);                      // 8 bytes / 4 -> 2 chunks
+    EXPECT_EQ(gatt->notifications, 1);  // chunk 0 sent immediately
 
     // Simulate Stop(): the GATT app is destroyed. The retained closure must not
     // deref a dangling/null target when the next chunk is released.

@@ -55,7 +55,8 @@ TEST(FrameMatTest, WrapNv12RejectsOddDimensions) {
     constexpr std::uint32_t kOddWidth = 7;
     constexpr std::uint32_t kEvenHeight = 8;
     // Odd width must be rejected; height/chroma are arbitrary valid fillers.
-    auto frame = MakeNv12Frame(kOddWidth, kEvenHeight, kNeutralChroma, kNeutralChroma, kNeutralChroma);
+    auto frame =
+        MakeNv12Frame(kOddWidth, kEvenHeight, kNeutralChroma, kNeutralChroma, kNeutralChroma);
     EXPECT_FALSE(WrapNv12(frame).has_value());
 }
 
@@ -109,7 +110,8 @@ TEST(FrameMatTest, MakeOwnedFrameProducesCompactStride) {
     constexpr std::uint64_t kFrameId = 99;
     cv::Mat src(kRows, kCols, CV_8UC3, cv::Scalar(kBlue, kGreen, kRed));
 
-    auto out = MakeOwnedFrame(src, sst::common::PixelFormat::BGR8, kFrameId, sst::common::Timestamp{});
+    auto out =
+        MakeOwnedFrame(src, sst::common::PixelFormat::BGR8, kFrameId, sst::common::Timestamp{});
 
     EXPECT_EQ(out.frame_id, kFrameId);
     EXPECT_EQ(out.format, sst::common::PixelFormat::BGR8);

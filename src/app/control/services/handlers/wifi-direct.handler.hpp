@@ -25,8 +25,7 @@ class WifiDirectHandler final : public ICommandHandler {
                       sst::streaming::IStreamingService& streaming, PreviewPort preview_port,
                       DownloadPort download_port);
 
-    [[nodiscard]] auto HandledCases() const
-        -> std::vector<sst_cam::Command::PayloadCase> override;
+    [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
 
    private:

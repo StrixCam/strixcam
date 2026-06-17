@@ -293,8 +293,8 @@ TEST(SessionManagerTest, DisconnectCleanupIsExceptionSafe) {
     EXPECT_NO_THROW(manager.OnDisconnect());
 
     EXPECT_TRUE(cleanup.finalize_attempted);
-    EXPECT_TRUE(cleanup.stop_streaming);         // ran despite the earlier throw
-    EXPECT_TRUE(cleanup.teardown_wifi);          // ran despite the earlier throw
+    EXPECT_TRUE(cleanup.stop_streaming);              // ran despite the earlier throw
+    EXPECT_TRUE(cleanup.teardown_wifi);               // ran despite the earlier throw
     EXPECT_EQ(manager.Phase(), SessionPhase::kIdle);  // session still reset
 
     fs::remove_all(root);

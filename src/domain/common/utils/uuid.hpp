@@ -13,7 +13,7 @@ namespace sst::common::utils {
 // double as filesystem path components — keep the canonical 8-4-4-4-12 hex form
 // so directory listings remain human-scannable.
 inline auto MakeUuidV4() -> std::string {
-    constexpr std::size_t kByteCount = 16;       // 128-bit UUID
+    constexpr std::size_t kByteCount = 16;  // 128-bit UUID
     constexpr std::size_t kHalfByteCount = kByteCount / 2;
     constexpr unsigned kBitsPerByte = 8;
     constexpr std::size_t kVersionByte = 6;      // RFC 4122 §4.1.3: version nibble lives here
@@ -31,8 +31,10 @@ inline auto MakeUuidV4() -> std::string {
         bytes[i] = static_cast<std::uint8_t>(high >> (i * kBitsPerByte));
         bytes[i + kHalfByteCount] = static_cast<std::uint8_t>(low >> (i * kBitsPerByte));
     }
-    bytes[kVersionByte] = static_cast<std::uint8_t>((bytes[kVersionByte] & kVersionMask) | kVersionV4);
-    bytes[kVariantByte] = static_cast<std::uint8_t>((bytes[kVariantByte] & kVariantMask) | kVariantRfc);
+    bytes[kVersionByte] =
+        static_cast<std::uint8_t>((bytes[kVersionByte] & kVersionMask) | kVersionV4);
+    bytes[kVariantByte] =
+        static_cast<std::uint8_t>((bytes[kVariantByte] & kVariantMask) | kVariantRfc);
 
     // Canonical 8-4-4-4-12 hex form. The byte indices below are a self-evident
     // 0..15 sequence into `bytes` — named constants would obscure, not clarify.

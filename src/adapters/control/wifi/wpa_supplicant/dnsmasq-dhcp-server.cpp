@@ -52,7 +52,8 @@ auto DnsmasqDhcpServer::Start(const std::string& group_interface, const std::str
         // Child: exec dnsmasq in the foreground, bound to the group interface.
         // Size is the count of the adjacent initializer elements (8 argv tokens +
         // the nullptr terminator); a named constant adds no clarity.
-        std::array<const char*, 9> argv{  // NOLINT(readability-magic-numbers)
+        std::array<const char*, 9> argv{
+            // NOLINT(readability-magic-numbers)
             "dnsmasq",      "--keep-in-foreground",  "--bind-interfaces",
             listen.c_str(), "--except-interface=lo", range.c_str(),
             router.c_str(), "--no-resolv",           nullptr};

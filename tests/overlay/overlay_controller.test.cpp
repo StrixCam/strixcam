@@ -31,9 +31,11 @@ class FakeRenderer final : public IOverlayRenderer {
    public:
     // Overrides the IOverlayRenderer port signature; the parameter order is fixed
     // by the interface and cannot be changed here.
-    auto Render(const RenderScene& /*scene*/,
-                std::uint32_t width,  // NOLINT(bugprone-easily-swappable-parameters)
-                std::uint32_t height) -> RgbaImage override {
+    auto Render(
+        const RenderScene& /*scene*/,
+        std::uint32_t width,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok: test double;
+                              // order fixed by IOverlayRenderer::Render, cannot reorder in override
+        std::uint32_t height) -> RgbaImage override {
         ++renders;
         RgbaImage img;
         img.width = width;

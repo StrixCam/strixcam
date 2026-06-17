@@ -57,8 +57,7 @@ auto ToBgr(const sst::capture::Frame& frame) -> cv::Mat {
 }  // namespace
 
 auto OpenCvJpegEncoder::Encode(const sst::capture::Frame& frame, sst::common::OutputSize size,
-                               std::uint32_t quality)
-    -> std::optional<std::vector<std::uint8_t>> {
+                               std::uint32_t quality) -> std::optional<std::vector<std::uint8_t>> {
     cv::Mat bgr = ToBgr(frame);
     if (bgr.empty()) {
         return std::nullopt;

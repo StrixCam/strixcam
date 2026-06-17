@@ -99,22 +99,20 @@ auto GattApplication::BuildCommandChar() -> void {
     // BlueZ calls WriteValue(ay value, a{sv} options) on the GATT characteristic.
     command_obj_->registerMethod("WriteValue")
         .onInterface(kIfaceGattChar)
-        .implementedAs(
-            [this](std::vector<std::uint8_t> value,
-                   const std::map<std::string, sdbus::Variant>& /*options*/) {
-              if (on_command_) {
+        .implementedAs([this](std::vector<std::uint8_t> value,
+                              const std::map<std::string, sdbus::Variant>& /*options*/) {
+            if (on_command_) {
                 on_command_(std::move(value));
-              }
-            });
+            }
+        });
 
     // ReadValue is required by BlueZ to exist on a characteristic — for a pure
     // write characteristic it can return empty.
     command_obj_->registerMethod("ReadValue")
         .onInterface(kIfaceGattChar)
-        .implementedAs(
-            [](const std::map<std::string, sdbus::Variant>& /*options*/) {
-              return std::vector<std::uint8_t>{};
-            });
+        .implementedAs([](const std::map<std::string, sdbus::Variant>& /*options*/) {
+            return std::vector<std::uint8_t>{};
+        });
 
     command_obj_->finishRegistration();
 }
@@ -142,11 +140,10 @@ auto GattApplication::BuildResponseChar() -> void {
 
     response_obj_->registerMethod("ReadValue")
         .onInterface(kIfaceGattChar)
-        .implementedAs(
-            [this](const std::map<std::string, sdbus::Variant>& /*options*/) {
-              std::lock_guard lock(mtx_);
-              return response_value_;
-            });
+        .implementedAs([this](const std::map<std::string, sdbus::Variant>& /*options*/) {
+            std::lock_guard lock(mtx_);
+            return response_value_;
+        });
 
     response_obj_->registerMethod("StartNotify").onInterface(kIfaceGattChar).implementedAs([this] {
         std::lock_guard lock(mtx_);

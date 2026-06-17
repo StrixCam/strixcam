@@ -21,7 +21,8 @@ constexpr std::chrono::milliseconds kSyntheticCaptureTime{1000};
 // The fill bytes are convertible same-typed args, but this is a test data
 // builder — callers pass them explicitly, so the swap risk is visible in the
 // test and a grouping struct would only ripple across call sites.
-// NOLINTBEGIN(bugprone-easily-swappable-parameters)
+// NOLINTBEGIN(bugprone-easily-swappable-parameters) floor-ok: test data builder; args passed
+// explicitly by name at call sites (plan scope boundary)
 inline auto MakeNv12Frame(std::uint32_t width, std::uint32_t height, std::uint8_t luma,
                           std::uint8_t chroma_u, std::uint8_t chroma_v, std::uint32_t stride = 0,
                           std::uint64_t frame_id = 1) -> sst::capture::Frame {
@@ -66,13 +67,13 @@ inline auto MakeNv12Frame(std::uint32_t width, std::uint32_t height, std::uint8_
 }
 
 // Builds a 1-plane BGR8 Frame (stride == width*3, no padding).
-// NOLINTBEGIN(bugprone-easily-swappable-parameters) — test data builder; the
+// NOLINTBEGIN(bugprone-easily-swappable-parameters) floor-ok: test data builder; the
 // blue/green/red bytes are passed explicitly by name at every call site.
 inline auto MakeBgr8Frame(std::uint32_t width, std::uint32_t height, std::uint8_t blue,
                           std::uint8_t green, std::uint8_t red) -> sst::capture::Frame {
     // NOLINTEND(bugprone-easily-swappable-parameters)
-    auto buf = std::make_shared<std::vector<std::uint8_t>>(static_cast<std::size_t>(width) * height *
-                                                           kBgrChannels);
+    auto buf = std::make_shared<std::vector<std::uint8_t>>(static_cast<std::size_t>(width) *
+                                                           height * kBgrChannels);
     for (std::size_t i = 0; i < buf->size(); i += kBgrChannels) {
         (*buf)[i + 0] = blue;
         (*buf)[i + 1] = green;

@@ -33,15 +33,15 @@ auto DeviceHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRespo
 }
 
 auto DeviceHandler::HandleDeviceInfo() const -> sst_cam::CommandResponse {
-  sst_cam::CommandResponse resp;
-  resp.set_status(sst_cam::ResponseStatus::OK);
-  auto* info = resp.mutable_device_info();
-  info->set_device_id(device_.serial_number.value_or(""));
-  info->set_name(device_.name.value_or(""));
-  info->set_firmware_version(device_.version.value_or(""));
-  info->set_model(device_.model.value_or(""));
-  info->set_protocol_version(kProtocolVersion);
-  return resp;
+    sst_cam::CommandResponse resp;
+    resp.set_status(sst_cam::ResponseStatus::OK);
+    auto* info = resp.mutable_device_info();
+    info->set_device_id(device_.serial_number.value_or(""));
+    info->set_name(device_.name.value_or(""));
+    info->set_firmware_version(device_.version.value_or(""));
+    info->set_model(device_.model.value_or(""));
+    info->set_protocol_version(kProtocolVersion);
+    return resp;
 }
 
 auto DeviceHandler::HandleTelemetry() -> sst_cam::CommandResponse {

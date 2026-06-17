@@ -75,7 +75,9 @@ class FakeRenderer final : public overlay::IOverlayRenderer {
     // Signature is fixed by the IOverlayRenderer port (external header); the
     // override must mirror its two adjacent std::uint32_t params verbatim.
     auto Render(const overlay::RenderScene& /*scene*/,
-                std::uint32_t out_width,  // NOLINT(bugprone-easily-swappable-parameters)
+                std::uint32_t out_width,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok:
+                                          // test double; order fixed by IOverlayRenderer::Render,
+                                          // cannot reorder in override
                 std::uint32_t out_height) -> overlay::RgbaImage override {
         overlay::RgbaImage img;
         img.width = out_width;

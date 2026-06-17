@@ -1,8 +1,7 @@
 // OutputSize value type + formatter (U1, R1/R2).
 
-#include <gtest/gtest.h>
-
 #include <fmt/format.h>
+#include <gtest/gtest.h>
 
 #include "domain/common/models/formatter/output-size-fmt.hpp"
 #include "domain/common/models/output-size.hpp"

@@ -1,8 +1,7 @@
 // PreviewPort/DownloadPort wrappers + formatters (U4, R2).
 
-#include <gtest/gtest.h>
-
 #include <fmt/format.h>
+#include <gtest/gtest.h>
 
 #include "domain/control/models/formatter/service-ports-fmt.hpp"
 #include "domain/control/models/service-ports.hpp"

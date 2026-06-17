@@ -43,7 +43,9 @@ auto OverlayScene::SetBindingData(const BindingData& data) -> void { data_ = dat
 // override vs. a wall-clock timestamp).
 auto OverlayScene::ActivateBanner(
     const std::string& template_id, const std::map<std::string, std::string>& params,
-    std::uint32_t duration_s_override,  // NOLINT(bugprone-easily-swappable-parameters) // floor-ok: distinct widths (u32 duration vs u64 timestamp) + self-documenting names; no natural reorder
+    std::uint32_t duration_s_override,  // NOLINT(bugprone-easily-swappable-parameters) // floor-ok:
+                                        // distinct widths (u32 duration vs u64 timestamp) +
+                                        // self-documenting names; no natural reorder
     std::uint64_t now_ms) -> bool {
     if (!has_layout_) {
         return false;
@@ -141,11 +143,10 @@ auto OverlayScene::Build(std::uint64_t now_ms) -> RenderScene {
         }
     }
 
-    std::stable_sort(
-        scene.elements.begin(), scene.elements.end(),
-        [](const RenderElement& lhs, const RenderElement& rhs) {
-            return lhs.bounds.z < rhs.bounds.z;
-        });
+    std::stable_sort(scene.elements.begin(), scene.elements.end(),
+                     [](const RenderElement& lhs, const RenderElement& rhs) {
+                         return lhs.bounds.z < rhs.bounds.z;
+                     });
     return scene;
 }
 

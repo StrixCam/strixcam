@@ -53,8 +53,8 @@ struct FillStyle {
 auto RectElement(const RectCorners& corners, const FillStyle& style) -> RenderElement {
     RenderElement elem;
     elem.shape = OverlayShape::kRect;
-    elem.bounds = OverlayRect{
-        .x1 = corners.x1, .y1 = corners.y1, .x2 = corners.x2, .y2 = corners.y2, .z = 1};
+    elem.bounds =
+        OverlayRect{.x1 = corners.x1, .y1 = corners.y1, .x2 = corners.x2, .y2 = corners.y2, .z = 1};
     elem.style.fill_color = style.color;
     elem.style.opacity = style.opacity;
     elem.style.corner_radius = style.radius;
@@ -92,7 +92,7 @@ TEST(CairoRendererTest, RectFillAndTransparency) {
     EXPECT_EQ(inside.a, kOpaque);
 
     const Px outside = At(img, 90, 90);  // NOLINT(readability-magic-numbers) probe outside the rect
-    EXPECT_EQ(outside.a, 0);  // transparent where nothing was drawn
+    EXPECT_EQ(outside.a, 0);             // transparent where nothing was drawn
 }
 
 // Output scales canvas -> output resolution (a 2x render keeps the fill).
@@ -146,7 +146,7 @@ TEST(CairoRendererTest, CornerRadiusRoundsCorners) {
                     {.color = "#FFFFFF", .opacity = 1.0F, .radius = kRadius}));
 
     auto img = renderer.Render(scene, kDim, kDim);
-    EXPECT_EQ(At(img, 0, 0).a, 0);  // corner cut away
+    EXPECT_EQ(At(img, 0, 0).a, 0);          // corner cut away
     EXPECT_EQ(At(img, 50, 50).a, kOpaque);  // NOLINT(readability-magic-numbers) center filled
 }
 
@@ -166,7 +166,8 @@ TEST(CairoRendererTest, CircleInscribedInBounds) {
     scene.elements.push_back(elem);
 
     auto img = renderer.Render(scene, kDim, kDim);
-    EXPECT_EQ(At(img, 50, 50).a, kOpaque);  // NOLINT(readability-magic-numbers) center inside circle
+    EXPECT_EQ(At(img, 50, 50).a,
+              kOpaque);             // NOLINT(readability-magic-numbers) center inside circle
     EXPECT_EQ(At(img, 2, 2).a, 0);  // NOLINT(readability-magic-numbers) bbox corner outside circle
 }
 
@@ -223,8 +224,8 @@ TEST(CairoRendererTest, UniformScalePreservesCircleOffAspect) {
 // bounds bottom edge. Multi-line text with a tiny-height box forces overflow.
 TEST(CairoRendererTest, TextClippedToBoundsHeight) {
     constexpr std::uint32_t kDim = 200;
-    constexpr float kBoxHeight = 24.0F;  // box too short to hold three lines
-    constexpr float kFontSize = 40.0F;   // a line taller than the box
+    constexpr float kBoxHeight = 24.0F;       // box too short to hold three lines
+    constexpr float kFontSize = 40.0F;        // a line taller than the box
     constexpr std::uint32_t kBelowClip = 30;  // first scanned row, safely past the box bottom
     CairoOverlayRenderer renderer;
     RenderScene scene;
@@ -332,7 +333,7 @@ TEST(CairoRendererTest, TextElementOpacityCompositesAsUnit) {
 
     auto img = renderer.Render(scene, kWidth, kHeight);
     const Px bgpx = At(img, 110, 55);  // NOLINT(readability-magic-numbers) background-only pixel
-    EXPECT_NEAR(bgpx.a, 127, 12);  // NOLINT(readability-magic-numbers) ~50% alpha, tolerant band
+    EXPECT_NEAR(bgpx.a, 127, 12);     // NOLINT(readability-magic-numbers) ~50% alpha, tolerant band
     EXPECT_GT(bgpx.r, kChannelHigh);  // straight-alpha red preserved
     EXPECT_LT(bgpx.g, kChannelLow);
 }

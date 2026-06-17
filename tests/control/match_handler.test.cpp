@@ -27,14 +27,17 @@ class FakeRenderer final : public IOverlayRenderer {
    public:
     // Param order fixed by the IOverlayRenderer::Render interface contract;
     // cannot reorder in an override.
-    auto Render(const RenderScene& /*scene*/, std::uint32_t out_width,  // NOLINT(bugprone-easily-swappable-parameters)
+    auto Render(const RenderScene& /*scene*/,
+                std::uint32_t out_width,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok:
+                                          // test double; order fixed by IOverlayRenderer::Render,
+                                          // cannot reorder in override
                 std::uint32_t out_height) -> RgbaImage override {
-      RgbaImage img;
-      img.width = out_width;
-      img.height = out_height;
-      img.stride = out_width * 4;
-      img.pixels.assign(static_cast<std::size_t>(img.stride) * out_height, 0);
-      return img;
+        RgbaImage img;
+        img.width = out_width;
+        img.height = out_height;
+        img.stride = out_width * 4;
+        img.pixels.assign(static_cast<std::size_t>(img.stride) * out_height, 0);
+        return img;
     }
 };
 class FakeSink final : public IOverlaySink {

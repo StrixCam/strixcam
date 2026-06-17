@@ -128,16 +128,16 @@ class StreamingServiceTest : public ::testing::Test {
 
     static auto MakePlatformConfig(std::int64_t stream_id, std::string name = "test")
         -> PlatformStreamConfig {
-      PlatformStreamConfig cfg;
-      cfg.stream_id = stream_id;
-      cfg.name = std::move(name);
-      cfg.url = "rtmp://example.com/live";
-      cfg.stream_key = "abcd-1234";
-      cfg.width = kFullHdWidth;
-      cfg.height = kFullHdHeight;
-      cfg.framerate = kPlatformFps;
-      cfg.bitrate_kbps = kPlatformBitrateKbps;
-      return cfg;
+        PlatformStreamConfig cfg;
+        cfg.stream_id = stream_id;
+        cfg.name = std::move(name);
+        cfg.url = "rtmp://example.com/live";
+        cfg.stream_key = "abcd-1234";
+        cfg.width = kFullHdWidth;
+        cfg.height = kFullHdHeight;
+        cfg.framerate = kPlatformFps;
+        cfg.bitrate_kbps = kPlatformBitrateKbps;
+        return cfg;
     }
 
     FakeAppStreamServer* app_{nullptr};
@@ -185,7 +185,8 @@ TEST_F(StreamingServiceTest, StopAppStream) {
 // ── Platform streams ──────────────────────────────────────────────────────
 
 TEST_F(StreamingServiceTest, StartPlatformStreamMintsStreamerAndTracksId) {
-    auto cfg = MakePlatformConfig(42, "youtube-main");  // NOLINT(readability-magic-numbers) arbitrary stream id
+    auto cfg = MakePlatformConfig(
+        42, "youtube-main");  // NOLINT(readability-magic-numbers) arbitrary stream id
     EXPECT_TRUE(service_->StartPlatformStream(cfg));
 
     ASSERT_EQ(sink_.counters.size(), 1);

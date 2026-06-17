@@ -189,7 +189,8 @@ auto TwoCameras(std::unique_ptr<ICaptureFrame> cam0, std::unique_ptr<IPreprocess
 auto FastConfig() -> PipelineConfig {
     return PipelineConfig{
         .capture_idle_sleep = std::chrono::milliseconds(1),
-        .consumer_pop_timeout = std::chrono::milliseconds(20),  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+        .consumer_pop_timeout = std::chrono::milliseconds(
+            20),  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     };
 }
 
@@ -245,7 +246,8 @@ TEST(PipelineOrchestratorTest, EndToEndFlowProducesPostprocessedFrames) {
     ASSERT_TRUE(orchestrator.Start());
     // Run for ~300ms — at 33ms/frame in FakeCapture that's ~9 frames captured
     // with most or all reaching the sink (LatestOnlySlot may drop a couple).
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     EXPECT_GT(preprocessor->process_calls.load(), 0);
@@ -270,7 +272,8 @@ TEST(PipelineOrchestratorTest, OnlyChosenCameraReachesPostprocess) {
         std::move(postprocessor_owner), std::make_unique<StaticDecision>(), sink, FastConfig());
 
     ASSERT_TRUE(orchestrator.Start());
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     ASSERT_GT(postprocessor->process_calls, 0);
@@ -294,7 +297,8 @@ TEST(PipelineOrchestratorTest, OneCameraStallingDoesNotBlockTheOther) {
         FastConfig());
 
     ASSERT_TRUE(orchestrator.Start());
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     auto [pushes, last_id, last_format, last_geom] = sink.Snapshot();
@@ -315,7 +319,8 @@ TEST(PipelineOrchestratorTest, DualCameraStartStopCyclesCleanly) {
     for (int i = 0; i < 3; ++i) {
         ASSERT_TRUE(orchestrator.Start());
         EXPECT_TRUE(orchestrator.IsRunning());
-        std::this_thread::sleep_for(std::chrono::milliseconds(60));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            60));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
         orchestrator.Stop();
         EXPECT_FALSE(orchestrator.IsRunning());
     }
@@ -352,7 +357,8 @@ TEST(PipelineOrchestratorTest, GrabLatestReturnsLatestFinalFrame) {
         if (snap.has_value()) {
             break;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            5));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     }
     orchestrator.Stop();
 
@@ -384,7 +390,8 @@ TEST(PipelineOrchestratorTest, ConcurrentGrabLatestAndStopIsSafe) {
     });
 
     // Let a few frames flow, then tear down while the reader is still grabbing.
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        60));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     // GrabLatest after Stop must remain safe (returns nullopt or a final frame).
@@ -406,7 +413,8 @@ TEST(PipelineOrchestratorTest, PostprocessorReceivesFullFrameCrop) {
         std::move(postprocessor_owner), std::make_unique<StaticDecision>(), sink, FastConfig());
 
     ASSERT_TRUE(orchestrator.Start());
-    std::this_thread::sleep_for(std::chrono::milliseconds(120));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        120));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     ASSERT_GT(postprocessor->process_calls, 0);
@@ -429,7 +437,8 @@ TEST(PipelineOrchestratorTest, PreprocessRefusalsDoNotStallPipeline) {
         FastConfig());
 
     ASSERT_TRUE(orchestrator.Start());
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     // Preprocessor was called many times even though most refused; the
@@ -458,7 +467,8 @@ TEST(PipelineOrchestratorTest, DestructorStopsRunningPipeline) {
             std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), sink,
             FastConfig());
         ASSERT_TRUE(orchestrator.Start());
-        std::this_thread::sleep_for(std::chrono::milliseconds(120));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            120));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
         // No explicit Stop(); destructor must clean up cleanly.
     }
     // The test asserts we got here without hangs / data races caught by

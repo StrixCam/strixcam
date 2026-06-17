@@ -20,8 +20,7 @@ class OverlayHandler final : public ICommandHandler {
     OverlayHandler(sst::session::ISessionManager& session,
                    sst::overlay::OverlayController& controller, Clock now_ms);
 
-    [[nodiscard]] auto HandledCases() const
-        -> std::vector<sst_cam::Command::PayloadCase> override;
+    [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
 
    private:

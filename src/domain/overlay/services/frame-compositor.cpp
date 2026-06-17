@@ -74,10 +74,10 @@ auto CompositeOverlay(const sst::capture::Frame& source, const RgbaImage& overla
                                         static_cast<std::size_t>(off_x + dx) * kBgrBytesPerPixel;
             // Source byte order is BGR; overlay is RGBA. Blend: out = src*(1-a)+ov*a.
             const std::uint32_t inv = kMaxAlpha - alpha;
-            dst[dst_off + 0] =
-                static_cast<std::uint8_t>((dst[dst_off + 0] * inv + blue * alpha) / kMaxAlpha);  // B
-            dst[dst_off + 1] =
-                static_cast<std::uint8_t>((dst[dst_off + 1] * inv + green * alpha) / kMaxAlpha);  // G
+            dst[dst_off + 0] = static_cast<std::uint8_t>((dst[dst_off + 0] * inv + blue * alpha) /
+                                                         kMaxAlpha);  // B
+            dst[dst_off + 1] = static_cast<std::uint8_t>((dst[dst_off + 1] * inv + green * alpha) /
+                                                         kMaxAlpha);  // G
             dst[dst_off + 2] =
                 static_cast<std::uint8_t>((dst[dst_off + 2] * inv + red * alpha) / kMaxAlpha);  // R
         }

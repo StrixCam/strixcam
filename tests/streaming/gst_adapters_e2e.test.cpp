@@ -45,7 +45,9 @@ auto NextSuffix() -> std::string {
 // frame_id and value are distinct concepts with distinct widths; the helper is
 // only called below with clearly-named arguments, so the convertible-type swap
 // warning is a false positive here.
-auto MakeBgr8Frame(std::uint64_t frame_id, std::uint8_t value,  // NOLINT(bugprone-easily-swappable-parameters)
+auto MakeBgr8Frame(std::uint64_t frame_id,
+                   std::uint8_t value,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok:
+                                        // test data builder; distinct widths, named call sites
                    std::shared_ptr<std::vector<std::uint8_t>>& storage) -> sst::capture::Frame {
     const std::size_t row_bytes = static_cast<std::size_t>(kWidth) * kBgrChannels;
     const std::size_t total = row_bytes * static_cast<std::size_t>(kHeight);

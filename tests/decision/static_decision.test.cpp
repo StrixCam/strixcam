@@ -38,8 +38,7 @@ constexpr Size kOtherCameraSize{800, 600};
 // Extracted from the table-driven test to keep its loop body — and the
 // expanded gtest macros — under the cognitive-complexity threshold.
 void ExpectFullFrameCamera0(const std::optional<CameraChoice>& choice, Size size) {
-    ASSERT_TRUE(choice.has_value())
-        << "expected a choice for " << size.width << "x" << size.height;
+    ASSERT_TRUE(choice.has_value()) << "expected a choice for " << size.width << "x" << size.height;
     EXPECT_EQ(choice->camera_index, 0U);
     EXPECT_EQ(choice->crop.x, 0U);
     EXPECT_EQ(choice->crop.y, 0U);
@@ -53,8 +52,8 @@ TEST(StaticDecisionTest, PicksCamera0FullFrameForVariousSizes) {
     const std::vector<Size> sizes = {{1920, 1080}, {1280, 720}, {640, 480}, {3840, 2160}, {1, 1}};
 
     for (const auto& size : sizes) {
-        std::vector<std::optional<FrameBundle>> cameras = {
-            BundleWithGeometry(size), BundleWithGeometry(kOtherCameraSize)};
+        std::vector<std::optional<FrameBundle>> cameras = {BundleWithGeometry(size),
+                                                           BundleWithGeometry(kOtherCameraSize)};
         ExpectFullFrameCamera0(decision.Decide(cameras), size);
     }
 }
@@ -77,7 +76,8 @@ TEST(StaticDecisionTest, ReturnsNulloptWhenCamera0Absent) {
     // Camera 0 has no frame this tick; camera 1 does. Static policy serves only
     // camera 0, so there is nothing to present.
     // NOLINTNEXTLINE(readability-magic-numbers) — self-evident 720p dims
-    std::vector<std::optional<FrameBundle>> cameras = {std::nullopt, BundleWithGeometry({1280, 720})};
+    std::vector<std::optional<FrameBundle>> cameras = {std::nullopt,
+                                                       BundleWithGeometry({1280, 720})};
     EXPECT_FALSE(decision.Decide(cameras).has_value());
 }
 

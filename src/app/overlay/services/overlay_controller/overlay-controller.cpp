@@ -7,7 +7,7 @@
 namespace sst::overlay {
 
 OverlayController::OverlayController(IOverlayRenderer& renderer, IOverlaySink& sink,
-                                    common::OutputSize out_size)
+                                     common::OutputSize out_size)
     : renderer_(renderer), sink_(sink), out_size_(out_size) {}
 
 auto OverlayController::SetLayout(OverlayLayout layout) -> void {
@@ -31,9 +31,9 @@ auto OverlayController::ActivateBanner(const std::string& template_id,
 auto OverlayController::Signature(const RenderScene& scene) -> std::string {
     std::string sig = fmt::format("{}x{}|", scene.canvas_width, scene.canvas_height);
     for (const auto& element : scene.elements) {
-        sig += fmt::format("{};{},{},{},{},{};", static_cast<int>(element.shape), element.bounds.x1,
-                           element.bounds.y1, element.bounds.x2, element.bounds.y2,
-                           element.bounds.z);
+        sig +=
+            fmt::format("{};{},{},{},{},{};", static_cast<int>(element.shape), element.bounds.x1,
+                        element.bounds.y1, element.bounds.x2, element.bounds.y2, element.bounds.z);
         sig += element.text;
         sig += ';';
         sig += element.style.fill_color;

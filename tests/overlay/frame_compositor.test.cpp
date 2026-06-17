@@ -111,9 +111,10 @@ TEST(FrameCompositorTest, FullyTransparentOverlayLeavesFrameUnchanged) {
     constexpr Size kSize{.width = 4, .height = 4};
     auto src = MakeBgr(kSize, kSrcBgr);
     // Same overlay color but fully transparent — the source must show through.
-    const auto overlay = MakeRgba(
-        kSize, Rgba{.red = kOverlayRgba.red, .green = kOverlayRgba.green, .blue = kOverlayRgba.blue,
-                    .alpha = 0});
+    const auto overlay = MakeRgba(kSize, Rgba{.red = kOverlayRgba.red,
+                                              .green = kOverlayRgba.green,
+                                              .blue = kOverlayRgba.blue,
+                                              .alpha = 0});
 
     auto out = CompositeOverlay(src.frame, overlay);
     ASSERT_TRUE(out.has_value());
@@ -142,8 +143,8 @@ TEST(FrameCompositorTest, NonBgrSourceReturnsNullopt) {
     auto src = MakeBgr(kSize, Bgr{.blue = 1, .green = 2, .red = 3});
     src.frame.format = sst::common::PixelFormat::NV12;  // unsupported
     EXPECT_FALSE(
-        CompositeOverlay(src.frame, MakeRgba(kSize, Rgba{.red = 1, .green = 1, .blue = 1,
-                                                         .alpha = kOpaque}))
+        CompositeOverlay(src.frame,
+                         MakeRgba(kSize, Rgba{.red = 1, .green = 1, .blue = 1, .alpha = kOpaque}))
             .has_value());
 }
 
@@ -170,10 +171,10 @@ TEST(FrameCompositorTest, MismatchedAspectIsLetterboxedAndCentered) {
     const auto blue_at = [&](std::uint32_t col, std::uint32_t row) {
         return plane[(static_cast<std::size_t>(row) * kFrameSize.width + col) * kBgrBytesPerPixel];
     };
-    EXPECT_EQ(blue_at(0, 0), 0);          // left margin — untouched black
-    EXPECT_EQ(blue_at(3, 0), 0);          // right margin — untouched black
-    EXPECT_EQ(blue_at(1, 0), kOpaque);    // drawn region — white
-    EXPECT_EQ(blue_at(2, 1), kOpaque);    // drawn region — white
+    EXPECT_EQ(blue_at(0, 0), 0);        // left margin — untouched black
+    EXPECT_EQ(blue_at(3, 0), 0);        // right margin — untouched black
+    EXPECT_EQ(blue_at(1, 0), kOpaque);  // drawn region — white
+    EXPECT_EQ(blue_at(2, 1), kOpaque);  // drawn region — white
 }
 
 }  // namespace

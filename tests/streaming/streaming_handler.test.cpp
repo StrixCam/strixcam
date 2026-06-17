@@ -15,9 +15,8 @@ using sst::control::StreamingHandler;
 
 class FakeStreaming final : public sst::streaming::IStreamingService {
    public:
-    auto StartAppStream(const sst::streaming::AppStreamConfig& /*config*/)
-        -> bool override {
-      return true;
+    auto StartAppStream(const sst::streaming::AppStreamConfig& /*config*/) -> bool override {
+        return true;
     }
     auto StopAppStream() -> bool override { return true; }
     [[nodiscard]] auto IsAppStreamRunning() const -> bool override { return false; }
@@ -31,11 +30,11 @@ class FakeStreaming final : public sst::streaming::IStreamingService {
         return true;
     }
     auto StopPlatformStream(std::int64_t /*stream_id*/) -> bool override {
-      if (!active) {
-        return false;
-      }
-      active = false;
-      return true;
+        if (!active) {
+            return false;
+        }
+        active = false;
+        return true;
     }
     [[nodiscard]] auto ListActivePlatformStreams() const
         -> std::vector<sst::streaming::ActivePlatformStream> override {

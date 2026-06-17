@@ -90,7 +90,8 @@ TEST(OpenCvPreprocessorTest, BinaryPathThresholdsHigh) {
                                             .ai_height = kAiSize,
                                             .ai_color_mode = ColorMode::Binary,
                                             .binary_threshold = kMidThreshold}};
-    auto out = pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kHighLuma, kNeutralChroma, kNeutralChroma));
+    auto out =
+        pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kHighLuma, kNeutralChroma, kNeutralChroma));
     ASSERT_TRUE(out.has_value());
     EXPECT_EQ(out->ai_frame.format, sst::common::PixelFormat::GRAY8);
     ExpectPlaneAllEqual(out->ai_frame, kWhite);
@@ -104,7 +105,8 @@ TEST(OpenCvPreprocessorTest, BinaryPathThresholdsLow) {
                                             .ai_height = kAiSize,
                                             .ai_color_mode = ColorMode::Binary,
                                             .binary_threshold = kMidThreshold}};
-    auto out = pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kLowLuma, kNeutralChroma, kNeutralChroma));
+    auto out =
+        pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kLowLuma, kNeutralChroma, kNeutralChroma));
     ASSERT_TRUE(out.has_value());
     ExpectPlaneAllEqual(out->ai_frame, 0);
 }
@@ -118,8 +120,8 @@ TEST(OpenCvPreprocessorTest, RgbPathChannelsAndOrder) {
     constexpr std::uint8_t kRedV = 255;
     constexpr int kRedHighFloor = 150;
     constexpr int kBlueLowCeil = 80;
-    OpenCvPreprocessor pre{
-        PreprocessConfig{.ai_width = kAiSize, .ai_height = kAiSize, .ai_color_mode = ColorMode::RGB}};
+    OpenCvPreprocessor pre{PreprocessConfig{
+        .ai_width = kAiSize, .ai_height = kAiSize, .ai_color_mode = ColorMode::RGB}};
     auto out = pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kRedLuma, kRedU, kRedV));
     ASSERT_TRUE(out.has_value());
     EXPECT_EQ(out->ai_frame.format, sst::common::PixelFormat::RGB8);
@@ -139,8 +141,8 @@ TEST(OpenCvPreprocessorTest, StridedNv12RgbCopyFallback) {
     constexpr std::uint32_t kStridePad = 16;
     constexpr std::uint32_t kStride = kWidth + kStridePad;
     constexpr std::uint8_t kLuma = 100;
-    OpenCvPreprocessor pre{
-        PreprocessConfig{.ai_width = kAiSize, .ai_height = kAiSize, .ai_color_mode = ColorMode::RGB}};
+    OpenCvPreprocessor pre{PreprocessConfig{
+        .ai_width = kAiSize, .ai_height = kAiSize, .ai_color_mode = ColorMode::RGB}};
 
     auto strided = MakeNv12Frame(kWidth, kHeight, kLuma, kNeutralChroma, kNeutralChroma, kStride);
     auto contig = MakeNv12Frame(kWidth, kHeight, kLuma, kNeutralChroma, kNeutralChroma);

@@ -66,11 +66,11 @@ auto StreamingService::StartPlatformStream(const PlatformStreamConfig& config) -
 
     std::lock_guard lock(mtx_);
     if (platform_streams_.contains(config.stream_id)) {
-      spdlog::warn(
-          "StreamingService::StartPlatformStream rejected: stream_id={} "
-          "already active",
-          config.stream_id);
-      return false;
+        spdlog::warn(
+            "StreamingService::StartPlatformStream rejected: stream_id={} "
+            "already active",
+            config.stream_id);
+        return false;
     }
 
     auto streamer = platform_streamer_factory_();

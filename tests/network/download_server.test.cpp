@@ -42,9 +42,8 @@ constexpr int kProbeIntervalMs = 20;
 auto MakeRoot() -> fs::path {
     static std::atomic<int> counter{0};
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    fs::path root =
-        fs::temp_directory_path() /
-        ("sst_dl_" + std::to_string(stamp) + "_" + std::to_string(counter.fetch_add(1)));
+    fs::path root = fs::temp_directory_path() / ("sst_dl_" + std::to_string(stamp) + "_" +
+                                                 std::to_string(counter.fetch_add(1)));
     fs::create_directories(root);
     return root;
 }

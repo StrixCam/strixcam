@@ -48,24 +48,24 @@ auto ParseHexColor(const std::string& hex) -> Rgb {
         return {};
     }
     auto hex_byte = [&](std::size_t off) -> int {
-      auto nib = [](char chr) -> int {
-        if (chr >= '0' && chr <= '9') {
-          return chr - '0';
+        auto nib = [](char chr) -> int {
+            if (chr >= '0' && chr <= '9') {
+                return chr - '0';
+            }
+            if (chr >= 'a' && chr <= 'f') {
+                return chr - 'a' + kDecimalBase;
+            }
+            if (chr >= 'A' && chr <= 'F') {
+                return chr - 'A' + kDecimalBase;
+            }
+            return -1;
+        };
+        const int high = nib(digits[off]);
+        const int low = nib(digits[off + 1]);
+        if (high < 0 || low < 0) {
+            return -1;
         }
-        if (chr >= 'a' && chr <= 'f') {
-          return chr - 'a' + kDecimalBase;
-        }
-        if (chr >= 'A' && chr <= 'F') {
-          return chr - 'A' + kDecimalBase;
-        }
-        return -1;
-      };
-      const int high = nib(digits[off]);
-      const int low = nib(digits[off + 1]);
-      if (high < 0 || low < 0) {
-        return -1;
-      }
-      return (high << kNibbleBits) | low;
+        return (high << kNibbleBits) | low;
     };
     constexpr std::size_t kRedOffset = 0;
     constexpr std::size_t kGreenOffset = 2;
@@ -225,8 +225,8 @@ void DrawText(cairo_t* cairo, const RenderElement& elem) {
 }
 
 void DrawElement(cairo_t* cairo, const RenderElement& elem) {
-    constexpr double kHalf = 2.0;       // center / radius = half the bounds extent
-    constexpr double kFullTurn = 2.0;   // a full circle spans 2*pi radians
+    constexpr double kHalf = 2.0;      // center / radius = half the bounds extent
+    constexpr double kFullTurn = 2.0;  // a full circle spans 2*pi radians
     const double pos_x = elem.bounds.x1;
     const double pos_y = elem.bounds.y1;
     const double width = elem.bounds.x2 - elem.bounds.x1;
