@@ -75,13 +75,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Build the devcontainer exactly as VS Code / CI does, and push it.
-      - name: Build + push devcontainer image
+      # Build the devcontainer. push:always does NOT work here — this devcontainer
+      # is docker-compose based, so devcontainers/ci builds the compose service
+      # image under its local compose name (`sst-cam-firmware`, per
+      # .devcontainer/docker-compose.yml) and never pushes it to imageName. So
+      # build only, then tag + push that local image to GHCR in the next step.
+      - name: Build devcontainer image
         uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3
         with:
-          imageName: ${{ env.IMAGE }}
-          imageTag: latest
-          push: always
+          push: never
+
+      # The compose service `app` builds `image: sst-cam-firmware` — tag that
+      # local image to the GHCR name and push. Fail loudly if the local image is
+      # absent (compose naming changed) rather than committing a stale digest.
+      - name: Tag + push to GHCR
+        run: |
+          set -euo pipefail
+          if ! docker image inspect sst-cam-firmware >/dev/null 2>&1; then
+            echo "ERROR: local image 'sst-cam-firmware' not found after build" >&2
+            docker image ls >&2
+            exit 1
+          fi
+          docker tag sst-cam-firmware "${IMAGE}:latest"
+          docker push "${IMAGE}:latest"
 
       - name: Resolve published digest
         id: digest
