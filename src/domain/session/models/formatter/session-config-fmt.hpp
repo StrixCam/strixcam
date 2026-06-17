@@ -9,12 +9,13 @@ struct fmt::formatter<sst::session::SessionConfig> {
     static constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
 
     template <typename FormatContext>
-    auto format(const sst::session::SessionConfig& c, FormatContext& ctx) const {
+    auto format(const sst::session::SessionConfig& config, FormatContext& ctx) const {
         return fmt::format_to(ctx.out(),
                               "SessionConfig{{match={}, user={}, sport={}, periods={}x{}s, "
                               "teams=[{}|{} vs {}|{}], video={}, thumb={}}}",
-                              c.match_uuid, c.user_uuid, c.sport, c.num_periods,
-                              c.period_length_seconds, c.team_a_name, c.team_a_id, c.team_b_name,
-                              c.team_b_id, c.video_output_path, c.thumbnail_output_path);
+                              config.match_uuid, config.user_uuid, config.sport, config.num_periods,
+                              config.period_length_seconds, config.team_a_name, config.team_a_id,
+                              config.team_b_name, config.team_b_id, config.video_output_path,
+                              config.thumbnail_output_path);
     }
 };

@@ -39,7 +39,7 @@ class FakeRecorder final : public sst::storage::IContinuousRecorder {
         return true;
     }
     [[nodiscard]] auto IsRunning() const -> bool override { return running; }
-    auto Push(const sst::capture::Frame&) -> void override { ++pushes; }
+    auto Push(const sst::capture::Frame& /*frame*/) -> void override { ++pushes; }
 
     bool start_ok{true};
     bool running{false};
@@ -52,7 +52,7 @@ class FakeRecorder final : public sst::storage::IContinuousRecorder {
 
 class FakeThumbnailWriter final : public sst::storage::IThumbnailWriter {
    public:
-    auto Write(const sst::capture::Frame&, const fs::path& path) -> bool override {
+    auto Write(const sst::capture::Frame& /*frame*/, const fs::path& path) -> bool override {
         ++writes;
         written_path = path;
         return true;
@@ -64,17 +64,26 @@ class FakeThumbnailWriter final : public sst::storage::IThumbnailWriter {
 class FakeDiskGuard final : public sst::storage::IDiskGuard {
    public:
     [[nodiscard]] auto HasEnoughFreeSpace() const -> bool override { return has_space; }
-    [[nodiscard]] auto FreeBytes() const -> std::uint64_t override { return 1000; }
+    [[nodiscard]] auto FreeBytes() const -> std::uint64_t override { return kFakeFreeBytes; }
     bool has_space{true};
+
+   private:
+    static constexpr std::uint64_t kFakeFreeBytes = 1000;
 };
 
 auto MakeFrame() -> sst::capture::Frame {
-    static std::vector<std::uint8_t> buf(16, 0xAB);
-    sst::capture::Frame f;
-    f.geometry = {.width = 2, .height = 2};
-    f.format = sst::common::PixelFormat::BGR8;
-    f.planes.push_back({.stride = 6, .data = buf.data(), .size = buf.size()});
-    return f;
+    // A tiny 2x2 BGR frame (stride = 2 px * 3 channels = 6 bytes) filled with an
+    // arbitrary sentinel byte; the fakes never inspect the pixels.
+    constexpr std::uint32_t kDim = 2;
+    constexpr std::uint32_t kStride = kDim * 3;
+    constexpr std::size_t kBufBytes = static_cast<std::size_t>(kStride) * kDim;
+    constexpr std::uint8_t kFill = 0xAB;
+    static std::vector<std::uint8_t> buf(kBufBytes, kFill);
+    sst::capture::Frame frame;
+    frame.geometry = {.width = kDim, .height = kDim};
+    frame.format = sst::common::PixelFormat::BGR8;
+    frame.planes.push_back({.stride = kStride, .data = buf.data(), .size = buf.size()});
+    return frame;
 }
 
 struct Svc {
@@ -84,11 +93,11 @@ struct Svc {
     std::unique_ptr<RecordingService> service;
 
     Svc() {
-        auto r = std::make_unique<FakeRecorder>();
-        auto t = std::make_unique<FakeThumbnailWriter>();
-        recorder = r.get();
-        thumb = t.get();
-        service = std::make_unique<RecordingService>(std::move(r), std::move(t), guard);
+        auto rec = std::make_unique<FakeRecorder>();
+        auto thm = std::make_unique<FakeThumbnailWriter>();
+        recorder = rec.get();
+        thumb = thm.get();
+        service = std::make_unique<RecordingService>(std::move(rec), std::move(thm), guard);
     }
 };
 
@@ -98,65 +107,65 @@ constexpr const char* kThumb = "/tmp/sst-rec/thumb/user/match/match.jpg";
 // AE4 / R21: START -> PAUSE -> RESUME -> STOP yields a single file at the
 // contract path (one recorder Start, one Stop — never multiple segments).
 TEST(ContinuousRecorderTest, StartPauseResumeStopIsSingleFile) {
-    Svc s;
-    ASSERT_TRUE(s.service->StartRecording(kVideo, kThumb));
-    EXPECT_EQ(s.service->CurrentState(), RecordingState::kRecording);
-    EXPECT_EQ(s.recorder->started_path.string(), kVideo);
+    Svc harness;
+    ASSERT_TRUE(harness.service->StartRecording(kVideo, kThumb));
+    EXPECT_EQ(harness.service->CurrentState(), RecordingState::kRecording);
+    EXPECT_EQ(harness.recorder->started_path.string(), kVideo);
 
-    EXPECT_TRUE(s.service->Pause());
-    EXPECT_EQ(s.service->CurrentState(), RecordingState::kPaused);
-    EXPECT_TRUE(s.service->Resume());
-    EXPECT_EQ(s.service->CurrentState(), RecordingState::kRecording);
+    EXPECT_TRUE(harness.service->Pause());
+    EXPECT_EQ(harness.service->CurrentState(), RecordingState::kPaused);
+    EXPECT_TRUE(harness.service->Resume());
+    EXPECT_EQ(harness.service->CurrentState(), RecordingState::kRecording);
 
-    auto result = s.service->Stop();
+    auto result = harness.service->Stop();
     EXPECT_TRUE(result.success);
     EXPECT_EQ(result.file_path.string(), kVideo);
-    EXPECT_EQ(s.recorder->starts, 1);  // single file
-    EXPECT_EQ(s.recorder->stops, 1);
-    EXPECT_EQ(s.service->CurrentState(), RecordingState::kIdle);
+    EXPECT_EQ(harness.recorder->starts, 1);  // single file
+    EXPECT_EQ(harness.recorder->stops, 1);
+    EXPECT_EQ(harness.service->CurrentState(), RecordingState::kIdle);
 }
 
 // Thumbnail is written at finalization when a frame has been seen.
 TEST(ContinuousRecorderTest, ThumbnailWrittenAtFinalize) {
-    Svc s;
-    ASSERT_TRUE(s.service->StartRecording(kVideo, kThumb));
-    s.service->Push(MakeFrame());
-    auto result = s.service->Stop();
+    Svc harness;
+    ASSERT_TRUE(harness.service->StartRecording(kVideo, kThumb));
+    harness.service->Push(MakeFrame());
+    auto result = harness.service->Stop();
     EXPECT_TRUE(result.thumbnail_written);
-    EXPECT_EQ(s.thumb->writes, 1);
-    EXPECT_EQ(s.thumb->written_path.string(), kThumb);
+    EXPECT_EQ(harness.thumb->writes, 1);
+    EXPECT_EQ(harness.thumb->written_path.string(), kThumb);
 }
 
 // AE2 / R14: disconnect-finalize (Stop without an explicit STOP command) still
 // EOSes the muxer to a playable file.
 TEST(ContinuousRecorderTest, DisconnectFinalizeStops) {
-    Svc s;
-    ASSERT_TRUE(s.service->StartRecording(kVideo, kThumb));
-    s.service->Push(MakeFrame());
+    Svc harness;
+    ASSERT_TRUE(harness.service->StartRecording(kVideo, kThumb));
+    harness.service->Push(MakeFrame());
     // Simulate disconnect cleanup calling Stop() directly.
-    auto result = s.service->Stop();
+    auto result = harness.service->Stop();
     EXPECT_TRUE(result.success);
-    EXPECT_EQ(s.recorder->stops, 1);
-    EXPECT_EQ(s.service->CurrentState(), RecordingState::kIdle);
+    EXPECT_EQ(harness.recorder->stops, 1);
+    EXPECT_EQ(harness.service->CurrentState(), RecordingState::kIdle);
 }
 
 // Stop while idle is a harmless no-op (idempotent cleanup path).
 TEST(ContinuousRecorderTest, StopWhenIdleIsNoop) {
-    Svc s;
-    auto result = s.service->Stop();
+    Svc harness;
+    auto result = harness.service->Stop();
     EXPECT_FALSE(result.success);
-    EXPECT_EQ(s.recorder->stops, 0);
+    EXPECT_EQ(harness.recorder->stops, 0);
 }
 
 // Disk-full blocks START with a defined failure.
 TEST(ContinuousRecorderTest, DiskFullBlocksStart) {
-    Svc s;
-    s.guard.has_space = false;
+    Svc harness;
+    harness.guard.has_space = false;
     // Rebuild service so it captures the disk-full guard.
-    auto r = std::make_unique<FakeRecorder>();
-    auto t = std::make_unique<FakeThumbnailWriter>();
-    auto* rec = r.get();
-    RecordingService svc(std::move(r), std::move(t), s.guard);
+    auto recorder = std::make_unique<FakeRecorder>();
+    auto thumb = std::make_unique<FakeThumbnailWriter>();
+    auto* rec = recorder.get();
+    RecordingService svc(std::move(recorder), std::move(thumb), harness.guard);
     EXPECT_FALSE(svc.StartRecording(kVideo, kThumb));
     EXPECT_EQ(rec->starts, 0);
     EXPECT_EQ(svc.CurrentState(), RecordingState::kIdle);
@@ -164,12 +173,12 @@ TEST(ContinuousRecorderTest, DiskFullBlocksStart) {
 
 // Frames are only pushed to the recorder while recording.
 TEST(ContinuousRecorderTest, FramesPushedOnlyWhileActive) {
-    Svc s;
-    s.service->Push(MakeFrame());  // idle -> ignored
-    EXPECT_EQ(s.recorder->pushes, 0);
-    ASSERT_TRUE(s.service->StartRecording(kVideo, kThumb));
-    s.service->Push(MakeFrame());
-    EXPECT_EQ(s.recorder->pushes, 1);
+    Svc harness;
+    harness.service->Push(MakeFrame());  // idle -> ignored
+    EXPECT_EQ(harness.recorder->pushes, 0);
+    ASSERT_TRUE(harness.service->StartRecording(kVideo, kThumb));
+    harness.service->Push(MakeFrame());
+    EXPECT_EQ(harness.recorder->pushes, 1);
 }
 
 }  // namespace

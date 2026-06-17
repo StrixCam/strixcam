@@ -84,12 +84,10 @@ jobs:
   tidy:
     name: tidy
     runs-on: ubuntu-latest
-    # Advisory for now: the cross-toolchain flags below fixed clang-tidy's header
-    # resolution (no more "Error while processing"), but a residual diagnostic
-    # remains. It is visible in the Actions UI for this job (the devcontainers/ci
-    # step output) — finish it in the devcontainer, then drop continue-on-error
-    # to make tidy a hard gate again.
-    continue-on-error: true
+    # Hard gate: the cross-toolchain flags (scripts/tidy-args.sh) resolve all
+    # std/system headers, the tree is clean, and .clang-tidy promotes every
+    # diagnostic to an error via WarningsAsErrors. A new lint violation fails the
+    # PR. clang-tidy is version-locked to clang-tidy-14 (see .clang-tidy).
     steps:
       # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
       # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
@@ -107,6 +105,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          # Full history so the floor-NOLINT guard can diff against the PR base.
+          fetch-depth: 0
+
+      # Self-test the guard before trusting it: asserts every bypass class
+      # (bare/wildcard/non-leading-list NOLINT, faked marker) is still caught.
+      # A regex regression here would silently let unsanctioned floor NOLINTs
+      # through the gate below.
+      - name: Floor-NOLINT guard self-test
+        run: scripts/test-check-floor-nolints.sh
+
+      # Cheap, host-side gate — no devcontainer needed. Fails the PR if it adds a
+      # bugprone-*/performance-* NOLINT without a `// floor-ok:` sanction marker
+      # (see .clang-tidy floor policy). Diff-scoped against the PR base, so only
+      # newly introduced suppressions are gated.
+      - name: Floor-NOLINT guard (diff-scoped)
+        run: scripts/check-floor-nolints.sh "${{ github.event.pull_request.base.sha }}"
 
       - name: Restore Conan cache
         uses: actions/cache@v4
@@ -127,28 +141,27 @@ jobs:
             set -euo pipefail
             # Configure the test preset to generate compile_commands.json.
             cmake --preset test
+            # Generate the protobuf headers (bluetooth.pb.h / wifi.pb.h) before
+            # tidy. clang-tidy does not build — without this the generated
+            # headers are absent, every TU that includes them hits
+            # clang-diagnostic-error 'bluetooth.pb.h not found', and the broken
+            # AST yields a cascade of phantom findings (members "can be made
+            # static", spurious easily-swappable, etc.). Building just sst_proto
+            # runs protoc only — seconds, not the full cross-build.
+            cmake --build --preset test --target sst_proto
             files=$(find src tests \
               \( -name '*.cpp' -o -name '*.cc' \) \
               -not -path '*/_old/*')
             if [ -z "$files" ]; then
               echo "No C++ translation units found to tidy"; exit 1
             fi
-            # clang-tidy (host x86 clang) must parse aarch64 cross TUs, so point
-            # it at the Bootlin gcc toolchain + target + sysroot — otherwise it
-            # can't resolve libstdc++/system headers and errors on every file.
-            # Paths come from the container env (set by the toolchain/Dockerfile),
-            # with the known defaults as fallback.
-            TC_BIN="${BOOTLIN_TOOLCHAIN_BIN:-/l4t/toolchain/aarch64--glibc--stable-2022.08-1/bin}"
-            TC_ROOT="$(dirname "$TC_BIN")"
-            SR="${CROSS_SYSROOT:-/l4t/targetfs}"
-            # No blanket --warnings-as-errors='*' (the repo's .clang-tidy decides
-            # severity via WarningsAsErrors); enforcing all checks would block
-            # merges on pre-existing lint debt.
-            echo "$files" | xargs clang-tidy -p build/test \
-              --extra-arg=--target=aarch64-linux-gnu \
-              --extra-arg=--sysroot="$SR" \
-              --extra-arg=--gcc-toolchain="$TC_ROOT" \
-              --extra-arg=-Qunused-arguments
+            # Cross-toolchain flags live in scripts/tidy-args.sh — the single
+            # source of truth shared with scripts/fix.sh so the two can't drift.
+            # shellcheck source=scripts/tidy-args.sh
+            source scripts/tidy-args.sh
+            # No blanket --warnings-as-errors='*' here: the repo's .clang-tidy
+            # decides severity via WarningsAsErrors.
+            echo "$files" | xargs clang-tidy-14 -p build/test "${TIDY_EXTRA_ARGS[@]}"
 
   # ---------------------------------------------------------------------------
   # test — cross-build the test preset and run GTest under qemu (ctest)

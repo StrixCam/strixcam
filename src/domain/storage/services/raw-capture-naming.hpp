@@ -6,8 +6,6 @@
 
 #include "domain/storage/models/raw-capture-identity.hpp"
 
-namespace sst::storage {
-
 // On-disk naming convention for raw dual-camera capture files, shared by the
 // writer (raw-capture sink) and the enumerator (download server) so the two
 // never drift on the format.
@@ -20,12 +18,16 @@ namespace sst::storage {
 // fixed capture geometry); no per-frame header. Double-underscore delimiters
 // keep parsing unambiguous as long as the group id contains no `__` (app mints
 // UUIDs, which do not).
-namespace raw_capture_naming {
+namespace sst::storage::raw_capture_naming {
 
 inline constexpr std::string_view kPrefix = "raw__";
 inline constexpr std::string_view kCameraMarker = "__cam";
 inline constexpr std::string_view kExtension = ".nv12";
 
+// `id` names a capture identity; this is a public API referenced outside this
+// module (writer + download server), so the parameter name is part of the
+// contract and stays as-is.
+// NOLINTNEXTLINE(readability-identifier-length)
 inline auto FileName(const RawCaptureIdentity& id) -> std::string {
     return std::string(kPrefix) + id.capture_group_id + std::string(kCameraMarker) +
            std::to_string(id.camera_index) + std::string(kExtension);
@@ -56,17 +58,16 @@ inline auto ParseFileName(std::string_view file_name) -> std::optional<RawCaptur
         return std::nullopt;
     }
 
+    constexpr std::uint32_t kDecimalBase = 10;
     std::uint32_t camera_index = 0;
     for (const char digit : index_str) {
         if (digit < '0' || digit > '9') {
             return std::nullopt;
         }
-        camera_index = camera_index * 10 + static_cast<std::uint32_t>(digit - '0');
+        camera_index = camera_index * kDecimalBase + static_cast<std::uint32_t>(digit - '0');
     }
 
     return RawCaptureIdentity{.capture_group_id = std::string(group), .camera_index = camera_index};
 }
 
-}  // namespace raw_capture_naming
-
-}  // namespace sst::storage
+}  // namespace sst::storage::raw_capture_naming

@@ -18,6 +18,15 @@ namespace {
 
 constexpr const char* kAppsrcName = "src";
 
+// How long the watcher blocks on the GStreamer bus per tick waiting for an
+// uplink error before looping to re-check watching_.
+constexpr int kBusPollMs = 200;
+// Granularity of the backoff sleep, kept short so Stop() stays responsive.
+constexpr int kBackoffSliceMs = 100;
+// How long Stop() waits for EOS/error to flush the stream tail before NULLing
+// the pipeline.
+constexpr int kEosFlushSeconds = 5;
+
 auto FrameByteSize(const sst::capture::Frame& frame) -> std::size_t {
     std::size_t total = 0;
     for (const auto& plane : frame.planes) {
@@ -127,7 +136,7 @@ auto GstRtmpStreamer::Start(const sst::streaming::PlatformStreamConfig& config) 
 }
 
 auto GstRtmpStreamer::WatcherLoop() -> void {
-    using namespace std::chrono;
+    using std::chrono::milliseconds;
     // Capped exponential backoff so a permanently-down endpoint can't spin into a
     // reconnect storm (was an unbounded ~5 rebuilds/sec). Reset to base on a
     // healthy tick or a successful reconnect.
@@ -145,7 +154,8 @@ auto GstRtmpStreamer::WatcherLoop() -> void {
         }
 
         if (bus != nullptr) {
-            GstMessage* msg = gst_bus_timed_pop_filtered(bus, 200 * GST_MSECOND, GST_MESSAGE_ERROR);
+            GstMessage* msg =
+                gst_bus_timed_pop_filtered(bus, kBusPollMs * GST_MSECOND, GST_MESSAGE_ERROR);
             gst_object_unref(bus);
             if (msg == nullptr) {
                 backoff = kBaseBackoff;  // healthy tick — uplink is alive
@@ -162,8 +172,8 @@ auto GstRtmpStreamer::WatcherLoop() -> void {
         // Back off before (re)building. Sleep in short slices so Stop() — which
         // clears watching_ then joins — stays responsive.
         for (auto waited = milliseconds(0); watching_.load() && waited < backoff;
-             waited += milliseconds(100)) {
-            std::this_thread::sleep_for(milliseconds(100));
+             waited += milliseconds(kBackoffSliceMs)) {
+            std::this_thread::sleep_for(milliseconds(kBackoffSliceMs));
         }
 
         std::lock_guard lock(mtx_);
@@ -205,7 +215,7 @@ auto GstRtmpStreamer::Stop() -> void {
         GstBus* bus = gst_element_get_bus(pipeline_);
         if (bus != nullptr) {
             GstMessage* msg = gst_bus_timed_pop_filtered(
-                bus, 5 * GST_SECOND,
+                bus, kEosFlushSeconds * GST_SECOND,
                 static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR));
             if (msg != nullptr) {
                 gst_message_unref(msg);

@@ -9,6 +9,7 @@
 #include "app/session/ports/session-manager.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
 #include "bluetooth.pb.h"
+#include "domain/control/models/service-ports.hpp"
 
 namespace sst::control {
 
@@ -21,10 +22,10 @@ namespace sst::control {
 class WifiDirectHandler final : public ICommandHandler {
    public:
     WifiDirectHandler(sst::session::ISessionManager& session, IWifiManager& wifi, IDhcpServer& dhcp,
-                      sst::streaming::IStreamingService& streaming, std::uint32_t preview_port,
-                      std::uint32_t download_port);
+                      sst::streaming::IStreamingService& streaming, PreviewPort preview_port,
+                      DownloadPort download_port);
 
-    auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
+    [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
 
    private:

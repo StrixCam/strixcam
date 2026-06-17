@@ -36,8 +36,8 @@ auto CommandDispatcher::Dispatch(const sst_cam::Command& cmd) -> sst_cam::Comman
         return resp;
     }
 
-    const auto it = handlers_.find(static_cast<int>(payload_case));
-    if (it == handlers_.end()) {
+    const auto entry = handlers_.find(static_cast<int>(payload_case));
+    if (entry == handlers_.end()) {
         sst_cam::CommandResponse resp;
         resp.set_correlation_id(cmd.correlation_id());
         resp.set_status(sst_cam::ResponseStatus::UNSUPPORTED);
@@ -48,7 +48,7 @@ auto CommandDispatcher::Dispatch(const sst_cam::Command& cmd) -> sst_cam::Comman
     }
 
     try {
-        sst_cam::CommandResponse resp = it->second->Handle(cmd);
+        sst_cam::CommandResponse resp = entry->second->Handle(cmd);
         // Enforce the echo regardless of what the handler set (R5).
         resp.set_correlation_id(cmd.correlation_id());
         return resp;

@@ -11,7 +11,8 @@ struct fmt::formatter<sst::config::DeviceStaticIpData> {
 
     template <typename FormatContext>
     auto format(const sst::config::DeviceStaticIpData& data, FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::BoolOptToStr;
+        using sst::config::StrOptToStr;
 
         return fmt::format_to(ctx.out(),
                               "DeviceStaticIpData{{\n"
@@ -32,7 +33,8 @@ struct fmt::formatter<sst::config::DeviceConnectivityWifiDirectData> {
     template <typename FormatContext>
     auto format(const sst::config::DeviceConnectivityWifiDirectData& data,
                 FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::BoolOptToStr;
+        using sst::config::StrOptToStr;
 
         return fmt::format_to(ctx.out(),
                               "DeviceConnectivityWifiDirectData{{\n"
@@ -55,7 +57,8 @@ struct fmt::formatter<sst::config::DeviceConnectivityEthernetData> {
 
     template <typename FormatContext>
     auto format(const sst::config::DeviceConnectivityEthernetData& data, FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::BoolOptToStr;
+        using sst::config::ObjOptToStr;
 
         return fmt::format_to(ctx.out(),
                               "DeviceConnectivityEthernetData{{\n"
@@ -73,7 +76,8 @@ struct fmt::formatter<sst::config::DeviceConnectivityBluetoothData> {
     template <typename FormatContext>
     auto format(const sst::config::DeviceConnectivityBluetoothData& data,
                 FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::BoolOptToStr;
+        using sst::config::StrOptToStr;
 
         return fmt::format_to(ctx.out(),
                               "DeviceConnectivityBluetoothData{{\n"
@@ -92,7 +96,7 @@ struct fmt::formatter<sst::config::DeviceConnectivityData> {
 
     template <typename FormatContext>
     auto format(const sst::config::DeviceConnectivityData& data, FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::ObjOptToStr;
 
         return fmt::format_to(ctx.out(),
                               "DeviceConnectivityData{{\n"
@@ -111,7 +115,8 @@ struct fmt::formatter<sst::config::DeviceData> {
 
     template <typename FormatContext>
     auto format(const sst::config::DeviceData& data, FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::ObjOptToStr;
+        using sst::config::StrOptToStr;
 
         return fmt::format_to(ctx.out(),
                               "DeviceData{{\n"

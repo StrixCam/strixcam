@@ -11,8 +11,8 @@ struct fmt::formatter<sst::streaming::PlatformStreamType> {
     static constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
 
     template <typename FormatContext>
-    auto format(sst::streaming::PlatformStreamType t, FormatContext& ctx) const {
-        return fmt::format_to(ctx.out(), "{}", static_cast<std::uint8_t>(t));
+    auto format(sst::streaming::PlatformStreamType type, FormatContext& ctx) const {
+        return fmt::format_to(ctx.out(), "{}", static_cast<std::uint8_t>(type));
     }
 };
 
@@ -21,8 +21,8 @@ struct fmt::formatter<sst::streaming::PlatformStreamCodec> {
     static constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
 
     template <typename FormatContext>
-    auto format(sst::streaming::PlatformStreamCodec c, FormatContext& ctx) const {
-        return fmt::format_to(ctx.out(), "{}", static_cast<std::uint8_t>(c));
+    auto format(sst::streaming::PlatformStreamCodec codec, FormatContext& ctx) const {
+        return fmt::format_to(ctx.out(), "{}", static_cast<std::uint8_t>(codec));
     }
 };
 
@@ -31,7 +31,7 @@ struct fmt::formatter<sst::streaming::PlatformStreamConfig> {
     static constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
 
     template <typename FormatContext>
-    auto format(const sst::streaming::PlatformStreamConfig& c, FormatContext& ctx) const {
+    auto format(const sst::streaming::PlatformStreamConfig& cfg, FormatContext& ctx) const {
         return fmt::format_to(ctx.out(),
                               "PlatformStreamConfig{{\n"
                               "  stream_id={},\n"
@@ -45,7 +45,7 @@ struct fmt::formatter<sst::streaming::PlatformStreamConfig> {
                               "  framerate={},\n"
                               "  bitrate_kbps={}\n"
                               "}}",
-                              c.stream_id, c.name, c.type, c.url, c.stream_key, c.codec, c.width,
-                              c.height, c.framerate, c.bitrate_kbps);
+                              cfg.stream_id, cfg.name, cfg.type, cfg.url, cfg.stream_key, cfg.codec,
+                              cfg.width, cfg.height, cfg.framerate, cfg.bitrate_kbps);
     }
 };

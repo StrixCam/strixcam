@@ -22,8 +22,8 @@ auto DeriveStatus(const SessionState& state) -> sst_cam::MatchStatus {
     if (!state.config) {
         return sst_cam::MATCH_NOT_STARTED;
     }
-    const LiveMatch& m = state.match;
-    switch (m.segment) {
+    const LiveMatch& match = state.match;
+    switch (match.segment) {
         case MatchSegment::kHalfTime:
             return sst_cam::MATCH_HALF_TIME;
         case MatchSegment::kFullTime:
@@ -34,10 +34,10 @@ auto DeriveStatus(const SessionState& state) -> sst_cam::MatchStatus {
     // In play: a started period that is running is ACTIVE; a started period with
     // the clock halted is PAUSED; before kickoff (no period yet) it has not
     // started.
-    if (m.period == 0) {
+    if (match.period == 0) {
         return sst_cam::MATCH_NOT_STARTED;
     }
-    return m.clock_running ? sst_cam::MATCH_ACTIVE : sst_cam::MATCH_PAUSED;
+    return match.clock_running ? sst_cam::MATCH_ACTIVE : sst_cam::MATCH_PAUSED;
 }
 
 // Remaining seconds in the current period from the app-configured period length
@@ -67,17 +67,17 @@ auto MatchStateHandler::Handle(const sst_cam::Command& /*cmd*/) -> sst_cam::Comm
     sst_cam::CommandResponse resp;
     resp.set_status(sst_cam::ResponseStatus::OK);
 
-    sst_cam::MatchState* ms = resp.mutable_match_state();
-    ms->set_status(DeriveStatus(state));
-    ms->set_current_period(state.match.period);
-    ms->set_time_remaining_s(DeriveTimeRemaining(state));
-    ms->set_score_a(state.match.score_a);
-    ms->set_score_b(state.match.score_b);
+    sst_cam::MatchState* match_state = resp.mutable_match_state();
+    match_state->set_status(DeriveStatus(state));
+    match_state->set_current_period(state.match.period);
+    match_state->set_time_remaining_s(DeriveTimeRemaining(state));
+    match_state->set_score_a(state.match.score_a);
+    match_state->set_score_b(state.match.score_b);
     if (state.config) {
-        ms->set_team_a_id(state.config->team_a_id);
-        ms->set_team_b_id(state.config->team_b_id);
+        match_state->set_team_a_id(state.config->team_a_id);
+        match_state->set_team_b_id(state.config->team_b_id);
     }
-    ms->set_updated_at(now_ms_ ? now_ms_() : 0);
+    match_state->set_updated_at(now_ms_ ? now_ms_() : 0);
     return resp;
 }
 

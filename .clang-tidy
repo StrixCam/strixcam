@@ -1,11 +1,43 @@
+# clang-tidy configuration for the SST Cam firmware cross-build.
+#
+# HARD CI GATE: the `tidy` job runs WITHOUT continue-on-error and promotes every
+# emitted diagnostic to an error via `WarningsAsErrors: '*'`. The tree is clean
+# under the full enforced set, so any new violation fails the build.
+#
+# VERSION-LOCKED to clang-tidy-14 (jammy). The enforced check set and the
+# zero-warning baseline are tied to this version — a silent bump to 15+ adds
+# checks and breaks the gate. Treat a version change as a deliberate, re-triaged
+# change (clang-tidy-14 is pinned in .devcontainer/Dockerfile and called
+# explicitly in CI + scripts/fix.sh). See CLAUDE.md "Linting & formatting".
+#
+# Enforced families (none removed — the tree passes all of them):
+#   bugprone-*     real defect classes  — FLOOR: fix, or a justified + sanctioned
+#                  per-site NOLINT — never a blanket removal from this list.
+#   performance-*  real cost classes    — FLOOR: same rule as bugprone-* above.
+#   modernize-*    C++20 idiom
+#   readability-*  clarity — includes magic-numbers, identifier-length and
+#                  cognitive-complexity, which were driven to zero, NOT relaxed
+#   google-*       Google C++ style
+#
+# Floor suppressions are per-LINE only and must be sanctioned. A bugprone-* /
+# performance-* NOLINT is allowed only when the line also carries the sanction
+# marker `// floor-ok: <reason>` giving the per-site justification (e.g. the
+# self-evident 0..15 UUID byte-index sequence, an external library-fixed
+# parameter order, or dense self-evident gtest literals). New unsanctioned floor
+# NOLINTs fail CI via scripts/check-floor-nolints.sh — the marker is what the
+# guard greps for. Never drop a check from the list to silence a finding.
 Checks: >
   -*,
   bugprone-*,
   performance-*,
   modernize-*,
   readability-*,
-  google-*      # Google style checks
+  google-*
 
-WarningsAsErrors: ''
-HeaderFilterRegex: 'src/.*'
+# Promote every emitted diagnostic to an error. Combined with the clean tree,
+# any newly introduced lint violation fails `tidy` (and blocks the PR).
+WarningsAsErrors: '*'
+# Gate headers under both src/ and tests/ — a warning resident in a shared test
+# header (e.g. tests/processing/synthetic_frames.hpp) must not slip the gate.
+HeaderFilterRegex: '(src|tests)/.*'
 FormatStyle: google

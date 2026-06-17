@@ -18,6 +18,12 @@
 
 namespace sst::adapters::processing {
 
+namespace {
+// Output value assigned to above-threshold pixels by cv::THRESH_BINARY
+// (full-scale white for an 8-bit single-channel image).
+constexpr double kBinaryMaxValue = 255.0;
+}  // namespace
+
 OpenCvPreprocessor::OpenCvPreprocessor(sst::processing::PreprocessConfig config)
     : config_(config) {}
 
@@ -35,10 +41,10 @@ auto OpenCvPreprocessor::Process(const sst::capture::Frame& raw)
         spdlog::warn("OpenCvPreprocessor: NV12 must have 2 planes, got {}", raw.planes.size());
         return std::nullopt;
     }
-    const auto w = raw.geometry.width;
-    const auto h = raw.geometry.height;
-    if (w == 0 || h == 0 || (w % 2) != 0 || (h % 2) != 0) {
-        spdlog::warn("OpenCvPreprocessor: invalid NV12 geometry {}x{}", w, h);
+    const auto width = raw.geometry.width;
+    const auto height = raw.geometry.height;
+    if (width == 0 || height == 0 || (width % 2) != 0 || (height % 2) != 0) {
+        spdlog::warn("OpenCvPreprocessor: invalid NV12 geometry {}x{}", width, height);
         return std::nullopt;
     }
     if (config_.ai_width == 0 || config_.ai_height == 0) {
@@ -55,19 +61,19 @@ auto OpenCvPreprocessor::Process(const sst::capture::Frame& raw)
     switch (config_.ai_color_mode) {
         case sst::processing::ColorMode::Grayscale: {
             // Y plane *is* the luminance — wrap directly, no color conversion.
-            cv::Mat y_full(static_cast<int>(h), static_cast<int>(w), CV_8UC1,
+            cv::Mat y_full(static_cast<int>(height), static_cast<int>(width), CV_8UC1,
                            const_cast<std::uint8_t*>(raw.planes[0].data), raw.planes[0].stride);
             cv::resize(y_full, ai_mat, ai_size, 0, 0, cv::INTER_AREA);
             ai_format = sst::common::PixelFormat::GRAY8;
             break;
         }
         case sst::processing::ColorMode::Binary: {
-            cv::Mat y_full(static_cast<int>(h), static_cast<int>(w), CV_8UC1,
+            cv::Mat y_full(static_cast<int>(height), static_cast<int>(width), CV_8UC1,
                            const_cast<std::uint8_t*>(raw.planes[0].data), raw.planes[0].stride);
             cv::Mat resized;
             cv::resize(y_full, resized, ai_size, 0, 0, cv::INTER_AREA);
-            cv::threshold(resized, ai_mat, static_cast<double>(config_.binary_threshold), 255.0,
-                          cv::THRESH_BINARY);
+            cv::threshold(resized, ai_mat, static_cast<double>(config_.binary_threshold),
+                          kBinaryMaxValue, cv::THRESH_BINARY);
             ai_format = sst::common::PixelFormat::GRAY8;
             break;
         }

@@ -22,26 +22,26 @@ constexpr double kMilliDegreePerDegree = 1000.0;
 
 auto ReadThermalCelsius() -> float {
     // Jetson exposes SoC temperature in millidegrees here.
-    std::ifstream in("/sys/class/thermal/thermal_zone0/temp");
-    if (!in) {
+    std::ifstream stream("/sys/class/thermal/thermal_zone0/temp");
+    if (!stream) {
         return 0.0F;
     }
-    long milli = 0;
-    in >> milli;
-    if (!in) {
+    std::int64_t milli = 0;
+    stream >> milli;
+    if (!stream) {
         return 0.0F;
     }
     return static_cast<float>(static_cast<double>(milli) / kMilliDegreePerDegree);
 }
 
 auto ReadLoadAvgFirst() -> double {
-    std::ifstream in("/proc/loadavg");
-    if (!in) {
+    std::ifstream stream("/proc/loadavg");
+    if (!stream) {
         return 0.0;
     }
     double one_min = 0.0;
-    in >> one_min;
-    return in ? one_min : 0.0;
+    stream >> one_min;
+    return stream ? one_min : 0.0;
 }
 
 }  // namespace
@@ -52,14 +52,14 @@ auto ProcSystemStats::Read() const -> sst::control::SystemStats {
     sst::control::SystemStats stats;
 
     // Storage — from the configured video root (its filesystem).
-    std::error_code ec;
-    const auto space = fs::space(storage_root_, ec);
-    if (!ec) {
+    std::error_code space_ec;
+    const auto space = fs::space(storage_root_, space_ec);
+    if (!space_ec) {
         stats.storage_free_bytes = space.available;
         stats.storage_total_bytes = space.capacity;
     } else {
         spdlog::warn("ProcSystemStats: fs::space({}) failed: {}", storage_root_.string(),
-                     ec.message());
+                     space_ec.message());
     }
 
     // RAM + uptime — from sysinfo(2).

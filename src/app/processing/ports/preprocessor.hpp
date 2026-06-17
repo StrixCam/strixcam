@@ -13,9 +13,9 @@ class IPreprocessor {
     virtual ~IPreprocessor() = default;
 
     IPreprocessor(const IPreprocessor&) = delete;
-    IPreprocessor& operator=(const IPreprocessor&) = delete;
+    auto operator=(const IPreprocessor&) -> IPreprocessor& = delete;
     IPreprocessor(IPreprocessor&&) = delete;
-    IPreprocessor& operator=(IPreprocessor&&) = delete;
+    auto operator=(IPreprocessor&&) -> IPreprocessor& = delete;
 
     // Transform a raw captured Frame into a FrameBundle: an AI-ready small
     // frame plus a value-copy of the source. Returns std::nullopt and logs a

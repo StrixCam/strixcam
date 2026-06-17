@@ -100,7 +100,7 @@ auto GattApplication::BuildCommandChar() -> void {
     command_obj_->registerMethod("WriteValue")
         .onInterface(kIfaceGattChar)
         .implementedAs([this](std::vector<std::uint8_t> value,
-                              std::map<std::string, sdbus::Variant> /*options*/) {
+                              const std::map<std::string, sdbus::Variant>& /*options*/) {
             if (on_command_) {
                 on_command_(std::move(value));
             }
@@ -110,7 +110,7 @@ auto GattApplication::BuildCommandChar() -> void {
     // write characteristic it can return empty.
     command_obj_->registerMethod("ReadValue")
         .onInterface(kIfaceGattChar)
-        .implementedAs([](std::map<std::string, sdbus::Variant> /*options*/) {
+        .implementedAs([](const std::map<std::string, sdbus::Variant>& /*options*/) {
             return std::vector<std::uint8_t>{};
         });
 
@@ -140,7 +140,7 @@ auto GattApplication::BuildResponseChar() -> void {
 
     response_obj_->registerMethod("ReadValue")
         .onInterface(kIfaceGattChar)
-        .implementedAs([this](std::map<std::string, sdbus::Variant> /*options*/) {
+        .implementedAs([this](const std::map<std::string, sdbus::Variant>& /*options*/) {
             std::lock_guard lock(mtx_);
             return response_value_;
         });

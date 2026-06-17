@@ -37,16 +37,23 @@ auto OverlayScene::SetLayout(OverlayLayout layout) -> void {
 
 auto OverlayScene::SetBindingData(const BindingData& data) -> void { data_ = data; }
 
-auto OverlayScene::ActivateBanner(const std::string& template_id,
-                                  const std::map<std::string, std::string>& params,
-                                  std::uint32_t duration_s_override, std::uint64_t now_ms) -> bool {
+// Public contract declared in overlay-scene.hpp and called from
+// overlay-controller.cpp and tests; reordering would change that cross-file
+// signature. The params carry distinct, self-documenting names (a duration
+// override vs. a wall-clock timestamp).
+auto OverlayScene::ActivateBanner(
+    const std::string& template_id, const std::map<std::string, std::string>& params,
+    std::uint32_t duration_s_override,  // NOLINT(bugprone-easily-swappable-parameters) // floor-ok:
+                                        // distinct widths (u32 duration vs u64 timestamp) +
+                                        // self-documenting names; no natural reorder
+    std::uint64_t now_ms) -> bool {
     if (!has_layout_) {
         return false;
     }
-    const auto it =
+    const auto match =
         std::find_if(layout_.templates.begin(), layout_.templates.end(),
-                     [&](const OverlayTemplate& t) { return t.event_type == template_id; });
-    if (it == layout_.templates.end()) {
+                     [&](const OverlayTemplate& tmpl) { return tmpl.event_type == template_id; });
+    if (match == layout_.templates.end()) {
         return false;
     }
 
@@ -54,11 +61,11 @@ auto OverlayScene::ActivateBanner(const std::string& template_id,
     // duration_ms.
     const std::uint64_t duration_ms =
         duration_s_override > 0 ? static_cast<std::uint64_t>(duration_s_override) * kMsPerSecond
-                                : it->duration_ms;
+                                : match->duration_ms;
 
     ActiveBanner banner;
     banner.expires_at_ms = now_ms + duration_ms;
-    banner.elements = it->elements;
+    banner.elements = match->elements;
     for (auto& element : banner.elements) {
         element.visible = true;
         element.style.static_text = SubstituteParams(element.style.static_text, params);
@@ -68,9 +75,10 @@ auto OverlayScene::ActivateBanner(const std::string& template_id,
 }
 
 auto OverlayScene::ExpireBanners(std::uint64_t now_ms) -> void {
-    banners_.erase(std::remove_if(banners_.begin(), banners_.end(),
-                                  [&](const ActiveBanner& b) { return b.expires_at_ms <= now_ms; }),
-                   banners_.end());
+    banners_.erase(
+        std::remove_if(banners_.begin(), banners_.end(),
+                       [&](const ActiveBanner& banner) { return banner.expires_at_ms <= now_ms; }),
+        banners_.end());
 }
 
 auto OverlayScene::ResolveText(const OverlayElement& element) const -> std::string {
@@ -135,9 +143,10 @@ auto OverlayScene::Build(std::uint64_t now_ms) -> RenderScene {
         }
     }
 
-    std::stable_sort(
-        scene.elements.begin(), scene.elements.end(),
-        [](const RenderElement& a, const RenderElement& b) { return a.bounds.z < b.bounds.z; });
+    std::stable_sort(scene.elements.begin(), scene.elements.end(),
+                     [](const RenderElement& lhs, const RenderElement& rhs) {
+                         return lhs.bounds.z < rhs.bounds.z;
+                     });
     return scene;
 }
 

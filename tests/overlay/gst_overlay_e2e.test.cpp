@@ -9,15 +9,21 @@
 
 namespace {
 
+constexpr std::uint32_t kWidth = 320;
+constexpr std::uint32_t kHeight = 180;
+constexpr std::uint32_t kRgbaBytesPerPixel = 4;
+constexpr std::uint8_t kFillByte = 0x80;  // mid-gray test fill
+
 TEST(GstOverlayE2E, AppSrcAcceptsRgbaPush) {
-    sst::adapters::overlay::GstOverlayCompositor compositor(320, 180);
+    sst::adapters::overlay::GstOverlayCompositor compositor(
+        sst::common::OutputSize{kWidth, kHeight});
     ASSERT_NE(compositor.AppSrc(), nullptr);
 
     sst::overlay::RgbaImage frame;
-    frame.width = 320;
-    frame.height = 180;
-    frame.stride = 320 * 4;
-    frame.pixels.assign(static_cast<std::size_t>(frame.stride) * 180, 0x80);
+    frame.width = kWidth;
+    frame.height = kHeight;
+    frame.stride = kWidth * kRgbaBytesPerPixel;
+    frame.pixels.assign(static_cast<std::size_t>(frame.stride) * kHeight, kFillByte);
 
     // On-device this pushes a buffer into the live appsrc without error.
     compositor.PushFrame(frame);

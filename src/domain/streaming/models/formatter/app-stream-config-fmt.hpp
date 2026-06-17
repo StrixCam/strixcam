@@ -9,7 +9,7 @@ struct fmt::formatter<sst::streaming::AppStreamConfig> {
     static constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
 
     template <typename FormatContext>
-    auto format(const sst::streaming::AppStreamConfig& c, FormatContext& ctx) const {
+    auto format(const sst::streaming::AppStreamConfig& cfg, FormatContext& ctx) const {
         return fmt::format_to(ctx.out(),
                               "AppStreamConfig{{\n"
                               "  mount_point=\"{}\",\n"
@@ -19,7 +19,7 @@ struct fmt::formatter<sst::streaming::AppStreamConfig> {
                               "  framerate={},\n"
                               "  bitrate_kbps={}\n"
                               "}}",
-                              c.mount_point, c.port, c.width, c.height, c.framerate,
-                              c.bitrate_kbps);
+                              cfg.mount_point, cfg.port, cfg.width, cfg.height, cfg.framerate,
+                              cfg.bitrate_kbps);
     }
 };

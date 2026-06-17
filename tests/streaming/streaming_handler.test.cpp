@@ -15,19 +15,21 @@ using sst::control::StreamingHandler;
 
 class FakeStreaming final : public sst::streaming::IStreamingService {
    public:
-    auto StartAppStream(const sst::streaming::AppStreamConfig&) -> bool override { return true; }
+    auto StartAppStream(const sst::streaming::AppStreamConfig& /*config*/) -> bool override {
+        return true;
+    }
     auto StopAppStream() -> bool override { return true; }
     [[nodiscard]] auto IsAppStreamRunning() const -> bool override { return false; }
 
-    auto StartPlatformStream(const sst::streaming::PlatformStreamConfig& c) -> bool override {
+    auto StartPlatformStream(const sst::streaming::PlatformStreamConfig& config) -> bool override {
         if (!start_ok) {
             return false;
         }
-        last_url = c.url;
+        last_url = config.url;
         active = true;
         return true;
     }
-    auto StopPlatformStream(std::int64_t) -> bool override {
+    auto StopPlatformStream(std::int64_t /*stream_id*/) -> bool override {
         if (!active) {
             return false;
         }
@@ -46,26 +48,26 @@ class FakeStreaming final : public sst::streaming::IStreamingService {
 };
 
 auto StartCmd(const std::string& dest) -> sst_cam::Command {
-    sst_cam::Command c;
-    c.set_correlation_id("x");
-    auto* sc = c.mutable_streaming_control();
-    sc->set_action(sst_cam::STREAMING_START);
-    sc->set_destination(dest);
-    return c;
+    sst_cam::Command cmd;
+    cmd.set_correlation_id("x");
+    auto* control = cmd.mutable_streaming_control();
+    control->set_action(sst_cam::STREAMING_START);
+    control->set_destination(dest);
+    return cmd;
 }
 
 auto StopCmd() -> sst_cam::Command {
-    sst_cam::Command c;
-    c.set_correlation_id("x");
-    c.mutable_streaming_control()->set_action(sst_cam::STREAMING_STOP);
-    return c;
+    sst_cam::Command cmd;
+    cmd.set_correlation_id("x");
+    cmd.mutable_streaming_control()->set_action(sst_cam::STREAMING_STOP);
+    return cmd;
 }
 
 auto SetConfigCmd(const std::string& custom_url) -> sst_cam::Command {
-    sst_cam::Command c;
-    c.set_correlation_id("x");
-    c.mutable_set_streaming_config()->mutable_config()->set_custom_rtmp_url(custom_url);
-    return c;
+    sst_cam::Command cmd;
+    cmd.set_correlation_id("x");
+    cmd.mutable_set_streaming_config()->mutable_config()->set_custom_rtmp_url(custom_url);
+    return cmd;
 }
 
 // R22: START to the supplied destination; STOP closes it; telemetry reflects it.

@@ -7,8 +7,8 @@
 namespace sst::overlay {
 
 OverlayController::OverlayController(IOverlayRenderer& renderer, IOverlaySink& sink,
-                                     std::uint32_t out_width, std::uint32_t out_height)
-    : renderer_(renderer), sink_(sink), out_width_(out_width), out_height_(out_height) {}
+                                     common::OutputSize out_size)
+    : renderer_(renderer), sink_(sink), out_size_(out_size) {}
 
 auto OverlayController::SetLayout(OverlayLayout layout) -> void {
     std::lock_guard lock(mtx_);
@@ -30,15 +30,17 @@ auto OverlayController::ActivateBanner(const std::string& template_id,
 
 auto OverlayController::Signature(const RenderScene& scene) -> std::string {
     std::string sig = fmt::format("{}x{}|", scene.canvas_width, scene.canvas_height);
-    for (const auto& e : scene.elements) {
-        sig += fmt::format("{};{},{},{},{},{};", static_cast<int>(e.shape), e.bounds.x1,
-                           e.bounds.y1, e.bounds.x2, e.bounds.y2, e.bounds.z);
-        sig += e.text;
+    for (const auto& element : scene.elements) {
+        sig +=
+            fmt::format("{};{},{},{},{},{};", static_cast<int>(element.shape), element.bounds.x1,
+                        element.bounds.y1, element.bounds.x2, element.bounds.y2, element.bounds.z);
+        sig += element.text;
         sig += ';';
-        sig += e.style.fill_color;
+        sig += element.style.fill_color;
         sig += ';';
-        sig += e.style.text_color;
-        sig += fmt::format(";{};{}|", e.style.opacity, static_cast<int>(e.style.corner_radius));
+        sig += element.style.text_color;
+        sig += fmt::format(";{};{}|", element.style.opacity,
+                           static_cast<int>(element.style.corner_radius));
     }
     return sig;
 }
@@ -53,7 +55,7 @@ auto OverlayController::Refresh(std::uint64_t now_ms) -> bool {
     last_signature_ = sig;
     pushed_once_ = true;
 
-    RgbaImage frame = renderer_.Render(scene, out_width_, out_height_);
+    RgbaImage frame = renderer_.Render(scene, out_size_.width, out_size_.height);
     sink_.PushFrame(frame);
     ++push_count_;
     return true;

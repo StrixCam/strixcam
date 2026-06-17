@@ -29,7 +29,7 @@ class IFrameBuffer {
     // then return std::nullopt. Subsequent Push calls are dropped.
     virtual auto Close() -> void = 0;
 
-    virtual auto Stats() const -> BufferStats = 0;
+    [[nodiscard]] virtual auto Stats() const -> BufferStats = 0;
 };
 
 }  // namespace sst::buffer

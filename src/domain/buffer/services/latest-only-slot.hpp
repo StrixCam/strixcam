@@ -18,9 +18,9 @@ class LatestOnlySlot final : public IFrameBuffer<T> {
     LatestOnlySlot() = default;
 
     LatestOnlySlot(const LatestOnlySlot&) = delete;
-    LatestOnlySlot& operator=(const LatestOnlySlot&) = delete;
+    auto operator=(const LatestOnlySlot&) -> LatestOnlySlot& = delete;
     LatestOnlySlot(LatestOnlySlot&&) = delete;
-    LatestOnlySlot& operator=(LatestOnlySlot&&) = delete;
+    auto operator=(LatestOnlySlot&&) -> LatestOnlySlot& = delete;
 
     ~LatestOnlySlot() override = default;
 

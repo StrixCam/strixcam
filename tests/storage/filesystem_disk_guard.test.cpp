@@ -22,14 +22,14 @@ class FilesystemDiskGuardTest : public ::testing::Test {
     auto SetUp() -> void override {
         root_ = std::filesystem::path(SST_REPO_ROOT_DIR) /
                 ("tests/storage/data/disk_guard_" + NextSuffix());
-        std::error_code ec;
-        std::filesystem::remove_all(root_, ec);
+        std::error_code err;
+        std::filesystem::remove_all(root_, err);
         std::filesystem::create_directories(root_);
     }
 
     auto TearDown() -> void override {
-        std::error_code ec;
-        std::filesystem::remove_all(root_, ec);
+        std::error_code err;
+        std::filesystem::remove_all(root_, err);
     }
 
     std::filesystem::path root_;
@@ -46,8 +46,11 @@ TEST_F(FilesystemDiskGuardTest, ZeroThresholdAlwaysPasses) {
 }
 
 TEST_F(FilesystemDiskGuardTest, BelowThresholdReturnsFalse) {
-    // No filesystem on the planet has 1 EiB free.
-    FilesystemDiskGuard guard(root_, std::uint64_t{1ULL << 60});
+    // No filesystem on the planet has 1 EiB free. The 60 is the exbibyte exponent
+    // (2^60 bytes), self-evident from the constant's name.
+    constexpr std::uint64_t kOneExbibyte = std::uint64_t{1}
+                                           << 60U;  // NOLINT(readability-magic-numbers)
+    FilesystemDiskGuard guard(root_, kOneExbibyte);
     EXPECT_FALSE(guard.HasEnoughFreeSpace());
 }
 

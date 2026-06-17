@@ -8,6 +8,7 @@
 #include "app/overlay/ports/overlay-renderer.hpp"
 #include "app/overlay/ports/overlay-sink.hpp"
 #include "app/overlay/services/overlay_scene/overlay-scene.hpp"
+#include "domain/common/models/output-size.hpp"
 #include "domain/overlay/models/overlay-layout.hpp"
 
 namespace sst::overlay {
@@ -19,8 +20,7 @@ namespace sst::overlay {
 // the pipeline.
 class OverlayController {
    public:
-    OverlayController(IOverlayRenderer& renderer, IOverlaySink& sink, std::uint32_t out_width,
-                      std::uint32_t out_height);
+    OverlayController(IOverlayRenderer& renderer, IOverlaySink& sink, common::OutputSize out_size);
 
     auto SetLayout(OverlayLayout layout) -> void;
     auto SetBindingData(const BindingData& data) -> void;
@@ -46,8 +46,7 @@ class OverlayController {
     mutable std::mutex mtx_;
     IOverlayRenderer& renderer_;
     IOverlaySink& sink_;
-    std::uint32_t out_width_;
-    std::uint32_t out_height_;
+    common::OutputSize out_size_;
     OverlayScene scene_;
     std::string last_signature_;
     bool pushed_once_{false};

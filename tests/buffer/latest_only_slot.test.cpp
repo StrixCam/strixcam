@@ -45,8 +45,8 @@ TEST(LatestOnlySlotTest, PopBlocksUntilPushed) {
     std::atomic<bool> got{false};
 
     std::thread consumer([&] {
-        auto v = buf.Pop(500ms);
-        if (v && *v == 99) {
+        auto val = buf.Pop(500ms);
+        if (val && *val == 99) {  // NOLINT(readability-magic-numbers) self-evident payload
             got.store(true);
         }
     });
@@ -54,16 +54,16 @@ TEST(LatestOnlySlotTest, PopBlocksUntilPushed) {
     std::this_thread::sleep_for(20ms);
     EXPECT_FALSE(got.load());
 
-    buf.Push(99);
+    buf.Push(99);  // NOLINT(readability-magic-numbers) self-evident payload
     consumer.join();
     EXPECT_TRUE(got.load());
 }
 
 TEST(LatestOnlySlotTest, PopReturnsNulloptOnTimeout) {
     LatestOnlySlot<int> buf;
-    auto t0 = std::chrono::steady_clock::now();
+    auto start = std::chrono::steady_clock::now();
     auto out = buf.Pop(50ms);
-    auto elapsed = std::chrono::steady_clock::now() - t0;
+    auto elapsed = std::chrono::steady_clock::now() - start;
 
     EXPECT_FALSE(out.has_value());
     EXPECT_GE(elapsed, 45ms);
@@ -74,8 +74,8 @@ TEST(LatestOnlySlotTest, CloseWakesBlockedPop) {
     std::atomic<bool> returned{false};
 
     std::thread consumer([&] {
-        auto v = buf.Pop(5s);
-        EXPECT_FALSE(v.has_value());
+        auto val = buf.Pop(5s);
+        EXPECT_FALSE(val.has_value());
         returned.store(true);
     });
 
@@ -89,11 +89,12 @@ TEST(LatestOnlySlotTest, CloseWakesBlockedPop) {
 
 TEST(LatestOnlySlotTest, MoveOnlyPayload) {
     LatestOnlySlot<std::unique_ptr<int>> buf;
-    buf.Push(std::make_unique<int>(7));
+    // 7 is a self-evident payload used only to assert move-through.
+    buf.Push(std::make_unique<int>(7));  // NOLINT(readability-magic-numbers)
     auto out = buf.TryPop();
     ASSERT_TRUE(out.has_value());
     ASSERT_TRUE(*out);
-    EXPECT_EQ(**out, 7);
+    EXPECT_EQ(**out, 7);  // NOLINT(readability-magic-numbers)
 }
 
 }  // namespace sst::buffer

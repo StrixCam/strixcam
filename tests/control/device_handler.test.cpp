@@ -4,6 +4,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+
 #include "app/control/ports/system-stats.hpp"
 #include "app/control/services/handlers/device.handler.hpp"
 #include "bluetooth.pb.h"
@@ -13,45 +15,56 @@ namespace {
 
 using sst::control::DeviceHandler;
 
+// Fixed telemetry values the fake reports; the tests assert these exact numbers
+// flow through to the response.
+constexpr std::uint64_t kStorageFreeBytes = 1000;
+constexpr std::uint64_t kStorageTotalBytes = 4000;
+constexpr std::uint64_t kUptimeSeconds = 12345;
+constexpr float kCpuUsedPct = 25.0F;
+
 class FakeStats final : public sst::control::ISystemStats {
    public:
     [[nodiscard]] auto Read() const -> sst::control::SystemStats override {
         ++reads;
-        sst::control::SystemStats s;
-        s.storage_free_bytes = 1000;
-        s.storage_total_bytes = 4000;
-        s.uptime_seconds = 12345;
-        s.cpu_used_pct = 25.0F;
-        return s;
+        sst::control::SystemStats stats;
+        stats.storage_free_bytes = kStorageFreeBytes;
+        stats.storage_total_bytes = kStorageTotalBytes;
+        stats.uptime_seconds = kUptimeSeconds;
+        stats.cpu_used_pct = kCpuUsedPct;
+        return stats;
     }
     mutable int reads{0};
 };
 
 auto MakeDevice() -> sst::config::DeviceData {
-    sst::config::DeviceData d;
-    d.name = "sst-cam";
-    d.model = "v1";
-    d.version = "1.0.0";
-    d.serial_number = "00000042";
-    return d;
+    sst::config::DeviceData device;
+    device.name = "sst-cam";
+    device.model = "v1";
+    device.version = "1.0.0";
+    device.serial_number = "00000042";
+    return device;
 }
 
 auto DeviceInfoCommand() -> sst_cam::Command {
-    sst_cam::Command c;
-    c.set_correlation_id("corr-info");
-    c.mutable_get_device_info();
-    return c;
+    sst_cam::Command cmd;
+    cmd.set_correlation_id("corr-info");
+    cmd.mutable_get_device_info();
+    return cmd;
 }
 
 auto TelemetryCommand() -> sst_cam::Command {
-    sst_cam::Command c;
-    c.set_correlation_id("corr-tel");
-    c.mutable_get_telemetry();
-    return c;
+    sst_cam::Command cmd;
+    cmd.set_correlation_id("corr-tel");
+    cmd.mutable_get_telemetry();
+    return cmd;
 }
 
 // R8: GetDeviceInfo returns the configured identity + a non-zero protocol_version.
-TEST(DeviceHandlerTest, DeviceInfoReturnsIdentityAndProtocolVersion) {
+// A flat sequence of EXPECT_* assertions; the cognitive-complexity score is
+// inflated by gtest macro expansion, and splitting the spec-style assertion list
+// into helpers would hurt readability — hence the suppression on the next line.
+TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
+     DeviceInfoReturnsIdentityAndProtocolVersion) {
     FakeStats stats;
     DeviceHandler handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; });
@@ -70,7 +83,11 @@ TEST(DeviceHandlerTest, DeviceInfoReturnsIdentityAndProtocolVersion) {
 // is_recording / is_streaming / is_raw_capturing reflect the injected providers,
 // each independently (is_raw_capturing is wire field 14, set independently of
 // is_recording — the app reads it to show raw-capture running state).
-TEST(DeviceHandlerTest, TelemetryReflectsRecordingStreamingAndRawCapturingFlags) {
+// A flat sequence of EXPECT_* assertions; the cognitive-complexity score is
+// inflated by gtest macro expansion, and splitting the spec-style assertion list
+// into helpers would hurt readability — hence the suppression on the next line.
+TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
+     TelemetryReflectsRecordingStreamingAndRawCapturingFlags) {
     FakeStats stats;
     DeviceHandler handler(
         MakeDevice(), stats, [] { return true; }, [] { return false; }, [] { return true; });
@@ -78,9 +95,9 @@ TEST(DeviceHandlerTest, TelemetryReflectsRecordingStreamingAndRawCapturingFlags)
     auto resp = handler.Handle(TelemetryCommand());
 
     ASSERT_EQ(resp.payload_case(), sst_cam::CommandResponse::kTelemetry);
-    EXPECT_EQ(resp.telemetry().storage_free_bytes(), 1000U);
-    EXPECT_EQ(resp.telemetry().storage_total_bytes(), 4000U);
-    EXPECT_EQ(resp.telemetry().uptime_seconds(), 12345U);
+    EXPECT_EQ(resp.telemetry().storage_free_bytes(), kStorageFreeBytes);
+    EXPECT_EQ(resp.telemetry().storage_total_bytes(), kStorageTotalBytes);
+    EXPECT_EQ(resp.telemetry().uptime_seconds(), kUptimeSeconds);
     EXPECT_TRUE(resp.telemetry().is_recording());
     EXPECT_FALSE(resp.telemetry().is_streaming());
     // Set independently of is_recording (which is true here): proves field 14 is

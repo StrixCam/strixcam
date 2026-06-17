@@ -34,6 +34,27 @@ using sst::processing::FrameBundle;
 using sst::processing::IPostprocessor;
 using sst::processing::IPreprocessor;
 
+// Frame dimensions bundled so width/height can't be transposed at a call site
+// (and so FakeCapture takes one geometry argument, not two swappable ones).
+struct Dims {
+    std::uint32_t width;
+    std::uint32_t height;
+};
+
+// Named geometries used across the tests. kCam0/kCam1 are deliberately distinct
+// so a test can tell which camera's bundle reached postprocess. kOutput is the
+// fixed size FakePostprocessor stamps on every final frame.
+// NOLINTBEGIN(readability-magic-numbers) — these *are* the named definitions
+constexpr Dims kCam0Dims{640, 360};
+constexpr Dims kCam1Dims{800, 600};
+constexpr Dims kOutputDims{1280, 720};
+
+// FakeCapture timings. kIdlePollMs avoids a hot spin while stalled/stopped;
+// kFramePeriodMs paces ~30fps so the producer doesn't starve the consumer.
+constexpr int kIdlePollMs = 5;
+constexpr int kFramePeriodMs = 33;
+// NOLINTEND(readability-magic-numbers)
+
 // ── Test doubles ─────────────────────────────────────────────────────
 //
 // The real GStreamerAdapter / OpenCv* adapters need IMX477 / OpenCV runtime;
@@ -46,8 +67,8 @@ class FakeCapture final : public ICaptureFrame {
     // Per-camera geometry lets dual-camera tests tell which camera's frame
     // reached postprocess. `stall` makes Capture() always return nullopt (the
     // camera produces nothing) without stopping the producer thread.
-    FakeCapture(std::uint32_t width, std::uint32_t height, bool stall = false)
-        : width_(width), height_(height), stall_(stall) {}
+    explicit FakeCapture(Dims dims, bool stall = false)
+        : width_(dims.width), height_(dims.height), stall_(stall) {}
 
     auto Start() -> void override { running_ = true; }
     auto Stop() -> void override { running_ = false; }
@@ -55,7 +76,7 @@ class FakeCapture final : public ICaptureFrame {
 
     auto Capture() -> std::optional<Frame> override {
         if (!running_ || stall_) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            std::this_thread::sleep_for(std::chrono::milliseconds(kIdlePollMs));
             return std::nullopt;
         }
         Frame frame;
@@ -65,13 +86,13 @@ class FakeCapture final : public ICaptureFrame {
         // Match real GStreamerAdapter behavior: pace at ~30fps so the producer
         // doesn't spin on Capture() in the test, and to give the consumer a
         // chance to drain the slot between pushes.
-        std::this_thread::sleep_for(std::chrono::milliseconds(33));
+        std::this_thread::sleep_for(std::chrono::milliseconds(kFramePeriodMs));
         return frame;
     }
 
    private:
-    std::uint32_t width_{640};
-    std::uint32_t height_{360};
+    std::uint32_t width_{kCam0Dims.width};
+    std::uint32_t height_{kCam0Dims.height};
     bool stall_{false};
     std::atomic<bool> running_{false};
     std::atomic<std::uint64_t> next_id_{0};
@@ -104,7 +125,7 @@ class FakePostprocessor final : public IPostprocessor {
 
         Frame out = source;
         out.format = sst::common::PixelFormat::BGR8;
-        out.geometry = {.width = 1280, .height = 720};
+        out.geometry = {.width = kOutputDims.width, .height = kOutputDims.height};
         return out;
     }
 
@@ -168,7 +189,8 @@ auto TwoCameras(std::unique_ptr<ICaptureFrame> cam0, std::unique_ptr<IPreprocess
 auto FastConfig() -> PipelineConfig {
     return PipelineConfig{
         .capture_idle_sleep = std::chrono::milliseconds(1),
-        .consumer_pop_timeout = std::chrono::milliseconds(20),
+        .consumer_pop_timeout = std::chrono::milliseconds(
+            20),  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     };
 }
 
@@ -224,7 +246,8 @@ TEST(PipelineOrchestratorTest, EndToEndFlowProducesPostprocessedFrames) {
     ASSERT_TRUE(orchestrator.Start());
     // Run for ~300ms — at 33ms/frame in FakeCapture that's ~9 frames captured
     // with most or all reaching the sink (LatestOnlySlot may drop a couple).
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     EXPECT_GT(preprocessor->process_calls.load(), 0);
@@ -232,8 +255,8 @@ TEST(PipelineOrchestratorTest, EndToEndFlowProducesPostprocessedFrames) {
     auto [pushes, last_id, last_format, last_geom] = sink.Snapshot();
     EXPECT_GT(pushes, 0);
     EXPECT_EQ(last_format, sst::common::PixelFormat::BGR8);
-    EXPECT_EQ(last_geom.width, 1280U);
-    EXPECT_EQ(last_geom.height, 720U);
+    EXPECT_EQ(last_geom.width, kOutputDims.width);
+    EXPECT_EQ(last_geom.height, kOutputDims.height);
 }
 
 // U3: both cameras run, but the static decision routes only camera 0 to
@@ -244,21 +267,22 @@ TEST(PipelineOrchestratorTest, OnlyChosenCameraReachesPostprocess) {
     auto* postprocessor = postprocessor_owner.get();
     CountingSink sink;
     PipelineOrchestrator orchestrator(
-        TwoCameras(std::make_unique<FakeCapture>(640, 360), std::make_unique<FakePreprocessor>(),
-                   std::make_unique<FakeCapture>(800, 600), std::make_unique<FakePreprocessor>()),
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims), std::make_unique<FakePreprocessor>()),
         std::move(postprocessor_owner), std::make_unique<StaticDecision>(), sink, FastConfig());
 
     ASSERT_TRUE(orchestrator.Start());
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     ASSERT_GT(postprocessor->process_calls, 0);
     // Every postprocessed frame came from camera 0 (640x360) — camera 1's
     // 800x600 bundles aged out unchosen.
-    EXPECT_EQ(postprocessor->last_source_geometry.width, 640U);
-    EXPECT_EQ(postprocessor->last_source_geometry.height, 360U);
-    EXPECT_EQ(postprocessor->last_crop.width, 640U);
-    EXPECT_EQ(postprocessor->last_crop.height, 360U);
+    EXPECT_EQ(postprocessor->last_source_geometry.width, kCam0Dims.width);
+    EXPECT_EQ(postprocessor->last_source_geometry.height, kCam0Dims.height);
+    EXPECT_EQ(postprocessor->last_crop.width, kCam0Dims.width);
+    EXPECT_EQ(postprocessor->last_crop.height, kCam0Dims.height);
 }
 
 // U3: if camera 1 stalls (produces no frames), the consumer still serves
@@ -266,14 +290,15 @@ TEST(PipelineOrchestratorTest, OnlyChosenCameraReachesPostprocess) {
 TEST(PipelineOrchestratorTest, OneCameraStallingDoesNotBlockTheOther) {
     CountingSink sink;
     PipelineOrchestrator orchestrator(
-        TwoCameras(std::make_unique<FakeCapture>(640, 360), std::make_unique<FakePreprocessor>(),
-                   std::make_unique<FakeCapture>(800, 600, /*stall=*/true),
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims, /*stall=*/true),
                    std::make_unique<FakePreprocessor>()),
         std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), sink,
         FastConfig());
 
     ASSERT_TRUE(orchestrator.Start());
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     auto [pushes, last_id, last_format, last_geom] = sink.Snapshot();
@@ -286,15 +311,16 @@ TEST(PipelineOrchestratorTest, OneCameraStallingDoesNotBlockTheOther) {
 TEST(PipelineOrchestratorTest, DualCameraStartStopCyclesCleanly) {
     CountingSink sink;
     PipelineOrchestrator orchestrator(
-        TwoCameras(std::make_unique<FakeCapture>(640, 360), std::make_unique<FakePreprocessor>(),
-                   std::make_unique<FakeCapture>(800, 600), std::make_unique<FakePreprocessor>()),
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims), std::make_unique<FakePreprocessor>()),
         std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), sink,
         FastConfig());
 
     for (int i = 0; i < 3; ++i) {
         ASSERT_TRUE(orchestrator.Start());
         EXPECT_TRUE(orchestrator.IsRunning());
-        std::this_thread::sleep_for(std::chrono::milliseconds(60));
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            60));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
         orchestrator.Stop();
         EXPECT_FALSE(orchestrator.IsRunning());
     }
@@ -331,14 +357,15 @@ TEST(PipelineOrchestratorTest, GrabLatestReturnsLatestFinalFrame) {
         if (snap.has_value()) {
             break;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            5));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     }
     orchestrator.Stop();
 
     ASSERT_TRUE(snap.has_value()) << "no final frame produced within the poll window";
     EXPECT_EQ(snap->format, sst::common::PixelFormat::BGR8);
-    EXPECT_EQ(snap->geometry.width, 1280U);
-    EXPECT_EQ(snap->geometry.height, 720U);
+    EXPECT_EQ(snap->geometry.width, kOutputDims.width);
+    EXPECT_EQ(snap->geometry.height, kOutputDims.height);
 }
 
 // GrabLatest() racing Stop() must be safe: a reader thread hammering GrabLatest()
@@ -363,7 +390,8 @@ TEST(PipelineOrchestratorTest, ConcurrentGrabLatestAndStopIsSafe) {
     });
 
     // Let a few frames flow, then tear down while the reader is still grabbing.
-    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        60));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     // GrabLatest after Stop must remain safe (returns nullopt or a final frame).
@@ -385,7 +413,8 @@ TEST(PipelineOrchestratorTest, PostprocessorReceivesFullFrameCrop) {
         std::move(postprocessor_owner), std::make_unique<StaticDecision>(), sink, FastConfig());
 
     ASSERT_TRUE(orchestrator.Start());
-    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        120));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     ASSERT_GT(postprocessor->process_calls, 0);
@@ -408,7 +437,8 @@ TEST(PipelineOrchestratorTest, PreprocessRefusalsDoNotStallPipeline) {
         FastConfig());
 
     ASSERT_TRUE(orchestrator.Start());
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
     orchestrator.Stop();
 
     // Preprocessor was called many times even though most refused; the
@@ -437,7 +467,8 @@ TEST(PipelineOrchestratorTest, DestructorStopsRunningPipeline) {
             std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), sink,
             FastConfig());
         ASSERT_TRUE(orchestrator.Start());
-        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            120));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
         // No explicit Stop(); destructor must clean up cleanly.
     }
     // The test asserts we got here without hangs / data races caught by

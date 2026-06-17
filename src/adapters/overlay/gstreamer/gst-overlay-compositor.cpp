@@ -7,8 +7,8 @@
 
 namespace sst::adapters::overlay {
 
-GstOverlayCompositor::GstOverlayCompositor(std::uint32_t width, std::uint32_t height)
-    : width_(width), height_(height) {
+GstOverlayCompositor::GstOverlayCompositor(sst::common::OutputSize size)
+    : width_(size.width), height_(size.height) {
     gst_init(nullptr, nullptr);
 
     appsrc_ = gst_element_factory_make("appsrc", "overlay_src");

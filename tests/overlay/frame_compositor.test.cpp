@@ -14,98 +14,143 @@ using sst::capture::Frame;
 using sst::overlay::CompositeOverlay;
 using sst::overlay::RgbaImage;
 
+constexpr std::uint32_t kBgrBytesPerPixel = 3;
+constexpr std::uint32_t kRgbaBytesPerPixel = 4;
+
+// Strongly-typed image dimensions and pixel colors so the test helpers can't have
+// their width/height or color channels transposed at a call site.
+struct Size {
+    std::uint32_t width;
+    std::uint32_t height;
+};
+struct Bgr {
+    std::uint8_t blue;
+    std::uint8_t green;
+    std::uint8_t red;
+};
+struct Rgba {
+    std::uint8_t red;
+    std::uint8_t green;
+    std::uint8_t blue;
+    std::uint8_t alpha;
+};
+
 // Keep the backing buffer alive alongside the Frame that points into it.
 struct BgrFrame {
     Frame frame;
     std::shared_ptr<std::vector<std::uint8_t>> bytes;
 };
 
-auto MakeBgr(std::uint32_t w, std::uint32_t h, std::uint8_t b, std::uint8_t g, std::uint8_t r)
-    -> BgrFrame {
-    auto buf = std::make_shared<std::vector<std::uint8_t>>(static_cast<std::size_t>(w) * h * 3);
-    for (std::size_t i = 0; i < static_cast<std::size_t>(w) * h; ++i) {
-        (*buf)[i * 3 + 0] = b;
-        (*buf)[i * 3 + 1] = g;
-        (*buf)[i * 3 + 2] = r;
+auto MakeBgr(Size size, Bgr color) -> BgrFrame {
+    const std::size_t pixel_count = static_cast<std::size_t>(size.width) * size.height;
+    auto buf = std::make_shared<std::vector<std::uint8_t>>(pixel_count * kBgrBytesPerPixel);
+    for (std::size_t i = 0; i < pixel_count; ++i) {
+        (*buf)[i * kBgrBytesPerPixel + 0] = color.blue;
+        (*buf)[i * kBgrBytesPerPixel + 1] = color.green;
+        (*buf)[i * kBgrBytesPerPixel + 2] = color.red;
     }
-    Frame f;
-    f.format = sst::common::PixelFormat::BGR8;
-    f.geometry = {.width = w, .height = h};
-    f.planes = {
-        sst::capture::FramePlane{.stride = w * 3, .data = buf->data(), .size = buf->size()}};
-    f.owner = buf;
-    return {std::move(f), buf};
+    Frame frame;
+    frame.format = sst::common::PixelFormat::BGR8;
+    frame.geometry = {.width = size.width, .height = size.height};
+    frame.planes = {sst::capture::FramePlane{
+        .stride = size.width * kBgrBytesPerPixel, .data = buf->data(), .size = buf->size()}};
+    frame.owner = buf;
+    return {std::move(frame), buf};
 }
 
-auto MakeRgba(std::uint32_t w, std::uint32_t h, std::uint8_t r, std::uint8_t g, std::uint8_t b,
-              std::uint8_t a) -> RgbaImage {
+auto MakeRgba(Size size, Rgba color) -> RgbaImage {
+    const std::size_t pixel_count = static_cast<std::size_t>(size.width) * size.height;
     RgbaImage img;
-    img.width = w;
-    img.height = h;
-    img.stride = w * 4;
-    img.pixels.resize(static_cast<std::size_t>(w) * h * 4);
-    for (std::size_t i = 0; i < static_cast<std::size_t>(w) * h; ++i) {
-        img.pixels[i * 4 + 0] = r;
-        img.pixels[i * 4 + 1] = g;
-        img.pixels[i * 4 + 2] = b;
-        img.pixels[i * 4 + 3] = a;
+    img.width = size.width;
+    img.height = size.height;
+    img.stride = size.width * kRgbaBytesPerPixel;
+    img.pixels.resize(pixel_count * kRgbaBytesPerPixel);
+    for (std::size_t i = 0; i < pixel_count; ++i) {
+        img.pixels[i * kRgbaBytesPerPixel + 0] = color.red;
+        img.pixels[i * kRgbaBytesPerPixel + 1] = color.green;
+        img.pixels[i * kRgbaBytesPerPixel + 2] = color.blue;
+        img.pixels[i * kRgbaBytesPerPixel + 3] = color.alpha;
     }
     return img;
 }
 
+constexpr std::uint8_t kOpaque = 255;
+
+// Named test colors, shared across the cases below.
+constexpr Bgr kSrcBgr{.blue = 10, .green = 20, .red = 30};
+constexpr Rgba kOverlayRgba{.red = 200, .green = 100, .blue = 50, .alpha = kOpaque};
+// kOverlayRgba expressed in BGR byte order (what the composited plane should hold).
+constexpr Bgr kOverlayBgr{.blue = 50, .green = 100, .red = 200};
+
+// Assert every pixel of a tightly-packed BGR plane equals the expected color,
+// within `tol` per channel. Kept out of the test bodies so each TEST stays below
+// the cognitive-complexity threshold.
+void ExpectAllPixelsBgr(const std::uint8_t* plane, std::size_t pixel_count, Bgr expected,
+                        int tol = 0) {
+    for (std::size_t i = 0; i < pixel_count; ++i) {
+        EXPECT_NEAR(plane[i * kBgrBytesPerPixel + 0], expected.blue, tol);
+        EXPECT_NEAR(plane[i * kBgrBytesPerPixel + 1], expected.green, tol);
+        EXPECT_NEAR(plane[i * kBgrBytesPerPixel + 2], expected.red, tol);
+    }
+}
+
 TEST(FrameCompositorTest, OpaqueOverlayReplacesPixels) {
-    auto src = MakeBgr(4, 4, /*b=*/10, /*g=*/20, /*r=*/30);
-    const auto overlay = MakeRgba(4, 4, /*r=*/200, /*g=*/100, /*b=*/50, /*a=*/255);
+    constexpr Size kSize{.width = 4, .height = 4};
+    auto src = MakeBgr(kSize, kSrcBgr);
+    const auto overlay = MakeRgba(kSize, kOverlayRgba);
 
     auto out = CompositeOverlay(src.frame, overlay);
     ASSERT_TRUE(out.has_value());
     ASSERT_FALSE(out->planes.empty());
-    const auto* px = out->planes[0].data;
     // Every pixel becomes the overlay color in BGR order (B=50, G=100, R=200).
-    for (std::size_t i = 0; i < 16; ++i) {
-        EXPECT_EQ(px[i * 3 + 0], 50);
-        EXPECT_EQ(px[i * 3 + 1], 100);
-        EXPECT_EQ(px[i * 3 + 2], 200);
-    }
+    ExpectAllPixelsBgr(out->planes[0].data, static_cast<std::size_t>(kSize.width) * kSize.height,
+                       kOverlayBgr);
 }
 
 TEST(FrameCompositorTest, FullyTransparentOverlayLeavesFrameUnchanged) {
-    auto src = MakeBgr(4, 4, 10, 20, 30);
-    const auto overlay = MakeRgba(4, 4, 200, 100, 50, /*a=*/0);
+    constexpr Size kSize{.width = 4, .height = 4};
+    auto src = MakeBgr(kSize, kSrcBgr);
+    // Same overlay color but fully transparent — the source must show through.
+    const auto overlay = MakeRgba(kSize, Rgba{.red = kOverlayRgba.red,
+                                              .green = kOverlayRgba.green,
+                                              .blue = kOverlayRgba.blue,
+                                              .alpha = 0});
 
     auto out = CompositeOverlay(src.frame, overlay);
     ASSERT_TRUE(out.has_value());
-    const auto* px = out->planes[0].data;
-    for (std::size_t i = 0; i < 16; ++i) {
-        EXPECT_EQ(px[i * 3 + 0], 10);
-        EXPECT_EQ(px[i * 3 + 1], 20);
-        EXPECT_EQ(px[i * 3 + 2], 30);
-    }
+    ExpectAllPixelsBgr(out->planes[0].data, static_cast<std::size_t>(kSize.width) * kSize.height,
+                       kSrcBgr);
 }
 
 TEST(FrameCompositorTest, HalfAlphaBlendsHalfway) {
-    auto src = MakeBgr(2, 2, /*b=*/0, /*g=*/0, /*r=*/0);
-    const auto overlay = MakeRgba(2, 2, /*r=*/200, /*g=*/200, /*b=*/200, /*a=*/128);
+    constexpr Size kSize{.width = 2, .height = 2};
+    constexpr std::uint8_t kHalfAlpha = 128;
+    constexpr std::uint8_t kBlendedValue = 100;  // 0*(127/255) + 200*(128/255) ≈ 100
+    constexpr int kBlendTolerance = 2;
+    auto src = MakeBgr(kSize, Bgr{.blue = 0, .green = 0, .red = 0});
+    const auto overlay =
+        MakeRgba(kSize, Rgba{.red = 200, .green = 200, .blue = 200, .alpha = kHalfAlpha});
 
     auto out = CompositeOverlay(src.frame, overlay);
     ASSERT_TRUE(out.has_value());
-    const auto* px = out->planes[0].data;
-    // out = 0*(127/255) + 200*(128/255) ≈ 100.
-    for (std::size_t i = 0; i < 4; ++i) {
-        EXPECT_NEAR(px[i * 3 + 0], 100, 2);
-        EXPECT_NEAR(px[i * 3 + 1], 100, 2);
-        EXPECT_NEAR(px[i * 3 + 2], 100, 2);
-    }
+    ExpectAllPixelsBgr(out->planes[0].data, static_cast<std::size_t>(kSize.width) * kSize.height,
+                       Bgr{.blue = kBlendedValue, .green = kBlendedValue, .red = kBlendedValue},
+                       kBlendTolerance);
 }
 
 TEST(FrameCompositorTest, NonBgrSourceReturnsNullopt) {
-    auto src = MakeBgr(4, 4, 1, 2, 3);
+    constexpr Size kSize{.width = 4, .height = 4};
+    auto src = MakeBgr(kSize, Bgr{.blue = 1, .green = 2, .red = 3});
     src.frame.format = sst::common::PixelFormat::NV12;  // unsupported
-    EXPECT_FALSE(CompositeOverlay(src.frame, MakeRgba(4, 4, 1, 1, 1, 255)).has_value());
+    EXPECT_FALSE(
+        CompositeOverlay(src.frame,
+                         MakeRgba(kSize, Rgba{.red = 1, .green = 1, .blue = 1, .alpha = kOpaque}))
+            .has_value());
 }
 
 TEST(FrameCompositorTest, EmptyOverlayReturnsNullopt) {
-    auto src = MakeBgr(4, 4, 1, 2, 3);
+    constexpr Size kSize{.width = 4, .height = 4};
+    auto src = MakeBgr(kSize, Bgr{.blue = 1, .green = 2, .red = 3});
     RgbaImage empty;  // 0x0, no pixels
     EXPECT_FALSE(CompositeOverlay(src.frame, empty).has_value());
 }
@@ -114,19 +159,22 @@ TEST(FrameCompositorTest, MismatchedAspectIsLetterboxedAndCentered) {
     // Wide 4x2 frame (2:1), square 2x2 overlay (1:1): aspect-preserving scale =
     // min(4/2, 2/2) = 1, so the 2x2 overlay is drawn centered at x in [1,3) with
     // pillarbox margins at x=0 and x=3.
-    auto src = MakeBgr(4, 2, /*b=*/0, /*g=*/0, /*r=*/0);
-    const auto overlay = MakeRgba(2, 2, /*r=*/255, /*g=*/255, /*b=*/255, /*a=*/255);
+    constexpr Size kFrameSize{.width = 4, .height = 2};
+    constexpr Size kOverlaySize{.width = 2, .height = 2};
+    auto src = MakeBgr(kFrameSize, Bgr{.blue = 0, .green = 0, .red = 0});
+    const auto overlay =
+        MakeRgba(kOverlaySize, Rgba{.red = 255, .green = 255, .blue = 255, .alpha = kOpaque});
 
     auto out = CompositeOverlay(src.frame, overlay);
     ASSERT_TRUE(out.has_value());
-    const auto* px = out->planes[0].data;
-    auto at = [&](std::uint32_t x, std::uint32_t y, std::uint32_t ch) {
-        return px[(static_cast<std::size_t>(y) * 4 + x) * 3 + ch];
+    const auto* plane = out->planes[0].data;
+    const auto blue_at = [&](std::uint32_t col, std::uint32_t row) {
+        return plane[(static_cast<std::size_t>(row) * kFrameSize.width + col) * kBgrBytesPerPixel];
     };
-    EXPECT_EQ(at(0, 0, 0), 0);    // left margin — untouched black
-    EXPECT_EQ(at(3, 0, 0), 0);    // right margin — untouched black
-    EXPECT_EQ(at(1, 0, 0), 255);  // drawn region — white
-    EXPECT_EQ(at(2, 1, 0), 255);  // drawn region — white
+    EXPECT_EQ(blue_at(0, 0), 0);        // left margin — untouched black
+    EXPECT_EQ(blue_at(3, 0), 0);        // right margin — untouched black
+    EXPECT_EQ(blue_at(1, 0), kOpaque);  // drawn region — white
+    EXPECT_EQ(blue_at(2, 1), kOpaque);  // drawn region — white
 }
 
 }  // namespace

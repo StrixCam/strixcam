@@ -13,18 +13,35 @@
 
 namespace {
 
-using namespace sst::overlay;
+using sst::overlay::BindingData;
+using sst::overlay::IOverlayRenderer;
+using sst::overlay::IOverlaySink;
+using sst::overlay::OverlayBinding;
+using sst::overlay::OverlayController;
+using sst::overlay::OverlayElement;
+using sst::overlay::OverlayLayout;
+using sst::overlay::OverlayRect;
+using sst::overlay::OverlayShape;
+using sst::overlay::RenderScene;
+using sst::overlay::RgbaImage;
+
+constexpr std::uint32_t kRgbaBytesPerPixel = 4;
 
 class FakeRenderer final : public IOverlayRenderer {
    public:
-    auto Render(const RenderScene& /*scene*/, std::uint32_t w, std::uint32_t h)
-        -> RgbaImage override {
+    // Overrides the IOverlayRenderer port signature; the parameter order is fixed
+    // by the interface and cannot be changed here.
+    auto Render(
+        const RenderScene& /*scene*/,
+        std::uint32_t width,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok: test double;
+                              // order fixed by IOverlayRenderer::Render, cannot reorder in override
+        std::uint32_t height) -> RgbaImage override {
         ++renders;
         RgbaImage img;
-        img.width = w;
-        img.height = h;
-        img.stride = w * 4;
-        img.pixels.assign(static_cast<std::size_t>(img.stride) * h, 0);
+        img.width = width;
+        img.height = height;
+        img.stride = width * kRgbaBytesPerPixel;
+        img.pixels.assign(static_cast<std::size_t>(img.stride) * height, 0);
         return img;
     }
     int renders{0};
@@ -36,17 +53,22 @@ class FakeSink final : public IOverlaySink {
     int pushes{0};
 };
 
+constexpr std::uint32_t kCanvasSize = 100;
+constexpr float kElementWidth = 100;
+constexpr float kElementHeight = 40;
+
 auto ScoreLayout() -> OverlayLayout {
     OverlayLayout layout;
-    layout.canvas_width = 100;
-    layout.canvas_height = 100;
-    OverlayElement vs;
-    vs.id = "vs";
-    vs.shape = OverlayShape::kText;
-    vs.binding = OverlayBinding::kScoreVs;
-    vs.bounds = OverlayRect{.x1 = 0, .y1 = 0, .x2 = 100, .y2 = 40, .z = 1};
-    vs.visible = true;
-    layout.elements.push_back(vs);
+    layout.canvas_width = kCanvasSize;
+    layout.canvas_height = kCanvasSize;
+    OverlayElement vs_element;
+    vs_element.id = "vs";
+    vs_element.shape = OverlayShape::kText;
+    vs_element.binding = OverlayBinding::kScoreVs;
+    vs_element.bounds =
+        OverlayRect{.x1 = 0, .y1 = 0, .x2 = kElementWidth, .y2 = kElementHeight, .z = 1};
+    vs_element.visible = true;
+    layout.elements.push_back(vs_element);
     return layout;
 }
 
@@ -54,7 +76,7 @@ auto ScoreLayout() -> OverlayLayout {
 TEST(OverlayControllerTest, PushesOnlyOnChange) {
     FakeRenderer renderer;
     FakeSink sink;
-    OverlayController controller(renderer, sink, 100, 100);
+    OverlayController controller(renderer, sink, sst::common::OutputSize{kCanvasSize, kCanvasSize});
     controller.SetLayout(ScoreLayout());
 
     BindingData data;
@@ -83,12 +105,14 @@ TEST(OverlayControllerTest, PushesOnlyOnChange) {
 TEST(OverlayControllerTest, NoPushWhenNothingChanges) {
     FakeRenderer renderer;
     FakeSink sink;
-    OverlayController controller(renderer, sink, 64, 64);
+    constexpr std::uint32_t kOutputSize = 64;
+    constexpr int kRefreshAttempts = 5;
+    OverlayController controller(renderer, sink, sst::common::OutputSize{kOutputSize, kOutputSize});
     controller.SetLayout(ScoreLayout());
     controller.SetBindingData(BindingData{});
     EXPECT_TRUE(controller.Refresh(0));
     const int after_first = sink.pushes;
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < kRefreshAttempts; ++i) {
         EXPECT_FALSE(controller.Refresh(static_cast<std::uint64_t>(i)));
     }
     EXPECT_EQ(sink.pushes, after_first);

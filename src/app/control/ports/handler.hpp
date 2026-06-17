@@ -22,7 +22,8 @@ class ICommandHandler {
    public:
     virtual ~ICommandHandler() = default;
 
-    virtual auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> = 0;
+    [[nodiscard]] virtual auto HandledCases() const
+        -> std::vector<sst_cam::Command::PayloadCase> = 0;
 
     virtual auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse = 0;
 };

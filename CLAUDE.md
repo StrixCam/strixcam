@@ -55,20 +55,48 @@ Tests must verify behaviour end-to-end at the **module** boundary: feed real inp
 clang-format -i src/**/*.cpp src/**/*.hpp
 
 # Tidy (checks defined in .clang-tidy — bugprone, performance, modernize, readability, google-*)
-clang-tidy -p build/debug src/path/to/file.cpp
+# clang-tidy is PINNED to clang-tidy-14 (jammy). The enforced check set + the
+# warning baseline are version-locked; treat a version bump as a deliberate,
+# re-triaged change. Cross-toolchain flags live in scripts/tidy-args.sh.
+clang-tidy-14 -p build/test src/path/to/file.cpp
 ```
 
 `compile_commands.json` is exported automatically to `build/<preset>/` and symlinked by clangd.
+
+### Auto-fix before you push
+
+`tidy` is a **hard CI gate** (clang-tidy with `WarningsAsErrors`), and CI is
+verify-only — it never writes fixes back to your branch. Correct fixable
+findings **dev-side**, inside the devcontainer, before pushing:
+
+```bash
+scripts/fix.sh          # clang-format + clang-tidy-14 --fix on STAGED C/C++ only
+scripts/fix.sh --all    # the whole src/ + tests/ tree (bulk cleanup)
+```
+
+`scripts/fix.sh` and the CI `tidy` job both source `scripts/tidy-args.sh`, so
+their cross flags can never drift. `--fix` corrects only checks that ship
+fixits; the noisy blockers (`magic-numbers`, `easily-swappable-parameters`,
+`cognitive-complexity`, `branch-clone`) have no fixit and stay reported for you
+to resolve by hand.
+
+Enable the pre-commit hook once per clone (run inside the devcontainer):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+It runs `scripts/fix.sh` on staged C/C++ files and re-stages what it rewrote.
 
 ## CI/CD & releasing
 
 PR-gated, Conventional-Commit driven. CI runs **inside the devcontainer** (the cross-build env), via `devcontainers/ci`. Two workflows:
 
-- `.github/workflows/ci.yml` — **pull requests only**. Required status checks on `main`: `format` (clang-format `--dry-run --Werror`) and `test` (cross-build the `test` preset + `ctest` under qemu; hardware-bound tests are excluded by name — they only pass on-device). `tidy` (clang-tidy) also runs but is **advisory** (`continue-on-error`) pending a clang-tidy cross-sysroot fix. Each job frees ~30GB host disk before building the ~37GB JetPack image.
+- `.github/workflows/ci.yml` — **pull requests only**. Required status checks on `main`: `format` (clang-format `--dry-run --Werror`), `test` (cross-build the `test` preset + `ctest` under qemu; hardware-bound tests are excluded by name — they only pass on-device), and `tidy` (clang-tidy). `tidy` is now a **hard gate**: the cross-toolchain header flags live in `scripts/tidy-args.sh`, the tree is clean under the full check set, and `.clang-tidy` promotes every diagnostic to an error (`WarningsAsErrors: '*'`) — a new lint violation fails the PR. clang-tidy is version-locked to `clang-tidy-14`. Auto-fix fixable findings dev-side with `scripts/fix.sh` before pushing (CI is verify-only). Each job frees ~30GB host disk before building the ~37GB JetPack image.
 - `.github/workflows/release.yml` — on **push to `main`** (a merge) + manual `workflow_dispatch`. Conventional-commit bump (`feat:` → minor, `fix:`/`perf:` → patch, `BREAKING`/`type!:` → major, docs/chore-only → **skip**) → tag `vX.Y.Z` + GitHub Release, then cross-builds the production binary and uploads `sst_cam_firmware-<tag>-aarch64`. Default `GITHUB_TOKEN` only — no PAT/App.
 
 ### Branch + commit + tag rules
-- `main` is protected: no direct push; PR + 1 approval + green `format`/`test` to merge.
+- `main` is protected: no direct push; PR + 1 approval + green `format`/`tidy`/`test` to merge.
 - Tags `v*` are immutable semver (no delete/move/force-push).
 - Use Conventional Commits. The **squash-merge subject** is what `release.yml` reads to choose the bump — a non-conventional subject cuts no release.
 

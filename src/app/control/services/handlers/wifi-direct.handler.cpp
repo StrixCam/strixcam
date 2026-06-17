@@ -9,13 +9,13 @@ namespace sst::control {
 WifiDirectHandler::WifiDirectHandler(sst::session::ISessionManager& session, IWifiManager& wifi,
                                      IDhcpServer& dhcp,
                                      sst::streaming::IStreamingService& streaming,
-                                     std::uint32_t preview_port, std::uint32_t download_port)
+                                     PreviewPort preview_port, DownloadPort download_port)
     : session_(session),
       wifi_(wifi),
       dhcp_(dhcp),
       streaming_(streaming),
-      preview_port_(preview_port),
-      download_port_(download_port) {}
+      preview_port_(preview_port.value),
+      download_port_(download_port.value) {}
 
 auto WifiDirectHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kStartWifiDirect, sst_cam::Command::kStopWifiDirect};

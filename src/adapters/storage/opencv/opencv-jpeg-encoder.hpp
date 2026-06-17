@@ -16,8 +16,8 @@ namespace sst::adapters::storage {
 // hardware-bound. Sibling to OpenCvThumbnailWriter, which writes to disk.
 class OpenCvJpegEncoder final : public sst::storage::IJpegEncoder {
    public:
-    [[nodiscard]] auto Encode(const sst::capture::Frame& frame, std::uint32_t width,
-                              std::uint32_t height, std::uint32_t quality)
+    [[nodiscard]] auto Encode(const sst::capture::Frame& frame, sst::common::OutputSize size,
+                              std::uint32_t quality)
         -> std::optional<std::vector<std::uint8_t>> override;
 };
 

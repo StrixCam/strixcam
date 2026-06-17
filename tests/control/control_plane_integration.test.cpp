@@ -26,7 +26,21 @@
 
 namespace {
 
-using namespace sst;
+namespace control = sst::control;
+namespace network = sst::network;
+namespace overlay = sst::overlay;
+namespace session = sst::session;
+namespace streaming = sst::streaming;
+
+// Overlay canvas edge (px) the controller renders at in this smoke test.
+constexpr std::uint32_t kCanvasEdge = 64;
+// RGBA bytes-per-pixel; stride = width * this.
+constexpr std::uint32_t kRgbaBytesPerPixel = 4;
+// RTSP preview + HTTP download ports advertised by the WiFi-Direct handler.
+constexpr std::uint32_t kPreviewPort = 8554;
+constexpr std::uint32_t kDownloadPort = 8080;
+// Overlay layout canvas width pushed in the lifecycle test.
+constexpr std::uint32_t kLayoutCanvasWidth = 1920;
 
 class FakeCleanup final : public session::ISessionCleanup {
    public:
@@ -37,135 +51,157 @@ class FakeCleanup final : public session::ISessionCleanup {
 class FakeWifi final : public control::IWifiManager {
    public:
     auto StartP2pGroupOwner() -> std::optional<network::WifiDirectGroup> override {
-        network::WifiDirectGroup g;
-        g.ssid = "DIRECT-z";
-        g.psk = "pw";
-        g.group_interface = "p2p-wlan0-0";
-        g.group_owner_ip = "192.168.49.1";
-        g.role = "GO";
-        return g;
+        network::WifiDirectGroup group;
+        group.ssid = "DIRECT-z";
+        group.psk = "pw";
+        group.group_interface = "p2p-wlan0-0";
+        group.group_owner_ip = "192.168.49.1";
+        group.role = "GO";
+        return group;
     }
     auto Stop() -> void override {}
     [[nodiscard]] auto State() const -> control::WifiState override { return {}; }
 };
 class FakeDhcp final : public control::IDhcpServer {
    public:
-    auto Start(const std::string&, const std::string&) -> bool override { return true; }
+    auto Start(const std::string& /*group_interface*/, const std::string& /*go_ip*/)
+        -> bool override {
+        return true;
+    }
     auto Stop() -> void override {}
 };
 class FakeRenderer final : public overlay::IOverlayRenderer {
    public:
-    auto Render(const overlay::RenderScene&, std::uint32_t w, std::uint32_t h)
-        -> overlay::RgbaImage override {
+    // Signature is fixed by the IOverlayRenderer port (external header); the
+    // override must mirror its two adjacent std::uint32_t params verbatim.
+    auto Render(const overlay::RenderScene& /*scene*/,
+                std::uint32_t out_width,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok:
+                                          // test double; order fixed by IOverlayRenderer::Render,
+                                          // cannot reorder in override
+                std::uint32_t out_height) -> overlay::RgbaImage override {
         overlay::RgbaImage img;
-        img.width = w;
-        img.height = h;
-        img.stride = w * 4;
-        img.pixels.assign(static_cast<std::size_t>(img.stride) * h, 0);
+        img.width = out_width;
+        img.height = out_height;
+        img.stride = out_width * kRgbaBytesPerPixel;
+        img.pixels.assign(static_cast<std::size_t>(img.stride) * out_height, 0);
         return img;
     }
 };
 class FakeSink final : public overlay::IOverlaySink {
    public:
-    auto PushFrame(const overlay::RgbaImage&) -> void override {}
+    auto PushFrame(const overlay::RgbaImage& /*frame*/) -> void override {}
 };
 class FakeStreaming final : public streaming::IStreamingService {
    public:
-    auto StartAppStream(const streaming::AppStreamConfig&) -> bool override { return true; }
-    auto StopAppStream() -> bool override { return true; }
-    [[nodiscard]] auto IsAppStreamRunning() const -> bool override { return false; }
-    auto StartPlatformStream(const streaming::PlatformStreamConfig&) -> bool override {
+    auto StartAppStream(const streaming::AppStreamConfig& /*config*/) -> bool override {
         return true;
     }
-    auto StopPlatformStream(std::int64_t) -> bool override { return true; }
+    auto StopAppStream() -> bool override { return true; }
+    [[nodiscard]] auto IsAppStreamRunning() const -> bool override { return false; }
+    auto StartPlatformStream(const streaming::PlatformStreamConfig& /*config*/) -> bool override {
+        return true;
+    }
+    auto StopPlatformStream(std::int64_t /*stream_id*/) -> bool override { return true; }
     [[nodiscard]] auto ListActivePlatformStreams() const
         -> std::vector<streaming::ActivePlatformStream> override {
         return {};
     }
 };
 
-auto Corr(const std::string& id) { return id; }
+auto Corr(const std::string& corr_id) { return corr_id; }
+
+// Each lifecycle step is its own helper so the smoke test's per-step
+// build/dispatch/assert sequences stay under the cognitive-complexity cap.
+
+// StartWifiDirect -> WifiReady, with generated creds reported.
+void StepStartWifiDirect(control::CommandDispatcher& dispatcher, session::SessionManager& manager) {
+    sst_cam::Command cmd;
+    cmd.set_correlation_id(Corr("a"));
+    cmd.mutable_start_wifi_direct();
+    auto resp = dispatcher.Dispatch(cmd);
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(resp.correlation_id(), "a");
+    ASSERT_EQ(resp.payload_case(), sst_cam::CommandResponse::kWifiDirectGroup);
+    EXPECT_EQ(resp.wifi_direct_group().ssid(), "DIRECT-z");
+    EXPECT_EQ(manager.Phase(), session::SessionPhase::kWifiReady);
+}
+
+// PushSessionConfig -> Configured.
+void StepPushSessionConfig(control::CommandDispatcher& dispatcher,
+                           session::SessionManager& manager) {
+    sst_cam::Command cmd;
+    cmd.set_correlation_id(Corr("b"));
+    auto* config = cmd.mutable_push_session_config();
+    config->set_match_uuid("m");
+    config->set_user_uuid("u");
+    // empty output paths -> no dir creation
+    auto resp = dispatcher.Dispatch(cmd);
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(manager.Phase(), session::SessionPhase::kConfigured);
+}
+
+// PushOverlayLayout -> Ready.
+void StepPushOverlayLayout(control::CommandDispatcher& dispatcher,
+                           session::SessionManager& manager) {
+    sst_cam::Command cmd;
+    cmd.set_correlation_id(Corr("c"));
+    cmd.mutable_push_overlay_layout()->mutable_layout()->set_canvas_width(kLayoutCanvasWidth);
+    auto resp = dispatcher.Dispatch(cmd);
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(manager.Phase(), session::SessionPhase::kReady);
+}
+
+// An unwired command still gets a defined UNSUPPORTED response.
+void StepUnwiredCommandIsUnsupported(control::CommandDispatcher& dispatcher) {
+    sst_cam::Command cmd;
+    cmd.set_correlation_id(Corr("d"));
+    cmd.mutable_factory_reset();
+    auto resp = dispatcher.Dispatch(cmd);
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::UNSUPPORTED);
+    EXPECT_EQ(resp.correlation_id(), "d");
+}
 
 TEST(ControlPlaneIntegrationTest, RoutesFullLifecycleToReady) {
     FakeCleanup cleanup;
-    session::SessionManager sm(cleanup);
+    session::SessionManager manager(cleanup);
     FakeWifi wifi;
     FakeDhcp dhcp;
     FakeRenderer renderer;
     FakeSink sink;
     FakeStreaming streaming;
-    overlay::OverlayController controller(renderer, sink, 64, 64);
+    overlay::OverlayController controller(renderer, sink,
+                                          sst::common::OutputSize{kCanvasEdge, kCanvasEdge});
 
     control::CommandDispatcher dispatcher;
-    dispatcher.Register(std::make_shared<control::SessionHandler>(sm));
-    dispatcher.Register(
-        std::make_shared<control::WifiDirectHandler>(sm, wifi, dhcp, streaming, 8554, 8080));
-    dispatcher.Register(
-        std::make_shared<control::OverlayHandler>(sm, controller, [] { return std::uint64_t{0}; }));
+    dispatcher.Register(std::make_shared<control::SessionHandler>(manager));
+    dispatcher.Register(std::make_shared<control::WifiDirectHandler>(
+        manager, wifi, dhcp, streaming, sst::control::PreviewPort{kPreviewPort},
+        sst::control::DownloadPort{kDownloadPort}));
+    dispatcher.Register(std::make_shared<control::OverlayHandler>(manager, controller,
+                                                                  [] { return std::uint64_t{0}; }));
 
     // The transport signals connect on the first write; simulate it.
-    sm.OnConnect();
+    manager.OnConnect();
 
-    // StartWifiDirect -> WifiReady, with generated creds reported.
-    {
-        sst_cam::Command c;
-        c.set_correlation_id(Corr("a"));
-        c.mutable_start_wifi_direct();
-        auto resp = dispatcher.Dispatch(c);
-        EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
-        EXPECT_EQ(resp.correlation_id(), "a");
-        ASSERT_EQ(resp.payload_case(), sst_cam::CommandResponse::kWifiDirectGroup);
-        EXPECT_EQ(resp.wifi_direct_group().ssid(), "DIRECT-z");
-        EXPECT_EQ(sm.Phase(), session::SessionPhase::kWifiReady);
-    }
-
-    // PushSessionConfig -> Configured.
-    {
-        sst_cam::Command c;
-        c.set_correlation_id(Corr("b"));
-        auto* sc = c.mutable_push_session_config();
-        sc->set_match_uuid("m");
-        sc->set_user_uuid("u");
-        // empty output paths -> no dir creation
-        auto resp = dispatcher.Dispatch(c);
-        EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
-        EXPECT_EQ(sm.Phase(), session::SessionPhase::kConfigured);
-    }
-
-    // PushOverlayLayout -> Ready.
-    {
-        sst_cam::Command c;
-        c.set_correlation_id(Corr("c"));
-        c.mutable_push_overlay_layout()->mutable_layout()->set_canvas_width(1920);
-        auto resp = dispatcher.Dispatch(c);
-        EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
-        EXPECT_EQ(sm.Phase(), session::SessionPhase::kReady);
-    }
-
-    // An unwired command still gets a defined UNSUPPORTED response.
-    {
-        sst_cam::Command c;
-        c.set_correlation_id(Corr("d"));
-        c.mutable_factory_reset();
-        auto resp = dispatcher.Dispatch(c);
-        EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::UNSUPPORTED);
-        EXPECT_EQ(resp.correlation_id(), "d");
-    }
+    StepStartWifiDirect(dispatcher, manager);
+    StepPushSessionConfig(dispatcher, manager);
+    StepPushOverlayLayout(dispatcher, manager);
+    StepUnwiredCommandIsUnsupported(dispatcher);
 }
 
 // Out-of-order: PushSessionConfig before the WiFi group is up is rejected by the
 // assembled plane (the SM gate surfaces as ERROR, never silence).
 TEST(ControlPlaneIntegrationTest, OutOfOrderConfigRejected) {
     FakeCleanup cleanup;
-    session::SessionManager sm(cleanup);
+    session::SessionManager manager(cleanup);
     control::CommandDispatcher dispatcher;
-    dispatcher.Register(std::make_shared<control::SessionHandler>(sm));
-    sm.OnConnect();
+    dispatcher.Register(std::make_shared<control::SessionHandler>(manager));
+    manager.OnConnect();
 
-    sst_cam::Command c;
-    c.set_correlation_id("x");
-    c.mutable_push_session_config()->set_match_uuid("m");
-    auto resp = dispatcher.Dispatch(c);
+    sst_cam::Command cmd;
+    cmd.set_correlation_id("x");
+    cmd.mutable_push_session_config()->set_match_uuid("m");
+    auto resp = dispatcher.Dispatch(cmd);
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
     EXPECT_FALSE(resp.error_message().empty());
 }

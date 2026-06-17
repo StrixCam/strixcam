@@ -33,13 +33,13 @@ auto StreamingService::StartAppStream(const AppStreamConfig& config) -> bool {
         spdlog::info("StreamingService::StartAppStream: already running");
         return true;
     }
-    const bool ok = app_stream_server_->Start(config);
-    if (ok) {
+    const bool started = app_stream_server_->Start(config);
+    if (started) {
         spdlog::info("StreamingService::StartAppStream OK: {}", config);
     } else {
         spdlog::error("StreamingService::StartAppStream failed: {}", config);
     }
-    return ok;
+    return started;
 }
 
 auto StreamingService::StopAppStream() -> bool {
@@ -65,9 +65,11 @@ auto StreamingService::StartPlatformStream(const PlatformStreamConfig& config) -
     }
 
     std::lock_guard lock(mtx_);
-    if (platform_streams_.count(config.stream_id) != 0) {
-        spdlog::warn("StreamingService::StartPlatformStream rejected: stream_id={} already active",
-                     config.stream_id);
+    if (platform_streams_.contains(config.stream_id)) {
+        spdlog::warn(
+            "StreamingService::StartPlatformStream rejected: stream_id={} "
+            "already active",
+            config.stream_id);
         return false;
     }
 
@@ -91,12 +93,12 @@ auto StreamingService::StopPlatformStream(std::int64_t stream_id) -> bool {
     std::unique_ptr<IPlatformStreamer> taken;
     {
         std::lock_guard lock(mtx_);
-        auto it = platform_streams_.find(stream_id);
-        if (it == platform_streams_.end()) {
+        auto entry = platform_streams_.find(stream_id);
+        if (entry == platform_streams_.end()) {
             return false;
         }
-        taken = std::move(it->second);
-        platform_streams_.erase(it);
+        taken = std::move(entry->second);
+        platform_streams_.erase(entry);
         active_names_.erase(stream_id);
     }
     if (taken) {

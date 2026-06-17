@@ -11,7 +11,8 @@ struct fmt::formatter<sst::config::WifiDirectData> {
 
     template <typename FormatContext>
     auto format(const sst::config::WifiDirectData& data, FormatContext& ctx) const {
-        using namespace sst::config;
+        using sst::config::BoolOptToStr;
+        using sst::config::StrOptToStr;
 
         return fmt::format_to(ctx.out(),
                               "WifiDirectData{{\n"

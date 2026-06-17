@@ -10,19 +10,24 @@
 #include <vector>
 
 #include "bluetooth.pb.h"
+#include "domain/control/models/correlation-id.hpp"
 
 namespace sst::adapters::control {
 
 struct ChunkAssemblerConfig {
     // Bytes of `data` per outbound chunk. Sized under the negotiated MTU (512
     // requested after connect) minus ChunkedPayload + ATT framing overhead.
-    std::size_t max_chunk_payload_bytes = 400;
+    static constexpr std::size_t kDefaultMaxChunkPayloadBytes = 400;
     // Cap on concurrent inbound reassemblies (correlation_ids). A flood of
     // never-completing partial messages can't grow memory without bound — the
     // oldest incomplete reassembly is evicted past this cap.
-    std::size_t max_inflight_inbound = 16;
+    static constexpr std::size_t kDefaultMaxInflightInbound = 16;
     // Reject absurd total_chunks up front (malformed / hostile).
-    std::uint32_t max_total_chunks = 8192;
+    static constexpr std::uint32_t kDefaultMaxTotalChunks = 8192;
+
+    std::size_t max_chunk_payload_bytes = kDefaultMaxChunkPayloadBytes;
+    std::size_t max_inflight_inbound = kDefaultMaxInflightInbound;
+    std::uint32_t max_total_chunks = kDefaultMaxTotalChunks;
 };
 
 // Pure (no D-Bus) ChunkedPayload reassembly + ChunkAck-gated outbound chunking.
@@ -61,7 +66,7 @@ class ChunkAssembler {
     // Split `data` for `correlation_id` and emit chunk 0 via `send`. Multi-chunk
     // transfers retain state until acked; a single-chunk transfer is fire-and-
     // forget. Returns the total chunk count.
-    auto BeginOutbound(const std::string& correlation_id, const std::string& data,
+    auto BeginOutbound(const sst::control::CorrelationId& correlation_id, const std::string& data,
                        const SendChunkFn& send) -> std::uint32_t;
 
     // Process a ChunkAck. If it acks the most-recently-sent chunk, the next

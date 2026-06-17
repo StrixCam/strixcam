@@ -29,7 +29,8 @@ auto ThumbnailHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
         return resp;
     }
 
-    auto jpeg = encoder_.Encode(*frame, req.width(), req.height(), req.quality());
+    auto jpeg =
+        encoder_.Encode(*frame, sst::common::OutputSize{req.width(), req.height()}, req.quality());
     if (!jpeg || jpeg->empty()) {
         resp.set_status(sst_cam::ResponseStatus::ERROR);
         resp.set_error_message("thumbnail JPEG encode failed");
@@ -37,9 +38,9 @@ auto ThumbnailHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
         return resp;
     }
 
-    sst_cam::ThumbnailResponse* tr = resp.mutable_thumbnail();
-    tr->set_jpeg_bytes(std::string(jpeg->begin(), jpeg->end()));
-    tr->set_capture_timestamp(now_ms_ ? now_ms_() : 0);
+    sst_cam::ThumbnailResponse* thumb = resp.mutable_thumbnail();
+    thumb->set_jpeg_bytes(std::string(jpeg->begin(), jpeg->end()));
+    thumb->set_capture_timestamp(now_ms_ ? now_ms_() : 0);
     resp.set_status(sst_cam::ResponseStatus::OK);
     return resp;
 }

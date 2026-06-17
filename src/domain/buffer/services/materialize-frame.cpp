@@ -12,8 +12,8 @@ namespace sst::buffer {
 
 auto MaterializeFrame(const sst::capture::Frame& src) -> sst::capture::Frame {
     std::size_t total = 0;
-    for (const auto& p : src.planes) {
-        total += p.size;
+    for (const auto& plane : src.planes) {
+        total += plane.size;
     }
 
     auto buf = std::make_shared<std::vector<std::uint8_t>>(total);
@@ -27,16 +27,16 @@ auto MaterializeFrame(const sst::capture::Frame& src) -> sst::capture::Frame {
     out.planes.reserve(src.planes.size());
 
     std::size_t offset = 0;
-    for (const auto& p : src.planes) {
-        if (p.size > 0 && p.data != nullptr) {
-            std::memcpy(buf->data() + offset, p.data, p.size);
+    for (const auto& plane : src.planes) {
+        if (plane.size > 0 && plane.data != nullptr) {
+            std::memcpy(buf->data() + offset, plane.data, plane.size);
         }
         out.planes.push_back(sst::capture::FramePlane{
-            .stride = p.stride,
+            .stride = plane.stride,
             .data = buf->data() + offset,
-            .size = p.size,
+            .size = plane.size,
         });
-        offset += p.size;
+        offset += plane.size;
     }
 
     out.owner = std::shared_ptr<void>(buf);

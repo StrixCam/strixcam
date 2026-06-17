@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include "app/overlay/ports/overlay-sink.hpp"
+#include "domain/common/models/output-size.hpp"
 #include "domain/overlay/models/render-scene.hpp"
 
 namespace sst::adapters::overlay {
@@ -19,7 +20,7 @@ namespace sst::adapters::overlay {
 // otherwise (zero per-frame overlay cost).
 class GstOverlayCompositor final : public sst::overlay::IOverlaySink {
    public:
-    GstOverlayCompositor(std::uint32_t width, std::uint32_t height);
+    explicit GstOverlayCompositor(sst::common::OutputSize size);
     ~GstOverlayCompositor() override;
 
     GstOverlayCompositor(const GstOverlayCompositor&) = delete;

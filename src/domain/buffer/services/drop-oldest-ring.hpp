@@ -25,9 +25,9 @@ class DropOldestRing final : public IFrameBuffer<T> {
     }
 
     DropOldestRing(const DropOldestRing&) = delete;
-    DropOldestRing& operator=(const DropOldestRing&) = delete;
+    auto operator=(const DropOldestRing&) -> DropOldestRing& = delete;
     DropOldestRing(DropOldestRing&&) = delete;
-    DropOldestRing& operator=(DropOldestRing&&) = delete;
+    auto operator=(DropOldestRing&&) -> DropOldestRing& = delete;
 
     ~DropOldestRing() override = default;
 

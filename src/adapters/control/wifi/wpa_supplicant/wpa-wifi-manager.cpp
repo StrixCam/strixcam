@@ -28,8 +28,9 @@ constexpr const char* kGoIpAddress = "192.168.49.1";
 constexpr const char* kGoRole = "GO";
 constexpr int kMaxEventReads = 20;
 
-auto StartsWith(const std::string& s, std::string_view prefix) -> bool {
-    return s.size() >= prefix.size() && std::memcmp(s.data(), prefix.data(), prefix.size()) == 0;
+auto StartsWith(const std::string& text, std::string_view prefix) -> bool {
+    return text.size() >= prefix.size() &&
+           std::memcmp(text.data(), prefix.data(), prefix.size()) == 0;
 }
 
 }  // namespace
@@ -71,9 +72,9 @@ auto WpaWifiManager::OpenCtrlSocket() -> bool {
         return false;
     }
 
-    timeval tv{};
-    tv.tv_sec = std::chrono::duration_cast<std::chrono::seconds>(kRecvTimeout).count();
-    ::setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    timeval timeout{};
+    timeout.tv_sec = std::chrono::duration_cast<std::chrono::seconds>(kRecvTimeout).count();
+    ::setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     spdlog::info("WpaWifiManager: ctrl_iface connected via {}", remote_path);
     return true;
@@ -101,22 +102,22 @@ auto WpaWifiManager::SendCommand(std::string_view cmd) -> std::optional<std::str
     }
 
     std::array<char, kRecvBufSize> buf{};
-    const auto n = ::recv(sock_, buf.data(), buf.size() - 1, 0);
-    if (n < 0) {
+    const auto bytes = ::recv(sock_, buf.data(), buf.size() - 1, 0);
+    if (bytes < 0) {
         spdlog::error("WpaWifiManager: recv after \"{}\" failed: {}", cmd, std::strerror(errno));
         return std::nullopt;
     }
-    return std::string(buf.data(), static_cast<std::size_t>(n));
+    return std::string(buf.data(), static_cast<std::size_t>(bytes));
 }
 
-auto WpaWifiManager::ReadUntil(std::string_view marker) -> std::optional<std::string> {
+auto WpaWifiManager::ReadUntil(std::string_view marker) const -> std::optional<std::string> {
     for (int i = 0; i < kMaxEventReads; ++i) {
         std::array<char, kRecvBufSize> buf{};
-        const auto n = ::recv(sock_, buf.data(), buf.size() - 1, 0);
-        if (n <= 0) {
+        const auto bytes = ::recv(sock_, buf.data(), buf.size() - 1, 0);
+        if (bytes <= 0) {
             return std::nullopt;  // timeout / closed
         }
-        std::string msg(buf.data(), static_cast<std::size_t>(n));
+        std::string msg(buf.data(), static_cast<std::size_t>(bytes));
         if (msg.find(marker) != std::string::npos) {
             return msg;
         }

@@ -52,8 +52,8 @@ TEST(DropOldestRingTest, PopBlocksUntilPushed) {
     std::atomic<bool> got{false};
 
     std::thread consumer([&] {
-        auto v = buf.Pop(500ms);
-        if (v && *v == 11) {
+        auto val = buf.Pop(500ms);
+        if (val && *val == 11) {  // NOLINT(readability-magic-numbers) self-evident payload
             got.store(true);
         }
     });
@@ -61,16 +61,16 @@ TEST(DropOldestRingTest, PopBlocksUntilPushed) {
     std::this_thread::sleep_for(20ms);
     EXPECT_FALSE(got.load());
 
-    buf.Push(11);
+    buf.Push(11);  // NOLINT(readability-magic-numbers) self-evident payload
     consumer.join();
     EXPECT_TRUE(got.load());
 }
 
 TEST(DropOldestRingTest, PopReturnsNulloptOnTimeout) {
     DropOldestRing<int> buf(4);
-    auto t0 = std::chrono::steady_clock::now();
+    auto start = std::chrono::steady_clock::now();
     auto out = buf.Pop(50ms);
-    auto elapsed = std::chrono::steady_clock::now() - t0;
+    auto elapsed = std::chrono::steady_clock::now() - start;
 
     EXPECT_FALSE(out.has_value());
     EXPECT_GE(elapsed, 45ms);
@@ -89,7 +89,7 @@ TEST(DropOldestRingTest, CloseDrainsThenReturnsNullopt) {
 }
 
 TEST(DropOldestRingTest, ConcurrentProducerConsumerPreservesCount) {
-    DropOldestRing<int> buf(8);
+    DropOldestRing<int> buf(8);  // NOLINT(readability-magic-numbers) ring capacity
     constexpr int kIters = 5000;
 
     std::thread producer([&] {

@@ -9,8 +9,8 @@ using sst::storage::RawCaptureIdentity;
 namespace naming = sst::storage::raw_capture_naming;
 
 TEST(RawCaptureNamingTest, FileNameRoundTrips) {
-    const RawCaptureIdentity id{.capture_group_id = "abc-123-def", .camera_index = 1};
-    const auto name = naming::FileName(id);
+    const RawCaptureIdentity identity{.capture_group_id = "abc-123-def", .camera_index = 1};
+    const auto name = naming::FileName(identity);
     EXPECT_EQ(name, "raw__abc-123-def__cam1.nv12");
 
     const auto parsed = naming::ParseFileName(name);
@@ -36,8 +36,8 @@ TEST(RawCaptureNamingTest, RejectsNonRawNames) {
 }
 
 TEST(RawCaptureNamingTest, GroupIdMayContainSingleUnderscores) {
-    const RawCaptureIdentity id{.capture_group_id = "a_b_c", .camera_index = 0};
-    const auto parsed = naming::ParseFileName(naming::FileName(id));
+    const RawCaptureIdentity identity{.capture_group_id = "a_b_c", .camera_index = 0};
+    const auto parsed = naming::ParseFileName(naming::FileName(identity));
     ASSERT_TRUE(parsed.has_value());
     EXPECT_EQ(parsed->capture_group_id, "a_b_c");
     EXPECT_EQ(parsed->camera_index, 0U);

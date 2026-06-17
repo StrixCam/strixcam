@@ -142,9 +142,9 @@ auto SessionManager::OnDisconnect() -> void {
     // Fan out cleanup OUTSIDE the lock — each is idempotent and a no-op when its
     // subsystem is inactive; order is irrelevant (R15). Each step is isolated so
     // a throw in one still runs the rest and the Idle reset below (R11).
-    const auto safe = [](const char* step, auto&& fn) {
+    const auto safe = [](const char* step, auto&& action) {
         try {
-            fn();
+            action();
         } catch (const std::exception& e) {
             spdlog::error("SessionManager: cleanup step {} threw: {}", step, e.what());
         } catch (...) {
@@ -178,10 +178,10 @@ auto SessionManager::PrepareOutputDirs(const SessionConfig& config) -> bool {
         if (parent.empty()) {
             return true;
         }
-        std::error_code ec;
-        fs::create_directories(parent, ec);
-        if (ec) {
-            spdlog::error("SessionManager: mkdir({}) failed: {}", parent.string(), ec.message());
+        std::error_code error;
+        fs::create_directories(parent, error);
+        if (error) {
+            spdlog::error("SessionManager: mkdir({}) failed: {}", parent.string(), error.message());
             return false;
         }
         return true;

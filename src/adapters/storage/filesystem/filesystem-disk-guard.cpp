@@ -16,14 +16,14 @@ auto FilesystemDiskGuard::HasEnoughFreeSpace() const -> bool {
         return true;
     }
     const auto free = FreeBytes();
-    const bool ok = free >= *min_free_bytes_;
-    if (!ok) {
+    const bool has_space = free >= *min_free_bytes_;
+    if (!has_space) {
         spdlog::warn(
             "FilesystemDiskGuard: free={} bytes < min_free_bytes={} bytes at {} — refusing "
             "recording start",
             free, *min_free_bytes_, root_.string());
     }
-    return ok;
+    return has_space;
 }
 
 auto FilesystemDiskGuard::FreeBytes() const -> std::uint64_t {
@@ -31,21 +31,21 @@ auto FilesystemDiskGuard::FreeBytes() const -> std::uint64_t {
     if (target.empty()) {
         return 0;
     }
-    std::error_code ec;
-    const auto info = std::filesystem::space(target, ec);
-    if (ec) {
+    std::error_code err;
+    const auto info = std::filesystem::space(target, err);
+    if (err) {
         spdlog::warn("FilesystemDiskGuard: std::filesystem::space({}) failed: {}", target.string(),
-                     ec.message());
+                     err.message());
         return 0;
     }
     return static_cast<std::uint64_t>(info.available);
 }
 
 auto FilesystemDiskGuard::ResolveExistingPath() const -> std::filesystem::path {
-    std::error_code ec;
+    std::error_code err;
     auto path = root_;
     while (!path.empty()) {
-        if (std::filesystem::exists(path, ec) && !ec) {
+        if (std::filesystem::exists(path, err) && !err) {
             return path;
         }
         auto parent = path.parent_path();

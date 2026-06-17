@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Pre-commit hook: auto-format + auto-fix staged C/C++ before the commit lands,
+# so CI's `tidy` gate stays verify-only. Enable once per clone (inside the
+# devcontainer, where clang-tidy-14 + the cross toolchain live):
+#
+#   git config core.hooksPath .githooks
+#
+# Scoped to STAGED content only. For partially-staged files it stashes the
+# unstaged changes (keeping the index) before formatting, so a `clang-format -i`
+# on the working tree can't pull unstaged edits into the commit; the stash is
+# always restored on exit. After fixing it re-stages the files it modified.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "${repo_root}"
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(cpp|cc|hpp|h)$' || true)"
+if [ -z "${staged}" ]; then
+  exit 0
+fi
+
+if ! command -v clang-tidy-14 >/dev/null 2>&1; then
+  echo "pre-commit: clang-tidy-14 not found — run commits inside the devcontainer." >&2
+  echo "pre-commit: (skipping auto-fix; CI will still verify)." >&2
+  exit 0
+fi
+
+# Isolate staged content while formatting: stash unstaged changes (keep the
+# index) so edits in partially-staged files aren't pulled into the commit. The
+# trap restores the stash even if fix.sh fails — unstaged work is never lost.
+stash_made=0
+if ! git diff --quiet; then
+  if git stash push --keep-index --quiet --message "pre-commit: isolate staged content"; then
+    stash_made=1
+  else
+    echo "pre-commit: WARNING — could not stash unstaged changes; review the diff" \
+         "before pushing in case formatting pulled them in." >&2
+  fi
+fi
+restore_stash() {
+  if [ "${stash_made}" -eq 1 ]; then
+    git stash pop --quiet ||
+      echo "pre-commit: WARNING — 'git stash pop' conflicted; your unstaged changes" \
+           "are preserved (see 'git stash list')." >&2
+  fi
+}
+trap restore_stash EXIT
+
+scripts/fix.sh
+
+# Re-stage anything the fixers rewrote.
+echo "${staged}" | xargs -r git add --
+
+exit 0

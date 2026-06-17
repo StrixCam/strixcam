@@ -56,20 +56,20 @@ auto ToBgr(const sst::capture::Frame& frame) -> cv::Mat {
 
 }  // namespace
 
-auto OpenCvJpegEncoder::Encode(const sst::capture::Frame& frame, std::uint32_t width,
-                               std::uint32_t height, std::uint32_t quality)
-    -> std::optional<std::vector<std::uint8_t>> {
+auto OpenCvJpegEncoder::Encode(const sst::capture::Frame& frame, sst::common::OutputSize size,
+                               std::uint32_t quality) -> std::optional<std::vector<std::uint8_t>> {
     cv::Mat bgr = ToBgr(frame);
     if (bgr.empty()) {
         return std::nullopt;
     }
 
     // Optional resize to the requested output size (both dimensions must be set
-    // to take effect; 0 means "keep source size").
-    if (width > 0 && height > 0 &&
-        (static_cast<int>(width) != bgr.cols || static_cast<int>(height) != bgr.rows)) {
+    // to take effect; OutputSize{0, 0} means "keep source size").
+    if (size.width > 0 && size.height > 0 &&
+        (static_cast<int>(size.width) != bgr.cols || static_cast<int>(size.height) != bgr.rows)) {
         cv::Mat resized;
-        cv::resize(bgr, resized, cv::Size(static_cast<int>(width), static_cast<int>(height)), 0, 0,
+        cv::resize(bgr, resized,
+                   cv::Size(static_cast<int>(size.width), static_cast<int>(size.height)), 0, 0,
                    cv::INTER_AREA);
         bgr = std::move(resized);
     }

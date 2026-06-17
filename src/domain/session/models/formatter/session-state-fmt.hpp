@@ -12,13 +12,13 @@ struct fmt::formatter<sst::session::SessionState> {
     static constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
 
     template <typename FormatContext>
-    auto format(const sst::session::SessionState& s, FormatContext& ctx) const {
-        auto out = fmt::format_to(ctx.out(), "SessionState{{phase={}, ", s.phase);
-        if (s.config) {
-            out = fmt::format_to(out, "config={}, ", *s.config);
+    auto format(const sst::session::SessionState& state, FormatContext& ctx) const {
+        auto out = fmt::format_to(ctx.out(), "SessionState{{phase={}, ", state.phase);
+        if (state.config) {
+            out = fmt::format_to(out, "config={}, ", *state.config);
         } else {
             out = fmt::format_to(out, "config=<none>, ");
         }
-        return fmt::format_to(out, "match={}}}", s.match);
+        return fmt::format_to(out, "match={}}}", state.match);
     }
 };

@@ -21,14 +21,19 @@ TEST(GstContinuousE2E, EncodesSinglePlayableMp4) {
     sst::adapters::storage::GstContinuousRecorder recorder;
     ASSERT_TRUE(recorder.Start(out)) << "NVENC pipeline did not start (expected off-device)";
 
-    constexpr int kW = 1280;
-    constexpr int kH = 720;
-    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(kW) * kH * 3, 0x40);
-    for (int i = 0; i < 30; ++i) {
+    constexpr int kWidth = 1280;
+    constexpr int kHeight = 720;
+    constexpr int kBgrChannels = 3;
+    constexpr std::uint8_t kFill = 0x40;
+    constexpr int kFrameCount = 30;
+    std::vector<std::uint8_t> pixels(static_cast<std::size_t>(kWidth) * kHeight * kBgrChannels,
+                                     kFill);
+    for (int i = 0; i < kFrameCount; ++i) {
         sst::capture::Frame frame;
-        frame.geometry = {.width = kW, .height = kH};
+        frame.geometry = {.width = kWidth, .height = kHeight};
         frame.format = sst::common::PixelFormat::BGR8;
-        frame.planes.push_back({.stride = kW * 3, .data = pixels.data(), .size = pixels.size()});
+        frame.planes.push_back(
+            {.stride = kWidth * kBgrChannels, .data = pixels.data(), .size = pixels.size()});
         recorder.Push(frame);
     }
 

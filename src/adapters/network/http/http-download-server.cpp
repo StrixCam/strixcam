@@ -17,6 +17,14 @@ namespace {
 
 constexpr const char* kBearerPrefix = "Bearer ";
 
+// HTTP status codes used by the download endpoint.
+constexpr int kHttpUnauthorized = 401;
+constexpr int kHttpNotFound = 404;
+
+// How long to wait for the accept loop to come up after bind, in 5 ms slices.
+constexpr int kStartupPollAttempts = 200;
+constexpr auto kStartupPollInterval = std::chrono::milliseconds(5);
+
 auto ExtractBearer(const httplib::Request& req) -> std::string {
     if (!req.has_header("Authorization")) {
         return {};
@@ -40,31 +48,36 @@ HttpDownloadServer::HttpDownloadServer(std::string bind_address, std::uint16_t p
         const std::string token = ExtractBearer(req);
         std::optional<fs::path> path = token.empty() ? std::nullopt : validator_(token);
         if (!path) {
-            res.status = 401;
+            res.status = kHttpUnauthorized;
             res.set_content("unauthorized", "text/plain");
             return;
         }
-        std::error_code ec;
-        const auto size = static_cast<std::size_t>(fs::file_size(*path, ec));
-        if (ec) {
-            res.status = 404;
+        std::error_code err;
+        const auto size = static_cast<std::size_t>(fs::file_size(*path, err));
+        if (err) {
+            res.status = kHttpNotFound;
             res.set_content("not found", "text/plain");
             return;
         }
         const std::string file = path->string();
         // Content provider with known length: httplib serves Range requests
         // (206 partial content) by invoking this for the requested slice.
+        // The (offset, length) parameter order and types are fixed by httplib's
+        // ContentProvider callback contract, so they can't be reordered/retyped.
         res.set_content_provider(
             size, "video/mp4",
-            [file](std::size_t offset, std::size_t length, httplib::DataSink& sink) -> bool {
-                std::ifstream in(file, std::ios::binary);
-                if (!in) {
+            [file](std::size_t offset,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok:
+                                        // (offset,length) order fixed by httplib ContentProvider
+                                        // callback contract
+                   std::size_t length, httplib::DataSink& sink) -> bool {
+                std::ifstream stream(file, std::ios::binary);
+                if (!stream) {
                     return false;
                 }
-                in.seekg(static_cast<std::streamoff>(offset));
+                stream.seekg(static_cast<std::streamoff>(offset));
                 std::string buf(length, '\0');
-                in.read(buf.data(), static_cast<std::streamsize>(length));
-                const auto got = static_cast<std::size_t>(in.gcount());
+                stream.read(buf.data(), static_cast<std::streamsize>(length));
+                const auto got = static_cast<std::size_t>(stream.gcount());
                 return sink.write(buf.data(), got);
             });
     });
@@ -77,7 +90,7 @@ auto HttpDownloadServer::Start() -> bool {
         return true;
     }
     // Bind synchronously so we can report bind failure to the caller.
-    const int bound = server_->bind_to_port(bind_address_.c_str(), port_);
+    const int bound = static_cast<int>(server_->bind_to_port(bind_address_, port_));
     if (bound <= 0) {
         spdlog::error("HttpDownloadServer: bind {}:{} failed", bind_address_, port_);
         return false;
@@ -88,8 +101,8 @@ auto HttpDownloadServer::Start() -> bool {
 
     // Wait until the accept loop is actually running so callers (and tests) can
     // connect immediately after Start() returns.
-    for (int i = 0; i < 200 && !server_->is_running(); ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    for (int i = 0; i < kStartupPollAttempts && !server_->is_running(); ++i) {
+        std::this_thread::sleep_for(kStartupPollInterval);
     }
     spdlog::info("HttpDownloadServer: serving on http://{}:{}", bind_address_, bound_port_);
     return true;
