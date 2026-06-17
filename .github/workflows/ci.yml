@@ -141,6 +141,14 @@ jobs:
             set -euo pipefail
             # Configure the test preset to generate compile_commands.json.
             cmake --preset test
+            # Generate the protobuf headers (bluetooth.pb.h / wifi.pb.h) before
+            # tidy. clang-tidy does not build — without this the generated
+            # headers are absent, every TU that includes them hits
+            # clang-diagnostic-error 'bluetooth.pb.h not found', and the broken
+            # AST yields a cascade of phantom findings (members "can be made
+            # static", spurious easily-swappable, etc.). Building just sst_proto
+            # runs protoc only — seconds, not the full cross-build.
+            cmake --build --preset test --target sst_proto
             files=$(find src tests \
               \( -name '*.cpp' -o -name '*.cc' \) \
               -not -path '*/_old/*')
