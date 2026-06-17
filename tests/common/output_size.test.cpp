@@ -3,6 +3,8 @@
 #include <fmt/format.h>
 #include <gtest/gtest.h>
 
+#include <cstdint>
+
 #include "domain/common/models/formatter/output-size-fmt.hpp"
 #include "domain/common/models/output-size.hpp"
 
@@ -10,14 +12,17 @@ namespace {
 
 using sst::common::OutputSize;
 
+constexpr std::uint32_t kWidth = 1920;
+constexpr std::uint32_t kHeight = 1080;
+
 TEST(OutputSizeTest, AggregateInitReadsBack) {
-    OutputSize size{1920, 1080};
-    EXPECT_EQ(size.width, 1920U);
-    EXPECT_EQ(size.height, 1080U);
+    OutputSize size{kWidth, kHeight};
+    EXPECT_EQ(size.width, kWidth);
+    EXPECT_EQ(size.height, kHeight);
 }
 
 TEST(OutputSizeTest, FormatterRendersFields) {
-    OutputSize size{1920, 1080};
+    OutputSize size{kWidth, kHeight};
     EXPECT_EQ(fmt::format("{}", size), "OutputSize{width=1920, height=1080}");
 }
 

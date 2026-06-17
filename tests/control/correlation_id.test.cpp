@@ -11,8 +11,8 @@ namespace {
 using sst::control::CorrelationId;
 
 TEST(CorrelationIdTest, WrapsValue) {
-    CorrelationId id{"req-42"};
-    EXPECT_EQ(id.value, "req-42");
+    CorrelationId cid{"req-42"};
+    EXPECT_EQ(cid.value, "req-42");
 }
 
 TEST(CorrelationIdTest, FormatterRendersValue) {

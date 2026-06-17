@@ -66,11 +66,10 @@ HttpDownloadServer::HttpDownloadServer(std::string bind_address, std::uint16_t p
         // ContentProvider callback contract, so they can't be reordered/retyped.
         res.set_content_provider(
             size, "video/mp4",
-            [file](std::size_t offset,
-                   std::size_t length,  // NOLINT(bugprone-easily-swappable-parameters) // floor-ok:
+            [file](std::size_t offset,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok:
                                         // (offset,length) order fixed by httplib ContentProvider
                                         // callback contract
-                   httplib::DataSink& sink) -> bool {
+                   std::size_t length, httplib::DataSink& sink) -> bool {
                 std::ifstream stream(file, std::ios::binary);
                 if (!stream) {
                     return false;

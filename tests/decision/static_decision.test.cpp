@@ -33,6 +33,8 @@ auto BundleWithGeometry(Size size) -> FrameBundle {
 // camera is needed; distinct from any cam-0 size so a wrong pick is visible.
 // NOLINTNEXTLINE(readability-magic-numbers) — self-evident 800x600 placeholder dims
 constexpr Size kOtherCameraSize{800, 600};
+// NOLINTNEXTLINE(readability-magic-numbers) — self-evident 720p dims
+constexpr Size kCam1Size720p{1280, 720};
 
 // Assert that `choice` is a full-frame selection of camera 0 covering `size`.
 // Extracted from the table-driven test to keep its loop body — and the
@@ -75,9 +77,8 @@ TEST(StaticDecisionTest, ReturnsNulloptWhenCamera0Absent) {
     StaticDecision decision;
     // Camera 0 has no frame this tick; camera 1 does. Static policy serves only
     // camera 0, so there is nothing to present.
-    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident 720p dims
     std::vector<std::optional<FrameBundle>> cameras = {std::nullopt,
-                                                       BundleWithGeometry({1280, 720})};
+                                                       BundleWithGeometry(kCam1Size720p)};
     EXPECT_FALSE(decision.Decide(cameras).has_value());
 }
 
