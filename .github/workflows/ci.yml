@@ -108,6 +108,13 @@ jobs:
           # Full history so the floor-NOLINT guard can diff against the PR base.
           fetch-depth: 0
 
+      # Self-test the guard before trusting it: asserts every bypass class
+      # (bare/wildcard/non-leading-list NOLINT, faked marker) is still caught.
+      # A regex regression here would silently let unsanctioned floor NOLINTs
+      # through the gate below.
+      - name: Floor-NOLINT guard self-test
+        run: scripts/test-check-floor-nolints.sh
+
       # Cheap, host-side gate — no devcontainer needed. Fails the PR if it adds a
       # bugprone-*/performance-* NOLINT without a `// floor-ok:` sanction marker
       # (see .clang-tidy floor policy). Diff-scoped against the PR base, so only
