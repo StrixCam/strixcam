@@ -1,5 +1,5 @@
 # =============================================================================
-# promote — on push to `main` (a `release/X.Y.Z -> main` merge), tag the stable
+# release — on push to `main` (a `release/X.Y.Z -> main` merge), tag the stable
 # `vX.Y.Z` and publish the ALREADY-BUILT beta binary by COPYING it onto the
 # stable Release. There is deliberately NO cross-build step in this workflow:
 # `main` never builds (the R3/AE5 structural guarantee). Do not add a build step
@@ -20,7 +20,7 @@
 # Default GITHUB_TOKEN only (contents:write); "Release Tags" ruleset permits the
 # compliant stable tag.
 # =============================================================================
-name: promote
+name: release
 
 on:
   push:
