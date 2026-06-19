@@ -114,6 +114,62 @@ expect_eq "beta second -> v0.1.0-beta.2" "$(run "$r" beta 0.1.0)" "v0.1.0-beta.2
 r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-alpha.5
 expect_eq "beta ignores alpha counter -> v0.1.0-beta.1" "$(run "$r" beta 0.1.0)" "v0.1.0-beta.1"
 
+# --- beta: counter is per-BASE (other-base beta tags don't bleed in) ---------
+r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.2.0-beta.3
+expect_eq "beta ignores other-base counter -> v0.1.0-beta.1" "$(run "$r" beta 0.1.0)" "v0.1.0-beta.1"
+
+# --- malformed counter: non-numeric N must be ignored, not crash -------------
+r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-alpha.2; tag "$r" v0.1.0-alpha.x
+expect_eq "alpha ignores non-numeric .x counter -> v0.1.0-alpha.3" "$(run "$r" alpha)" "v0.1.0-alpha.3"
+
+# --- malformed counter: only a non-numeric tag exists -> start at .1 ---------
+r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-alpha.beta
+expect_eq "alpha only-malformed counter -> v0.1.0-alpha.1" "$(run "$r" alpha)" "v0.1.0-alpha.1"
+
+# --- malformed counter: multi-dot tag must not mis-sort the counter ----------
+r="$(new_repo)"; commit "$r" "feat: a"
+tag "$r" v0.1.0-alpha.9; tag "$r" v0.1.0-alpha.10.2
+expect_eq "alpha ignores multi-dot alpha.10.2 -> v0.1.0-alpha.10" "$(run "$r" alpha)" "v0.1.0-alpha.10"
+
+# --- beta malformed counter ignored ------------------------------------------
+r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-beta.4; tag "$r" v0.1.0-beta.x
+expect_eq "beta ignores non-numeric .x -> v0.1.0-beta.5" "$(run "$r" beta 0.1.0)" "v0.1.0-beta.5"
+
+# --- alpha: perf: since last stable -> patch base ----------------------------
+r="$(new_repo)"; commit "$r" "feat: base"; tag "$r" v0.1.0; commit "$r" "perf: faster"
+expect_eq "alpha perf -> v0.1.1-alpha.1" "$(run "$r" alpha)" "v0.1.1-alpha.1"
+
+# --- alpha: IN_BUMP=minor / =patch override paths ----------------------------
+r="$(new_repo)"; commit "$r" "feat: base"; tag "$r" v0.1.0; commit "$r" "docs: x"
+expect_eq "alpha IN_BUMP=minor -> v0.2.0-alpha.1" "$(IN_BUMP=minor run "$r" alpha)" "v0.2.0-alpha.1"
+expect_eq "alpha IN_BUMP=patch -> v0.1.1-alpha.1" "$(IN_BUMP=patch run "$r" alpha)" "v0.1.1-alpha.1"
+
+# --- alpha: invalid IN_BUMP -> non-zero exit ---------------------------------
+r="$(new_repo)"; commit "$r" "feat: a"
+if ( cd "$r" && IN_BUMP=hotfix "$RESOLVE" alpha ) >/dev/null 2>&1; then
+  fail=$((fail + 1)); printf '  FAIL: invalid IN_BUMP (expected non-zero)\n'
+else
+  pass=$((pass + 1))
+fi
+
+# --- alpha: IN_VERSION + IN_BUMP both set -> IN_VERSION wins (documented) -----
+r="$(new_repo)"; commit "$r" "feat: a"
+expect_eq "alpha IN_VERSION beats IN_BUMP -> v0.2.0-alpha.1" \
+  "$(IN_VERSION=v0.2.0 IN_BUMP=major run "$r" alpha)" "v0.2.0-alpha.1"
+
+# --- released=true is emitted for alpha/beta/stable real bumps ----------------
+r="$(new_repo)"; commit "$r" "feat: a"
+expect_eq "alpha emits released=true" "$(run_released "$r" alpha)" "true"
+expect_eq "beta emits released=true" "$(run_released "$r" beta 0.1.0)" "true"
+expect_eq "stable emits released=true" "$(run_released "$r" stable 0.1.0)" "true"
+
+# --- GITHUB_OUTPUT side-effect: both keys written ----------------------------
+r="$(new_repo)"; commit "$r" "feat: a"
+gho="$(mktemp)"
+( cd "$r" && GITHUB_OUTPUT="$gho" "$RESOLVE" alpha ) >/dev/null
+grep -qx 'tag=v0.1.0-alpha.1' "$gho" && grep -qx 'released=true' "$gho" \
+  && pass=$((pass + 1)) || { fail=$((fail + 1)); printf '  FAIL: GITHUB_OUTPUT keys not written as expected\n'; }
+
 # --- stable: emits bare vX.Y.Z -----------------------------------------------
 r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-beta.2
 expect_eq "stable -> v0.1.0" "$(run "$r" stable 0.1.0)" "v0.1.0"

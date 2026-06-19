@@ -61,9 +61,17 @@ latest_stable() {
 }
 
 # Highest existing counter N for v<base>-<rung>.N (0 when none exist).
+# Only strictly-formed counters (N all digits) are considered: a malformed
+# immutable tag like v<base>-alpha.x or v<base>-alpha.10.2 must never reach the
+# `$((n + 1))` arithmetic (would abort under `set -u`) or mis-sort the counter
+# (`${top##*.}` would strip the wrong dot-field). Such tags are filtered out, so
+# one typo'd/hand-cut tag cannot permanently brick the prerelease line.
 max_counter() {
   local base="$1" rung="$2" top
-  top="$(git tag -l "v${base}-${rung}."'*' --sort=-v:refname | head -1 || true)"
+  local re_base="${base//./\\.}"
+  top="$(git tag -l "v${base}-${rung}."'*' --sort=-v:refname \
+    | grep -E "^v${re_base}-${rung}\.[0-9]+\$" \
+    | head -1 || true)"
   [ -z "$top" ] && { echo 0; return; }
   echo "${top##*.}"
 }
