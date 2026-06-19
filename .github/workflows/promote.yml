@@ -1,0 +1,152 @@
+# =============================================================================
+# promote — on push to `main` (a `release/X.Y.Z -> main` merge), tag the stable
+# `vX.Y.Z` and publish the ALREADY-BUILT beta binary by COPYING it onto the
+# stable Release. There is deliberately NO `devcontainers/ci` / cross-build step
+# in this workflow: `main` never builds (the R3/AE5 structural guarantee). If you
+# are ever tempted to add a build step here, you are violating the core invariant
+# — the binary must come from the beta Release, verified by digest.
+#
+# FLOW:
+#   1. Derive X.Y.Z from the merged `release/X.Y.Z` branch name (merge subject,
+#      with a fallback to workflow_dispatch input). Fail fast if undeterminable.
+#   2. Select the source beta tag: highest `vX.Y.Z-beta.N`. Fail fast if none.
+#   3. resolve-version.sh stable X.Y.Z -> the bare `vX.Y.Z` stable tag.
+#   4. Download the beta asset; VERIFY its SHA-256 against the digest recorded by
+#      release-beta.yml in the beta Release notes. Mismatch => hard fail (a
+#      `--clobber` asset swap must not promote silently).
+#   5. Rename `sst_cam_firmware-<beta-tag>-aarch64` ->
+#      `sst_cam_firmware-vX.Y.Z-aarch64` (bytes preserved) and upload to the
+#      stable Release.
+#
+# Default GITHUB_TOKEN only (contents:write); "Release Tags" ruleset permits the
+# compliant stable tag.
+# =============================================================================
+name: promote
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Base X.Y.Z to promote (overrides merge-subject parse)"
+        required: false
+        default: ""
+
+# Never run two promotions at once (they'd race on the stable tag/Release).
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    name: tag stable + copy beta binary (no build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Derive base X.Y.Z + select source beta tag
+        id: pick
+        env:
+          IN_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          # Base X.Y.Z: workflow_dispatch input wins; else parse the merge-commit
+          # subject for `release/X.Y.Z` (GitHub's PR-merge subject names it).
+          base=""
+          if [ -n "${IN_VERSION:-}" ]; then
+            base="${IN_VERSION#v}"
+          else
+            subject="$(git log -1 --format='%s%n%b')"
+            base="$(echo "$subject" | grep -oE 'release/[0-9]+\.[0-9]+\.[0-9]+' \
+              | head -1 | sed 's#release/##')"
+          fi
+          if ! echo "$base" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::could not determine release/X.Y.Z base from the merge to main (parsed '${base:-}'). Re-run via workflow_dispatch with the version input." >&2
+            exit 1
+          fi
+
+          # Select the highest beta tag for this base (the one that was hardware-tested).
+          beta="$(git tag -l "v${base}-beta.*" --sort=-v:refname | head -1 || true)"
+          if [ -z "$beta" ]; then
+            echo "::error::no vX.Y.Z-beta.* tag exists for base ${base} — nothing to promote (NEVER rebuild on main)." >&2
+            exit 1
+          fi
+
+          # Stable tag via the shared version math.
+          stable="$(scripts/ci/resolve-version.sh stable "$base" | sed -n 's/^tag=//p')"
+
+          echo "base=${base}"     >> "$GITHUB_OUTPUT"
+          echo "beta=${beta}"     >> "$GITHUB_OUTPUT"
+          echo "stable=${stable}" >> "$GITHUB_OUTPUT"
+          echo "Promoting ${beta} -> ${stable}"
+
+      - name: Download the beta asset + verify recorded SHA-256
+        id: verify
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BETA: ${{ steps.pick.outputs.beta }}
+          STABLE: ${{ steps.pick.outputs.stable }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          src="sst_cam_firmware-${BETA}-aarch64"
+          gh release download "${BETA}" --pattern "${src}" --dir dist
+
+          # The expected digest is recorded in the beta Release notes as
+          # `sha256: <64-hex>` by release-beta.yml.
+          notes="$(gh release view "${BETA}" --json body --jq '.body')"
+          want="$(echo "$notes" | grep -oiE 'sha256:[[:space:]]*[0-9a-f]{64}' \
+            | head -1 | grep -oE '[0-9a-f]{64}' | head -1 || true)"
+          if [ -z "$want" ]; then
+            echo "::error::beta Release ${BETA} notes carry no recorded 'sha256: <hex>' digest — cannot verify the hand-off." >&2
+            exit 1
+          fi
+          got="$(sha256sum "dist/${src}" | cut -d' ' -f1)"
+          if [ "$want" != "$got" ]; then
+            echo "::error::SHA-256 mismatch promoting ${BETA}: recorded ${want}, downloaded ${got}. Asset may have been swapped — refusing to promote." >&2
+            exit 1
+          fi
+          echo "Verified ${src} sha256=${got}"
+
+          # Rename to the stable asset name, bytes preserved.
+          dst="sst_cam_firmware-${STABLE}-aarch64"
+          cp "dist/${src}" "${dst}"
+          echo "path=${dst}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag stable + create the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STABLE: ${{ steps.pick.outputs.stable }}
+        run: |
+          set -euo pipefail
+          gh release create "${STABLE}" \
+            --target "$GITHUB_SHA" \
+            --title "${STABLE}" \
+            --generate-notes
+
+      - name: Upload the promoted binary to the stable Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.pick.outputs.stable }}
+          files: ${{ steps.verify.outputs.path }}
+          fail_on_unmatched_files: true
+
+      - name: Remind to delete the release branch + merge back to develop
+        env:
+          BASE: ${{ steps.pick.outputs.base }}
+          STABLE: ${{ steps.pick.outputs.stable }}
+        run: |
+          {
+            echo "### Promoted ${STABLE}"
+            echo ""
+            echo "Maintainer follow-up (not automated):"
+            echo "- Delete the \`release/${BASE}\` branch."
+            echo "- Merge \`main\` back into \`develop\` so develop never silently diverges below main."
+          } >> "$GITHUB_STEP_SUMMARY"
