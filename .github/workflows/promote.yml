@@ -49,27 +49,40 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Derive base X.Y.Z + select source beta tag
-        id: pick
+      - name: Derive base X.Y.Z
+        id: ver
         env:
           IN_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
           # Base X.Y.Z: workflow_dispatch input wins; else parse the merge-commit
-          # subject for `release/X.Y.Z` (GitHub's PR-merge subject names it).
+          # subject/body for `release/X.Y.Z` (GitHub's PR-merge subject names it),
+          # falling back to the highest beta tag merged into this SHA (covers the
+          # squash-merge case where the subject no longer carries the branch name).
           base=""
           if [ -n "${IN_VERSION:-}" ]; then
             base="${IN_VERSION#v}"
           else
-            subject="$(git log -1 --format='%s%n%b')"
-            base="$(echo "$subject" | grep -oE 'release/[0-9]+\.[0-9]+\.[0-9]+' \
-              | head -1 | sed 's#release/##')"
+            base="$(git log -1 --format='%s%n%b' "$GITHUB_SHA" \
+              | grep -oE 'release/[0-9]+\.[0-9]+\.[0-9]+' | head -1 | sed 's#release/##' || true)"
+            if [ -z "$base" ]; then
+              cand="$(git tag --merged "$GITHUB_SHA" -l 'v*-beta.*' --sort=-v:refname \
+                | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$' | head -1 || true)"
+              cand="${cand#v}"; base="${cand%-beta.*}"
+            fi
           fi
-          if ! echo "$base" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::could not determine release/X.Y.Z base from the merge to main (parsed '${base:-}'). Re-run via workflow_dispatch with the version input." >&2
-            exit 1
-          fi
+          echo "$base" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::cannot derive X.Y.Z under promotion (squash merge? pass workflow_dispatch version=vX.Y.Z)"; exit 1; }
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Select source beta tag + stable tag
+        id: pick
+        env:
+          BASE: ${{ steps.ver.outputs.base }}
+        run: |
+          set -euo pipefail
+          base="$BASE"
 
           # Select the highest beta tag for this base (the one that was hardware-tested).
           beta="$(git tag -l "v${base}-beta.*" --sort=-v:refname | head -1 || true)"
@@ -79,7 +92,7 @@ jobs:
           fi
 
           # Stable tag via the shared version math.
-          stable="$(scripts/ci/resolve-version.sh stable "$base" | sed -n 's/^tag=//p')"
+          stable="$(./scripts/ci/resolve-version.sh stable "$base" | sed -n 's/^tag=//p')"
 
           echo "base=${base}"     >> "$GITHUB_OUTPUT"
           echo "beta=${beta}"     >> "$GITHUB_OUTPUT"
@@ -101,7 +114,7 @@ jobs:
           # The expected digest is recorded in the beta Release notes as
           # `sha256: <64-hex>` by release-beta.yml.
           notes="$(gh release view "${BETA}" --json body --jq '.body')"
-          want="$(echo "$notes" | grep -oiE 'sha256:[[:space:]]*[0-9a-f]{64}' \
+          want="$(echo "$notes" | grep -oiE 'sha256:[[:space:]]*[0-9a-f]{64}([^0-9a-f]|$)' \
             | head -1 | grep -oE '[0-9a-f]{64}' | head -1 || true)"
           if [ -z "$want" ]; then
             echo "::error::beta Release ${BETA} notes carry no recorded 'sha256: <hex>' digest — cannot verify the hand-off." >&2
@@ -125,10 +138,14 @@ jobs:
           STABLE: ${{ steps.pick.outputs.stable }}
         run: |
           set -euo pipefail
-          gh release create "${STABLE}" \
-            --target "$GITHUB_SHA" \
-            --title "${STABLE}" \
-            --generate-notes
+          TAG="${STABLE}"
+          # Idempotent: a re-run (e.g. after the upload step failed) must not error
+          # on an already-created stable Release.
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" \
+              --target "$GITHUB_SHA" \
+              --title "$TAG" \
+              --generate-notes
 
       - name: Upload the promoted binary to the stable Release
         uses: softprops/action-gh-release@v2
