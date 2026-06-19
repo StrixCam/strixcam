@@ -20,13 +20,19 @@
 # runs. This is anticipated and must be measured on the very first CI run.
 #
 # The job names below (`format`, `tidy`, `test`) are the REQUIRED STATUS CHECKS
-# wired into the branch ruleset (U5) — keep them stable.
+# wired into the branch rulesets (see docs/ci/rulesets.md) — keep them stable.
+#
+# These run on PRs into `develop` and `release/**` — the integration and
+# release-candidate branches. They are deliberately NOT on `main` PRs: a
+# `release/X.Y.Z -> main` PR's head SHA already carries the green
+# format/tidy/test from its `release/*` push, and the heavy aarch64 cross-build
+# must not re-run on `main` (see docs/ci/rulesets.md for the open caveat).
 # =============================================================================
 name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [develop, "release/**"]
 
 # Cancel superseded runs on the same ref to save runner time.
 concurrency:
