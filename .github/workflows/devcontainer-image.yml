@@ -7,11 +7,23 @@
 #   - Triggers ONLY on push to main touching .devcontainer/** (+ manual dispatch).
 #     There is NO `pull_request` trigger, so a fork PR can never obtain the
 #     `packages: write` token or publish an image.
-#   - `packages: write` is granted at the JOB level, not workflow-wide.
-#   - The base image is digest-pinned in .devcontainer/Dockerfile; this job
-#     records the PUBLISHED image's digest in .devcontainer/image-digest so the
-#     CI consumers can pin by digest (a mutable-tag overwrite then can't feed a
-#     poisoned image — e.g. a clang-tidy that always exits 0 — to every job).
+#   - `packages: write` is granted at the JOB level, not workflow-wide. This job
+#     no longer requests `contents: write`: it does NOT commit anything back to
+#     `main` (no publish job may push to main — see the plan's R9). The published
+#     image's digest is surfaced in the run Summary only, for a manual bump.
+#   - WHY this stays on `push:[main]` and is NOT retargeted to `develop`: `main`
+#     is the most-protected branch (no direct push, admin-only bypass).
+#     Publishing the GHCR `:latest` from a less-protected `develop` would let any
+#     actor with develop write access push a poisoned image that all CI then
+#     builds from. The trigger retarget is separable from R9 and unnecessary.
+#
+# DEFERRED CACHE WIRE-IN OBLIGATION: when the CI image-cache consumption is
+# eventually un-deferred (ci.yml consuming this image via imageName/cacheFrom),
+# it MUST first re-establish digest pinning — pin by `@sha256:<digest>`, NEVER
+# the mutable `:latest`. Dropping the auto-commit of .devcontainer/image-digest
+# removed the stored pin, so the wire-in must re-introduce a pinned digest (read
+# from this run's Summary) before consuming, or it reopens the mutable-tag
+# image-poisoning hole this security model exists to close.
 #
 # MEASUREMENT GATE (see the plan / CLAUDE.md): the CI jobs are NOT yet rewired to
 # consume this image. Before wiring `imageName`/`cacheFrom` into ci.yml, MEASURE
@@ -31,8 +43,8 @@ on:
   workflow_dispatch:
 
 # Serialize publishes: two overlapping .devcontainer/** pushes would otherwise
-# race on the :latest tag and the digest commit's push to main. Do not cancel an
-# in-progress publish — a half-pushed image is worse than a queued one.
+# race on the :latest tag. Do not cancel an in-progress publish — a half-pushed
+# image is worse than a queued one.
 concurrency:
   group: devcontainer-image
   cancel-in-progress: false
@@ -48,11 +60,11 @@ jobs:
     name: build + push devcontainer image
     runs-on: ubuntu-latest
     permissions:
-      contents: write # only to commit .devcontainer/image-digest back to main
-      packages: write # only to push the image to GHCR
+      packages: write # only to push the image to GHCR (no contents:write — this
+      # job pushes nothing back to main; the digest is surfaced in the Summary).
     steps:
       # Third-party actions are SHA-pinned (tag in trailing comment) — this is a
-      # privileged push-to-main + packages:write job, so a mutable-ref overwrite
+      # privileged packages:write (GHCR publish) job, so a mutable-ref overwrite
       # upstream must not silently run in it. Bump deliberately (e.g. Dependabot).
       # The ~37 GB L4T sysroot unpack exhausts a stock hosted runner's disk.
       - name: Free up disk space (host)
@@ -113,28 +125,12 @@ jobs:
           esac
           echo "Published ${IMAGE}@${digest}"
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-          echo "${IMAGE}@${digest}" > .devcontainer/image-digest
 
-      # Commit the digest back to main so CI can pin by it. The branch ruleset
-      # must allow github-actions[bot] to push (same model as release.yml's tag
-      # ruleset bypass). If protected and the push is rejected, the digest is
-      # still in the run summary above for a manual bump.
-      - name: Record digest on main
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- .devcontainer/image-digest; then
-            echo "image-digest unchanged; nothing to commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .devcontainer/image-digest
-          git commit -m "chore(devcontainer): record published image digest [skip ci]"
-          git push origin HEAD:main
-
-      # if: always() so the digest is surfaced even when "Record digest on main"
-      # fails (e.g. the branch ruleset rejects the bot push) — the header comment
-      # promises the digest is recoverable from the summary for a manual bump.
+      # The digest is surfaced in the run Summary only — this job does NOT commit
+      # it back to main (no publish job may push to main; see header / plan R9).
+      # When the deferred CI cache wire-in is un-deferred, it must re-establish
+      # digest pinning (`@sha256:`, never `:latest`) using this recorded digest.
+      # if: always() so the digest is recoverable even if an earlier step failed.
       - name: Summary
         if: always()
         run: |
