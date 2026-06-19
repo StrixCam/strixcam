@@ -148,7 +148,7 @@ gh api -X POST repos/:owner/:repo/rulesets \
   "target": "branch",
   "enforcement": "active",
   "conditions": {
-    "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] }
+    "ref_name": { "include": ["refs/heads/main"], "exclude": [] }
   },
   "bypass_actors": [
     { "actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "always" }
@@ -180,10 +180,9 @@ gh api -X POST repos/:owner/:repo/rulesets \
 JSON
 ```
 
-> `~DEFAULT_BRANCH` keys the `main` ruleset to whatever GitHub considers the
-> default. **After U0 flips the default to `develop`**, `~DEFAULT_BRANCH` resolves
-> to `develop`, not `main` — so for the `main` ruleset, pin the literal ref
-> instead: replace the `ref_name.include` value with `["refs/heads/main"]`.
+> The `main` ruleset pins the literal ref `refs/heads/main` (not the
+> `~DEFAULT_BRANCH` alias): U0 flips the default branch to `develop`, so
+> `~DEFAULT_BRANCH` would resolve to `develop` here — wrong target.
 
 ## Keep the immutable Release-Tags ruleset
 

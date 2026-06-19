@@ -113,7 +113,7 @@ resolved_tag="$(printf '%s' "$release_json" | jq -r '.tag_name // empty')"
 log "Resolved tag: ${resolved_tag}"
 
 # --- Find the aarch64 asset --------------------------------------------------
-# Asset name convention from release.yml: sst_cam_firmware-<tag>-aarch64
+# Asset name convention: sst_cam_firmware-<tag>-aarch64 (published by alpha.yml and release-beta.yml)
 asset_api_url="$(printf '%s' "$release_json" \
   | jq -r '.assets[] | select(.name | endswith("-aarch64")) | .url' \
   | head -n1)"

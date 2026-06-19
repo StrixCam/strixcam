@@ -44,6 +44,25 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # ci-scripts — gate the shared release version-math script: shellcheck +
+  # its own unit-test harness. Host-side only (no devcontainer). This is a
+  # SEPARATE job; it must NOT be merged into format/tidy/test, whose names are
+  # the wired required status checks.
+  # ---------------------------------------------------------------------------
+  ci-scripts:
+    name: ci-scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: shellcheck resolve-version scripts
+        run: shellcheck scripts/ci/resolve-version*.sh
+
+      - name: resolve-version unit tests
+        run: ./scripts/ci/resolve-version-test.sh
+
+  # ---------------------------------------------------------------------------
   # format — clang-format dry-run (Google style, .clang-format) over src/+tests/
   # ---------------------------------------------------------------------------
   format:
