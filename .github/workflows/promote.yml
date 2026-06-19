@@ -1,10 +1,9 @@
 # =============================================================================
 # promote — on push to `main` (a `release/X.Y.Z -> main` merge), tag the stable
 # `vX.Y.Z` and publish the ALREADY-BUILT beta binary by COPYING it onto the
-# stable Release. There is deliberately NO `devcontainers/ci` / cross-build step
-# in this workflow: `main` never builds (the R3/AE5 structural guarantee). If you
-# are ever tempted to add a build step here, you are violating the core invariant
-# — the binary must come from the beta Release, verified by digest.
+# stable Release. There is deliberately NO cross-build step in this workflow:
+# `main` never builds (the R3/AE5 structural guarantee). Do not add a build step
+# here — the binary must come from the beta Release, verified by digest.
 #
 # FLOW:
 #   1. Derive X.Y.Z from the merged `release/X.Y.Z` branch name (merge subject,
