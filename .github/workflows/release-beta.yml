@@ -61,7 +61,7 @@ jobs:
             exit 1
           fi
           # resolve-version.sh fails fast if $base is not a clean X.Y.Z.
-          scripts/ci/resolve-version.sh beta "$base"
+          ./scripts/ci/resolve-version.sh beta "$base"
 
   build-and-upload:
     name: cross-build beta binary
@@ -73,7 +73,7 @@ jobs:
       # Reclaim ~30GB so the JetPack base image + L4T sysroot fit on a hosted
       # runner (else ENOSPC). Self-hosted runner needed if this still fails.
       - name: Free up disk space (host)
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
         with:
           tool-cache: true
           large-packages: true
@@ -116,9 +116,9 @@ jobs:
           echo "path=${asset}" >> "$GITHUB_OUTPUT"
           echo "sha256=${sha}" >> "$GITHUB_OUTPUT"
 
-      - name: Create beta prerelease (records the binary SHA-256 in the notes)
+      - name: Compose release notes (records the binary SHA-256)
+        id: notes
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA256: ${{ steps.asset.outputs.sha256 }}
           ASSET: ${{ steps.asset.outputs.path }}
         run: |
@@ -126,16 +126,24 @@ jobs:
           # The `sha256: <hex>` line is the verified hand-off contract that
           # promote.yml parses and checks the downloaded asset against. Keep the
           # exact `sha256: <64-hex>` shape — promote.yml greps for it.
-          notes="$(printf 'Beta prerelease for hardware sign-off.\n\nAsset: `%s`\nsha256: %s\n' "$ASSET" "$SHA256")"
-          gh release create "${TAG}" \
-            --target "$GITHUB_SHA" \
-            --title "${TAG}" \
-            --prerelease \
-            --notes "$notes"
+          {
+            echo 'body<<EOF'
+            printf 'Beta prerelease for hardware sign-off.\n\nAsset: `%s`\nsha256: %s\n' "$ASSET" "$SHA256"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Upload binary to the beta prerelease
+      # Atomic publish: create the prerelease (recording the SHA-256 in the body)
+      # AND attach the binary in ONE step. softprops creates the Release+tag if
+      # missing. Splitting create-then-upload let a cancel between the two leave a
+      # dangling asset-less immutable tag, bricking promote.yml's verified hand-off
+      # for this base — so this is deliberately one atomic step.
+      - name: Publish beta prerelease (create + attach binary, atomic)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ env.TAG }}
+          prerelease: true
+          body: ${{ steps.notes.outputs.body }}
           files: ${{ steps.asset.outputs.path }}
           fail_on_unmatched_files: true
