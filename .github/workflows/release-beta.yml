@@ -1,8 +1,25 @@
 # =============================================================================
-# release-beta — on every push to a `release/X.Y.Z` branch, resolve the next
-# `vX.Y.Z-beta.N` tag, cross-build the aarch64 binary inside the devcontainer,
-# and publish it as a PRERELEASE Release asset. This is the exact binary that
-# promote.yml later copies onto the stable Release — no rebuild on `main`.
+# release-beta — the single product workflow that OWNS the `release/**` branches.
+#
+# It carries two responsibilities, gated by event type:
+#
+#   * PULL REQUESTS into `release/**` run the CI CHECK jobs (`ci-scripts`,
+#     `format`, `tidy`, `test`). These four job `name:` values are the REQUIRED
+#     STATUS CHECK contexts wired into the branch rulesets (see
+#     docs/ci/rulesets.md) — keep them BYTE-IDENTICAL; renaming silently breaks
+#     branch protection.
+#
+#   * PUSHES to a `release/X.Y.Z` branch run the beta RELEASE job: resolve the
+#     next `vX.Y.Z-beta.N` tag, cross-build the aarch64 binary inside the
+#     devcontainer, record its SHA-256 in the Release notes, and publish it as a
+#     PRERELEASE asset. This is the exact binary that release.yml later copies
+#     onto the stable Release — no rebuild on `main`.
+#
+# The check jobs are PR-only (`if: github.event_name == 'pull_request'`) and the
+# release job is push/dispatch-only (`if: github.event_name != 'pull_request'`),
+# so on any single run exactly one half is active. The release job deliberately
+# does NOT `needs:` the check jobs — they are SKIPPED on push, and a `needs:` on
+# a skipped job would block the release. The PR's own green checks are the gate.
 #
 # The base version X.Y.Z is the release branch's own name (release/X.Y.Z), NOT a
 # commit scan: a release branch IS the declaration of its target version. A
@@ -10,7 +27,7 @@
 # a malformed beta base).
 #
 # INTEGRITY HAND-OFF: this workflow records the published binary's SHA-256 in the
-# Release notes (`sha256: <hex>`). promote.yml downloads the asset, recomputes
+# Release notes (`sha256: <hex>`). release.yml downloads the asset, recomputes
 # its SHA-256, and verifies it against this recorded digest before re-uploading
 # to the stable Release. Tag immutability protects the *tag*, not the Release
 # *asset* — a later `--clobber` upload could swap the asset — so the digest
@@ -20,17 +37,27 @@
 # real Jetson and tested with the app before a maintainer opens the
 # `release/X.Y.Z -> main` PR.
 #
-# KNOWN RISK (same as ci.yml): heavy/flaky JetPack devcontainer build on hosted
-# runners — `gh run rerun <id> --failed`; self-hosted runner is the durable fix.
+# WHY the devcontainer: the Jetson aarch64 cross-build is only correct inside the
+# repo's devcontainer image (custom Bootlin toolchain, the order-sensitive L4T
+# sysroot prep scripts, host-protoc codegen, OpenCV SONAME pin, Conan cache). We
+# reuse that image via devcontainers/ci rather than re-deriving the toolchain
+# here, so every cross-build gotcha stays solved in one place (see CLAUDE.md).
+#
+# KNOWN RISK: heavy/flaky JetPack devcontainer build on hosted runners — first
+# build unpacks a ~37 GB L4T targetfs sysroot (~20 min cold) and may exceed a
+# stock hosted runner's disk/time. Re-run with `gh run rerun <id> --failed`; a
+# self-hosted runner that keeps the sysroot + image warm is the durable fix.
 # =============================================================================
 name: release-beta
 
 on:
+  pull_request:
+    branches: ["release/**"]
   push:
     branches: ["release/**"]
   workflow_dispatch:
 
-# Serialize betas on the same release branch; cancel a superseded push.
+# Serialize betas on the same release branch; cancel a superseded push/PR run.
 concurrency:
   group: release-beta-${{ github.ref }}
   cancel-in-progress: true
@@ -39,8 +66,222 @@ permissions:
   contents: write
 
 jobs:
+  # ===========================================================================
+  # CI CHECK JOBS — PR-only. The job names below (`ci-scripts`, `format`,
+  # `tidy`, `test`) are the REQUIRED STATUS CHECKS wired into the branch
+  # rulesets (see docs/ci/rulesets.md) — keep them BYTE-IDENTICAL.
+  # ===========================================================================
+
+  # ---------------------------------------------------------------------------
+  # ci-scripts — gate the shared release version-math script: shellcheck +
+  # its own unit-test harness. Host-side only (no devcontainer). This is a
+  # SEPARATE job; it must NOT be merged into format/tidy/test, whose names are
+  # the wired required status checks.
+  # ---------------------------------------------------------------------------
+  ci-scripts:
+    name: ci-scripts
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: shellcheck resolve-version scripts
+        run: shellcheck scripts/ci/resolve-version*.sh
+
+      - name: resolve-version unit tests
+        run: ./scripts/ci/resolve-version-test.sh
+
+  # ---------------------------------------------------------------------------
+  # format — clang-format dry-run (Google style, .clang-format) over src/+tests/
+  # ---------------------------------------------------------------------------
+  format:
+    name: format
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
+      # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
+      # of preinstalled toolchains first. If this still ENOSPCs, a self-hosted
+      # runner is required (see header note).
+      - name: Free up disk space (host)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Checkout (with proto submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: clang-format --dry-run --Werror
+        uses: devcontainers/ci@v0.3
+        with:
+          # Build the devcontainer locally per run — no ghcr imageName/cacheFrom.
+          # ghcr image caching needs registry login + push perms and was failing
+          # at `docker tag ... ghcr.io/...`; deferred as an optimization. Each run
+          # rebuilds the image (sysroot unpack ~13 min, observed to fit the runner).
+          runCmd: |
+            set -euo pipefail
+            files=$(find src tests \
+              \( -name '*.cpp' -o -name '*.hpp' -o -name '*.cc' -o -name '*.h' \) \
+              -not -path '*/_old/*')
+            if [ -z "$files" ]; then
+              echo "No C++ sources found to format-check"; exit 1
+            fi
+            echo "$files" | xargs clang-format --dry-run --Werror
+
+  # ---------------------------------------------------------------------------
+  # tidy — clang-tidy over a configured preset's compile_commands.json
+  # ---------------------------------------------------------------------------
+  tidy:
+    name: tidy
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    # Hard gate: the cross-toolchain flags (scripts/tidy-args.sh) resolve all
+    # std/system headers, the tree is clean, and .clang-tidy promotes every
+    # diagnostic to an error via WarningsAsErrors. A new lint violation fails the
+    # PR. clang-tidy is version-locked to clang-tidy-14 (see .clang-tidy).
+    steps:
+      # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
+      # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
+      # of preinstalled toolchains first. If this still ENOSPCs, a self-hosted
+      # runner is required (see header note).
+      - name: Free up disk space (host)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Checkout (with proto submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Full history so the floor-NOLINT guard can diff against the PR base.
+          fetch-depth: 0
+
+      # Self-test the guard before trusting it: asserts every bypass class
+      # (bare/wildcard/non-leading-list NOLINT, faked marker) is still caught.
+      # A regex regression here would silently let unsanctioned floor NOLINTs
+      # through the gate below.
+      - name: Floor-NOLINT guard self-test
+        run: scripts/test-check-floor-nolints.sh
+
+      # Cheap, host-side gate — no devcontainer needed. Fails the PR if it adds a
+      # bugprone-*/performance-* NOLINT without a `// floor-ok:` sanction marker
+      # (see .clang-tidy floor policy). Diff-scoped against the PR base, so only
+      # newly introduced suppressions are gated.
+      - name: Floor-NOLINT guard (diff-scoped)
+        run: scripts/check-floor-nolints.sh "${{ github.event.pull_request.base.sha }}"
+
+      - name: Restore Conan cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan-${{ runner.os }}-
+
+      - name: clang-tidy (-p build/test)
+        uses: devcontainers/ci@v0.3
+        with:
+          # Build the devcontainer locally per run — no ghcr imageName/cacheFrom.
+          # ghcr image caching needs registry login + push perms and was failing
+          # at `docker tag ... ghcr.io/...`; deferred as an optimization. Each run
+          # rebuilds the image (sysroot unpack ~13 min, observed to fit the runner).
+          runCmd: |
+            set -euo pipefail
+            # Configure the test preset to generate compile_commands.json.
+            cmake --preset test
+            # Generate the protobuf headers (bluetooth.pb.h / wifi.pb.h) before
+            # tidy. clang-tidy does not build — without this the generated
+            # headers are absent, every TU that includes them hits
+            # clang-diagnostic-error 'bluetooth.pb.h not found', and the broken
+            # AST yields a cascade of phantom findings (members "can be made
+            # static", spurious easily-swappable, etc.). Building just sst_proto
+            # runs protoc only — seconds, not the full cross-build.
+            cmake --build --preset test --target sst_proto
+            files=$(find src tests \
+              \( -name '*.cpp' -o -name '*.cc' \) \
+              -not -path '*/_old/*')
+            if [ -z "$files" ]; then
+              echo "No C++ translation units found to tidy"; exit 1
+            fi
+            # Cross-toolchain flags live in scripts/tidy-args.sh — the single
+            # source of truth shared with scripts/fix.sh so the two can't drift.
+            # shellcheck source=scripts/tidy-args.sh
+            source scripts/tidy-args.sh
+            # No blanket --warnings-as-errors='*' here: the repo's .clang-tidy
+            # decides severity via WarningsAsErrors.
+            echo "$files" | xargs clang-tidy-14 -p build/test "${TIDY_EXTRA_ARGS[@]}"
+
+  # ---------------------------------------------------------------------------
+  # test — cross-build the test preset and run GTest under qemu (ctest)
+  # ---------------------------------------------------------------------------
+  test:
+    name: test
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
+      # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
+      # of preinstalled toolchains first. If this still ENOSPCs, a self-hosted
+      # runner is required (see header note).
+      - name: Free up disk space (host)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Checkout (with proto submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore Conan cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan-${{ runner.os }}-
+
+      - name: cmake test preset + build + ctest (qemu)
+        uses: devcontainers/ci@v0.3
+        with:
+          # Build the devcontainer locally per run — no ghcr imageName/cacheFrom.
+          # ghcr image caching needs registry login + push perms and was failing
+          # at `docker tag ... ghcr.io/...`; deferred as an optimization. Each run
+          # rebuilds the image (sysroot unpack ~13 min, observed to fit the runner).
+          # Hardware-bound tests (real IMX477 / BlueZ / radio / live GStreamer)
+          # are expected to fail in the cross-compile container — see CLAUDE.md.
+          # They are NOT yet tagged with a CTest LABEL, so we exclude the known
+          # hardware-bound test names by regex (-E) here.
+          # DURABLE FIX (firmware owner): add `set_tests_properties(... PROPERTIES
+          # LABELS hardware)` (or a gtest naming convention) and switch this to
+          # `ctest -LE hardware`, so new hardware tests are excluded automatically.
+          runCmd: |
+            set -euo pipefail
+            cmake --preset test
+            cmake --build --preset test
+            QEMU_LD_PREFIX=/l4t/targetfs ctest --preset test --output-on-failure \
+              -E 'CaptureSingleFrameAndLog|AdvertisesOnRealBluez|FormsAutonomousGroupOwner|HttpServesByteRangeWithBearerToken'
+
+  # ===========================================================================
+  # BETA RELEASE JOBS — push/dispatch-only. NOT gated behind the check jobs:
+  # the checks are SKIPPED on push, so a `needs:` on them would block release.
+  # The PR's own green checks (run above on the PR) are the gate.
+  # ===========================================================================
   resolve:
     name: resolve beta version
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.ver.outputs.tag }}
@@ -66,6 +307,7 @@ jobs:
   build-and-upload:
     name: cross-build beta binary
     needs: resolve
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     env:
       TAG: ${{ needs.resolve.outputs.tag }}
@@ -124,8 +366,8 @@ jobs:
         run: |
           set -euo pipefail
           # The `sha256: <hex>` line is the verified hand-off contract that
-          # promote.yml parses and checks the downloaded asset against. Keep the
-          # exact `sha256: <64-hex>` shape — promote.yml greps for it.
+          # release.yml parses and checks the downloaded asset against. Keep the
+          # exact `sha256: <64-hex>` shape — release.yml greps for it.
           {
             echo 'body<<EOF'
             printf 'Beta prerelease for hardware sign-off.\n\nAsset: `%s`\nsha256: %s\n' "$ASSET" "$SHA256"
@@ -135,7 +377,7 @@ jobs:
       # Atomic publish: create the prerelease (recording the SHA-256 in the body)
       # AND attach the binary in ONE step. softprops creates the Release+tag if
       # missing. Splitting create-then-upload let a cancel between the two leave a
-      # dangling asset-less immutable tag, bricking promote.yml's verified hand-off
+      # dangling asset-less immutable tag, bricking release.yml's verified hand-off
       # for this base — so this is deliberately one atomic step.
       - name: Publish beta prerelease (create + attach binary, atomic)
         uses: softprops/action-gh-release@v2
