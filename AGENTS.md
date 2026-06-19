@@ -39,16 +39,16 @@ truth for cross-toolchain flags — they can't drift).
 ## CI/CD & releasing
 
 PR-gated, Conventional-Commit driven, on the SST branch model
-`feat/* → develop → release/X.Y.Z → main` with a test-fidelity **maturity
+`feat/* → development → release/X.Y.Z → main` with a test-fidelity **maturity
 ladder**:
 
-- **alpha** (`vX.Y.Z-alpha.N`) — devcontainer cross-build + container `ctest` in isolation (no hardware); minted on every `develop` merge.
+- **alpha** (`vX.Y.Z-alpha.N`) — devcontainer cross-build + container `ctest` in isolation (no hardware); minted on every `development` merge.
 - **beta** (`vX.Y.Z-beta.N`) — the aarch64 binary flashed to a **real Jetson** and tested **with the app**; built on `release/*`.
 - **stable** (`vX.Y.Z`) — shipped; the verified beta binary promoted unchanged, cut on merge to `main`.
 
 **Two non-negotiables — do not break these:**
 
-1. **Build-in-PR / tag-on-merge** — the aarch64 cross-build (`ci-scripts`/`format`/`tidy`/`test`) is required on `develop` / `release/*` PRs.
+1. **Build-in-PR / tag-on-merge** — the aarch64 cross-build (`ci-scripts`/`format`/`tidy`/`test`) is required on `development` / `release/*` PRs.
 2. **`main` never builds** — `release.yml` only copies the already-built,
    **SHA-256-verified** beta binary. Never add a `cmake`/devcontainer build step
    to `release.yml`.
@@ -59,8 +59,8 @@ alpha/beta workflows (`pull_request`-gated), so there is **no standalone `ci.yml
 
 | Workflow (name) | Trigger | Does |
 | --------------- | ------- | ---- |
-| `release-alpha.yml` (`release-alpha`) — owns `develop` | PR → `develop` | `ci-scripts` (shellcheck + resolve-version tests) + `format` + `tidy` + `test` (the required checks) |
-| `release-alpha.yml` (`release-alpha`) | push → `develop` (+ dispatch) | `resolve-version.sh alpha` → cross-build → atomic `vX.Y.Z-alpha.N` `--prerelease` |
+| `release-alpha.yml` (`release-alpha`) — owns `development` | PR → `development` | `ci-scripts` (shellcheck + resolve-version tests) + `format` + `tidy` + `test` (the required checks) |
+| `release-alpha.yml` (`release-alpha`) | push → `development` (+ dispatch) | `resolve-version.sh alpha` → cross-build → atomic `vX.Y.Z-alpha.N` `--prerelease` |
 | `release-beta.yml` (`release-beta`) — owns `release/**` | PR → `release/**` | same `ci-scripts` + `format` + `tidy` + `test` checks |
 | `release-beta.yml` (`release-beta`) | push → `release/**` (+ dispatch) | base = branch `X.Y.Z` → cross-build → atomic `-beta.N` `--prerelease`, records binary SHA-256 in notes |
 | `release.yml` (`release`) — owns `main` | push → `main` (+ dispatch) | derive `X.Y.Z`, tag `vX.Y.Z`, download + **verify SHA-256** of beta binary, re-upload renamed (no build) |
@@ -78,7 +78,7 @@ immutable tag.
 
 ### Branch + commit + tag rules
 
-- `develop` is the default branch; target `feat/*` / `fix/*` PRs at it. Do not
+- `development` is the default branch; target `feat/*` / `fix/*` PRs at it. Do not
   target `main`.
 - `main` is promote-only: no direct push; PR from `release/*` + 1 approval + green checks.
 - Tags `v*` are immutable semver (`-alpha.N` < `-beta.N` < stable; no delete/move/force-push).

@@ -90,7 +90,7 @@ It runs `scripts/fix.sh` on staged C/C++ files and re-stages what it rewrote.
 
 ## CI/CD & releasing
 
-PR-gated, Conventional-Commit driven. CI runs **inside the devcontainer** (the cross-build env), via `devcontainers/ci`. The pipeline follows the SST branch model `feat/* → develop → release/X.Y.Z → main` with a three-rung maturity ladder:
+PR-gated, Conventional-Commit driven. CI runs **inside the devcontainer** (the cross-build env), via `devcontainers/ci`. The pipeline follows the SST branch model `feat/* → development → release/X.Y.Z → main` with a three-rung maturity ladder:
 
 - **alpha** — the devcontainer cross-build + container `ctest` in isolation (no hardware).
 - **beta** — the aarch64 binary flashed to a **real Jetson** and tested **with the app**.
@@ -98,7 +98,7 @@ PR-gated, Conventional-Commit driven. CI runs **inside the devcontainer** (the c
 
 Tag scheme: `vX.Y.Z[-alpha.N|-beta.N]`. Three **branch-scoped** product workflows + the devcontainer-image publisher. Each product workflow owns one branch tier and folds the PR gate checks inside itself (`pull_request`-gated) — there is **no standalone `ci.yml`**:
 
-- `.github/workflows/release-alpha.yml` (name `release-alpha`) — **owns `develop`**. On **`pull_request` into `develop`** it runs the gate checks `ci-scripts` (shellcheck + resolve-version tests), `format` (clang-format `--dry-run --Werror`), `tidy` (clang-tidy), `test` (cross-build the `test` preset + `ctest` under qemu; hardware-bound tests excluded by name — they only pass on-device). On **push to `develop`** (a merge) + dispatch it runs the alpha **release** job: `scripts/ci/resolve-version.sh alpha` picks the next `vX.Y.Z-alpha.N` from a Conventional-Commit base bump (`feat:` → minor, `fix:`/`perf:` → patch, `BREAKING`/`type!:` → major, docs/chore-only → **skip**), cross-builds the binary, and publishes a **prerelease** with `sst_cam_firmware-<tag>-aarch64`. The check jobs are `if: github.event_name == 'pull_request'`; the release jobs are `if: github.event_name != 'pull_request'`.
+- `.github/workflows/release-alpha.yml` (name `release-alpha`) — **owns `development`**. On **`pull_request` into `development`** it runs the gate checks `ci-scripts` (shellcheck + resolve-version tests), `format` (clang-format `--dry-run --Werror`), `tidy` (clang-tidy), `test` (cross-build the `test` preset + `ctest` under qemu; hardware-bound tests excluded by name — they only pass on-device). On **push to `development`** (a merge) + dispatch it runs the alpha **release** job: `scripts/ci/resolve-version.sh alpha` picks the next `vX.Y.Z-alpha.N` from a Conventional-Commit base bump (`feat:` → minor, `fix:`/`perf:` → patch, `BREAKING`/`type!:` → major, docs/chore-only → **skip**), cross-builds the binary, and publishes a **prerelease** with `sst_cam_firmware-<tag>-aarch64`. The check jobs are `if: github.event_name == 'pull_request'`; the release jobs are `if: github.event_name != 'pull_request'`.
 - `.github/workflows/release-beta.yml` (name `release-beta`) — **owns `release/**`**. Same gate checks (`ci-scripts`/`format`/`tidy`/`test`) on **`pull_request` into `release/**`**. On **push to `release/**`** + dispatch it runs the beta **release** job: base `X.Y.Z` comes from the branch name; `resolve-version.sh beta X.Y.Z` → `vX.Y.Z-beta.N`. Cross-builds, publishes a prerelease binary, and **records the binary's SHA-256 in the Release notes** (the promote step verifies against it).
 - `.github/workflows/release.yml` (name `release`) — **owns `main`**. On **push to `main`** (a `release/X.Y.Z → main` merge) + dispatch it **promotes**: derives `X.Y.Z` from the merged branch, selects the highest `vX.Y.Z-beta.N` tag, tags the stable `vX.Y.Z`, **downloads the beta binary, verifies its SHA-256** against the recorded digest, renames it to `sst_cam_firmware-vX.Y.Z-aarch64` (bytes preserved), and uploads it to the stable Release. **No cross-build runs on `main`** — `main` only promotes.
 - `.github/workflows/devcontainer-image.yml` — on **push to `main`** touching `.devcontainer/**` + dispatch. Publishes the GHCR devcontainer image and surfaces its digest in the run Summary. It commits **nothing** back to `main` (only `packages: write`). CI image-cache consumption stays deferred; when un-deferred it must pin by `@sha256:` digest, never `:latest`.
@@ -110,36 +110,36 @@ Default `GITHUB_TOKEN` only — no PAT/App. The "Release Tags" ruleset permits c
 **Two non-negotiables:** (1) `main` runs **no failable build/publish job** — it only promotes the already-built, digest-verified beta binary. (2) No CI job pushes a commit back to `main` (`devcontainer-image.yml` surfaces the digest in its Summary, never commits it).
 
 ### Branch + commit + tag rules
-- Flow: `feat/* → develop → release/X.Y.Z → main`. `develop` is the default integration branch; `main` holds only released, promoted code.
-- `develop` / `release/**`: PR + green `ci-scripts`/`format`/`tidy`/`test` to merge. `main`: PR + 1 approval + green checks + **no direct push** (admin/hotfix bypass).
+- Flow: `feat/* → development → release/X.Y.Z → main`. `development` is the default integration branch; `main` holds only released, promoted code.
+- `development` / `release/**`: PR + green `ci-scripts`/`format`/`tidy`/`test` to merge. `main`: PR + 1 approval + green checks + **no direct push** (admin/hotfix bypass).
 - Tags `v*` are immutable semver (no delete/move/force-push), including `-alpha.N` / `-beta.N` prereleases.
-- Use Conventional Commits. The **squash-merge subject** is what `resolve-version.sh` reads on `develop` to choose the alpha base bump — a docs/chore-only subject mints no alpha.
+- Use Conventional Commits. The **squash-merge subject** is what `resolve-version.sh` reads on `development` to choose the alpha base bump — a docs/chore-only subject mints no alpha.
 
 ### Releasing
-- Alpha: merge a `feat:`/`fix:`/… PR into `develop` → `release-alpha.yml`'s push run cuts `vX.Y.Z-alpha.N` with the aarch64 binary. Seed/override: `gh workflow run release-alpha.yml -f version=v0.1.0` (or `-f bump=minor`).
-- Beta: cut `release/X.Y.Z` from `develop` → `release-beta.yml`'s push run cuts `vX.Y.Z-beta.N`; iterate fixes on the branch for `-beta.2`, `-beta.3`. Flash a real Jetson + test with the app to sign off.
-- Stable: open the `release/X.Y.Z → main` PR; on merge, `release.yml` tags `vX.Y.Z` and copies the verified beta binary — no rebuild. Afterward delete the release branch and merge `main` back into `develop`.
+- Alpha: merge a `feat:`/`fix:`/… PR into `development` → `release-alpha.yml`'s push run cuts `vX.Y.Z-alpha.N` with the aarch64 binary. Seed/override: `gh workflow run release-alpha.yml -f version=v0.1.0` (or `-f bump=minor`).
+- Beta: cut `release/X.Y.Z` from `development` → `release-beta.yml`'s push run cuts `vX.Y.Z-beta.N`; iterate fixes on the branch for `-beta.2`, `-beta.3`. Flash a real Jetson + test with the app to sign off.
+- Stable: open the `release/X.Y.Z → main` PR; on merge, `release.yml` tags `vX.Y.Z` and copies the verified beta binary — no rebuild. Afterward delete the release branch and merge `main` back into `development`.
 - The devcontainer build is heavy and can flake on hosted runners — re-run with `gh run rerun <id> --failed` (a self-hosted runner is the durable fix).
 - Install/update on a Jetson: `deploy/install.sh` installs a **released** (stable or beta) binary (see `deploy/README.md`).
 
 ## Release lifecycle
 
-The version ladder is driven by **which branch you push to**, not by counters. Tags climb `vX.Y.Z-alpha.N` (develop) → `vX.Y.Z-beta.N` (release/*) → `vX.Y.Z` (main); the math lives in `scripts/ci/resolve-version.sh`.
+The version ladder is driven by **which branch you push to**, not by counters. Tags climb `vX.Y.Z-alpha.N` (development) → `vX.Y.Z-beta.N` (release/*) → `vX.Y.Z` (main); the math lives in `scripts/ci/resolve-version.sh`.
 
-**Alpha — automatic, every `develop` merge.** `release-alpha.yml` runs `resolve-version.sh alpha`: the base is a Conventional-Commit bump from the latest *stable* tag (or from `v0.0.0` when none exists), and `-alpha.N` increments per merge. The aarch64 binary is cross-built and attached to the prerelease.
+**Alpha — automatic, every `development` merge.** `release-alpha.yml` runs `resolve-version.sh alpha`: the base is a Conventional-Commit bump from the latest *stable* tag (or from `v0.0.0` when none exists), and `-alpha.N` increments per merge. The aarch64 binary is cross-built and attached to the prerelease.
 
 ```
-feat A → develop   →  v0.1.0-alpha.1
-feat B → develop   →  v0.1.0-alpha.2
-feat C → develop   →  v0.1.0-alpha.3
+feat A → development   →  v0.1.0-alpha.1
+feat B → development   →  v0.1.0-alpha.2
+feat C → development   →  v0.1.0-alpha.3
 ```
 
 With no stable tag yet, a `feat:` yields base `0.1.0` (a `feat!:`/`BREAKING CHANGE` → `1.0.0`; a `fix:`-only → `0.0.1`); docs/chore-only mints nothing.
 
-**Beta — when you cut the release branch.** Manually branch `release/X.Y.Z` off `develop` and push it; `release-beta.yml` runs `resolve-version.sh beta X.Y.Z` (base = the branch name), cross-builds the binary, and records its SHA-256 in the Release notes:
+**Beta — when you cut the release branch.** Manually branch `release/X.Y.Z` off `development` and push it; `release-beta.yml` runs `resolve-version.sh beta X.Y.Z` (base = the branch name), cross-builds the binary, and records its SHA-256 in the Release notes:
 
 ```
-git switch -c release/0.1.0 develop && git push   →  v0.1.0-beta.1
+git switch -c release/0.1.0 development && git push   →  v0.1.0-beta.1
 ```
 
 Each subsequent push to that branch bumps the beta counter — `-beta.2`, `-beta.3`, … This is the rung you **validate by flashing the binary to a real Jetson and testing with the app**. Alpha and beta are independent counters.
@@ -147,14 +147,14 @@ Each subsequent push to that branch bumps the beta counter — `-beta.2`, `-beta
 **Stable — when you merge `release/X.Y.Z → main`.** Pushing the branch *creates* the betas; **merging it to `main` promotes the latest beta to stable.** `release.yml` auto-selects the highest `vX.Y.Z-beta.N`, tags `vX.Y.Z`, then **downloads the beta binary, verifies its SHA-256, and re-uploads the same bytes** to the stable Release — no cross-build on `main`.
 
 ```
-develop:        alpha.1   alpha.2   alpha.3
+development:        alpha.1   alpha.2   alpha.3
                                        │ cut release/0.1.0
 release/0.1.0:                         └─► beta.1 → beta.2 → beta.3
                                                               │ merge → main
 main:                                                         └─► v0.1.0  (stable)
 ```
 
-After `v0.1.0` stable exists, the next `feat:` on `develop` bumps from the latest stable → `v0.2.0-alpha.1` (a `fix:` → `v0.1.1-alpha.1`). The alpha base climbs only once a stable is cut.
+After `v0.1.0` stable exists, the next `feat:` on `development` bumps from the latest stable → `v0.2.0-alpha.1` (a `fix:` → `v0.1.1-alpha.1`). The alpha base climbs only once a stable is cut.
 
 ## Dependencies
 

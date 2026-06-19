@@ -154,7 +154,7 @@ jobs:
           files: ${{ steps.verify.outputs.path }}
           fail_on_unmatched_files: true
 
-      - name: Remind to delete the release branch + merge back to develop
+      - name: Remind to delete the release branch + merge back to development
         env:
           BASE: ${{ steps.pick.outputs.base }}
           STABLE: ${{ steps.pick.outputs.stable }}
@@ -164,5 +164,5 @@ jobs:
             echo ""
             echo "Maintainer follow-up (not automated):"
             echo "- Delete the \`release/${BASE}\` branch."
-            echo "- Merge \`main\` back into \`develop\` so develop never silently diverges below main."
+            echo "- Merge \`main\` back into \`development\` so development never silently diverges below main."
           } >> "$GITHUB_STEP_SUMMARY"

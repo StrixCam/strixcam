@@ -11,10 +11,10 @@
 #     no longer requests `contents: write`: it does NOT commit anything back to
 #     `main` (no publish job may push to main — see the plan's R9). The published
 #     image's digest is surfaced in the run Summary only, for a manual bump.
-#   - WHY this stays on `push:[main]` and is NOT retargeted to `develop`: `main`
+#   - WHY this stays on `push:[main]` and is NOT retargeted to `development`: `main`
 #     is the most-protected branch (no direct push, admin-only bypass).
-#     Publishing the GHCR `:latest` from a less-protected `develop` would let any
-#     actor with develop write access push a poisoned image that all CI then
+#     Publishing the GHCR `:latest` from a less-protected `development` would let any
+#     actor with development write access push a poisoned image that all CI then
 #     builds from. The trigger retarget is separable from R9 and unnecessary.
 #
 # DEFERRED CACHE WIRE-IN OBLIGATION: when the CI image-cache consumption is

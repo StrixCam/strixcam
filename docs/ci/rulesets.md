@@ -1,9 +1,9 @@
 # Branch & tag rulesets — sst-cam-firmware
 
 > **APPLIED 2026-06-18.** These rulesets are **live** on the repo. Four rulesets
-> are active — **Release Tags** (immutable `v*` tags), **develop**, **main**, and
+> are active — **Release Tags** (immutable `v*` tags), **development**, **main**, and
 > **release-branches** — with an **OrgAdmin** bypass actor on the branch rulesets.
-> The **develop** ruleset requires the green checks `ci-scripts` / `format` /
+> The **development** ruleset requires the green checks `ci-scripts` / `format` /
 > `tidy` / `test`. The **main** ruleset's `required_status_checks` is **deferred**
 > (see the OPEN caveat below); `main` is currently PR + no-direct-push + admin
 > bypass. The `gh api` commands below are kept for reference and re-apply.
@@ -11,22 +11,22 @@
 > **MAINTAINER RUNBOOK (admin only).** These `gh api` calls apply the GitHub
 > repository rulesets that enforce the SST branch model. They are NOT executed by
 > CI or by the implementing change — an admin applies them once, **after** U0
-> (bootstrap `develop` + default-branch flip) and **after** the first `develop`
+> (bootstrap `development` + default-branch flip) and **after** the first `development`
 > CI run has emitted the `ci-scripts` / `format` / `tidy` / `test` check runs so
 > their exact names can be wired as required status checks. Strict order:
 > bootstrap → first CI run (capture check names) → apply these rulesets.
-> The PR gate checks now live **inside** `release-alpha.yml` (on `develop` PRs)
+> The PR gate checks now live **inside** `release-alpha.yml` (on `development` PRs)
 > and `release-beta.yml` (on `release/**` PRs); there is no standalone `ci.yml`.
 
 ## Intent
 
-The branch model is `feat/* → develop → release/X.Y.Z → main` with the maturity
-ladder `alpha` (develop) → `beta` (release/*) → `stable` (main). The rulesets
+The branch model is `feat/* → development → release/X.Y.Z → main` with the maturity
+ladder `alpha` (development) → `beta` (release/*) → `stable` (main). The rulesets
 enforce:
 
 | Branch          | Rule                                                                                                  |
 | --------------- | ----------------------------------------------------------------------------------------------------- |
-| `develop`       | PR required; green `ci-scripts` / `format` / `tidy` / `test` (from `release-alpha.yml` PR run); no force-push / delete. |
+| `development`       | PR required; green `ci-scripts` / `format` / `tidy` / `test` (from `release-alpha.yml` PR run); no force-push / delete. |
 | `release/**`    | Same green `ci-scripts` / `format` / `tidy` / `test` (from `release-beta.yml` PR run); no force-push / delete. |
 | `main`          | PR required; **no direct push**; no force-push / delete; admin/hotfix bypass. Required checks **deferred** (see OPEN caveat). |
 | tags `v*`       | Immutable — existing **"Release Tags"** ruleset; no delete / move / force. Keep it; do not weaken.     |
@@ -36,7 +36,7 @@ enforce:
 carries green `ci-scripts` / `format` / `tidy` / `test` from its `release/*` PR
 run; GitHub surfaces those runs on the PR, so the `main` ruleset could require the
 same check names with no devcontainer build re-running on `main` (the R3/AE5
-mechanism). The PR gate checks live **inside** `release-alpha.yml` (develop PRs)
+mechanism). The PR gate checks live **inside** `release-alpha.yml` (development PRs)
 and `release-beta.yml` (release/* PRs), `pull_request`-gated — there is no
 standalone `ci.yml`. `main`'s required-status-checks rule stays **deferred** (see
 the OPEN caveat below).
@@ -57,7 +57,7 @@ the OPEN caveat below).
 
 ## Required-check names
 
-Captured from the first `develop` CI run (U0). They are the **job names** of the
+Captured from the first `development` CI run (U0). They are the **job names** of the
 `pull_request`-gated check jobs inside `release-alpha.yml` (and the identical set
 inside `release-beta.yml`), kept byte-identical across the retarget:
 
@@ -74,18 +74,18 @@ workflow name in some configurations) and substitute below if so.
 
 Replace `:owner`/`:repo` via the authenticated `gh` context (it expands them).
 
-### develop — PR + green checks
+### development — PR + green checks
 
 ```bash
 gh api -X POST repos/:owner/:repo/rulesets \
   -H "Accept: application/vnd.github+json" \
   --input - <<'JSON'
 {
-  "name": "develop",
+  "name": "development",
   "target": "branch",
   "enforcement": "active",
   "conditions": {
-    "ref_name": { "include": ["refs/heads/develop"], "exclude": [] }
+    "ref_name": { "include": ["refs/heads/development"], "exclude": [] }
   },
   "rules": [
     { "type": "pull_request",
@@ -204,8 +204,8 @@ JSON
 ```
 
 > The `main` ruleset pins the literal ref `refs/heads/main` (not the
-> `~DEFAULT_BRANCH` alias): U0 flips the default branch to `develop`, so
-> `~DEFAULT_BRANCH` would resolve to `develop` here — wrong target.
+> `~DEFAULT_BRANCH` alias): U0 flips the default branch to `development`, so
+> `~DEFAULT_BRANCH` would resolve to `development` here — wrong target.
 
 ## Keep the immutable Release-Tags ruleset
 
@@ -213,7 +213,7 @@ The existing **"Release Tags"** tag ruleset (immutable `v*`, no delete/move/
 force; `github-actions[bot]` may *create* compliant tags) stays as-is. Confirm
 its `ref_name` include pattern (`refs/tags/v*`) admits the ladder names:
 
-- `v0.1.0-alpha.1`, `v0.1.0-alpha.2`, … (develop / release-alpha.yml)
+- `v0.1.0-alpha.1`, `v0.1.0-alpha.2`, … (development / release-alpha.yml)
 - `v0.1.0-beta.1`, `v0.1.0-beta.2`, … (release/* / release-beta.yml)
 - `v0.1.0`, `v1.0.0`, … (main / release.yml)
 
@@ -226,6 +226,6 @@ immediately.
 
 - Direct push to `main` is rejected.
 - A `release/* → main` PR with red checks is blocked (AE4).
-- `develop` is the repository default branch; a PR into it triggers
+- `development` is the repository default branch; a PR into it triggers
   `ci-scripts` / `format` / `tidy` / `test` (from `release-alpha.yml`).
 - `git push --delete origin vX.Y.Z` on any released tag is rejected.

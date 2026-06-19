@@ -153,10 +153,10 @@ If you are building your own unit, the STL files can be shared upon request.
 
 ## Releases & branch model
 
-Development follows the SST branch model `feat/* → develop → release/X.Y.Z → main`
+Development follows the SST branch model `feat/* → development → release/X.Y.Z → main`
 with a three-rung release maturity ladder:
 
-- **alpha** (`vX.Y.Z-alpha.N`) — pushed to `develop`; the devcontainer
+- **alpha** (`vX.Y.Z-alpha.N`) — pushed to `development`; the devcontainer
   cross-build + container `ctest` in isolation, no hardware.
 - **beta** (`vX.Y.Z-beta.N`) — cut on a `release/X.Y.Z` branch; the aarch64
   binary flashed to a **real Jetson** and tested **with the app**.
@@ -164,7 +164,7 @@ with a three-rung release maturity ladder:
   re-published unchanged (its SHA-256 is checked before promotion).
 
 Three branch-scoped product workflows drive this — `release-alpha.yml` owns
-`develop` (PR checks + the alpha build), `release-beta.yml` owns `release/**`
+`development` (PR checks + the alpha build), `release-beta.yml` owns `release/**`
 (PR checks + the beta build), and `release.yml` owns `main` (promote only) —
 alongside the unchanged `devcontainer-image.yml`. Two invariants hold: **`main`
 runs no failable build** — it only promotes the already-built beta binary — and

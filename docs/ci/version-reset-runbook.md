@@ -4,8 +4,8 @@
 > the two bogus tags `v0.1.0` and `v0.1.1` (auto-cut by the old
 > push-to-main-auto-release flow; they correspond to no real, tested release) and
 > seed the SST maturity ladder at `0.1.0-alpha`. Not executed by CI. Run it
-> **after** U0 (bootstrap `develop`) and the new workflows have landed, so the
-> first `develop` merge can mint `v0.1.0-alpha.1`.
+> **after** U0 (bootstrap `development`) and the new workflows have landed, so the
+> first `development` merge can mint `v0.1.0-alpha.1`.
 
 ## Why both tags must go
 
@@ -60,7 +60,7 @@ The immutable **"Release Tags"** ruleset blocks tag deletion, so the bypass is
 
 ## Seed the `0.1.0-alpha` line
 
-With the bogus tags gone, the next `feat:` merge into `develop` mints
+With the bogus tags gone, the next `feat:` merge into `development` mints
 `v0.1.0-alpha.1` automatically (`resolve-version.sh alpha` bumps from an implicit
 `v0.0.0`, so a first `feat:` → base `0.1.0`).
 
@@ -85,5 +85,5 @@ clean repo seeds to exactly `v0.1.0-alpha.1`.)
 ## Verify
 
 ```bash
-git tag -l 'v*'   # no v0.1.0 / v0.1.1; first develop alpha is v0.1.0-alpha.1
+git tag -l 'v*'   # no v0.1.0 / v0.1.1; first development alpha is v0.1.0-alpha.1
 ```

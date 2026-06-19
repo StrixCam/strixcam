@@ -1,14 +1,14 @@
 # =============================================================================
-# release-alpha — the single product workflow that OWNS the `develop` branch.
+# release-alpha — the single product workflow that OWNS the `development` branch.
 #
 # It carries two responsibilities, gated by event type:
 #
-#   * PULL REQUESTS into `develop` run the CI CHECK jobs (`ci-scripts`, `format`,
+#   * PULL REQUESTS into `development` run the CI CHECK jobs (`ci-scripts`, `format`,
 #     `tidy`, `test`). These four job `name:` values are the REQUIRED STATUS
 #     CHECK contexts wired into the branch rulesets (see docs/ci/rulesets.md) —
 #     keep them BYTE-IDENTICAL; renaming silently breaks branch protection.
 #
-#   * PUSHES to `develop` (a merge) run the alpha RELEASE job: resolve the next
+#   * PUSHES to `development` (a merge) run the alpha RELEASE job: resolve the next
 #     `vX.Y.Z-alpha.N` tag from Conventional Commits, cross-build the aarch64
 #     binary inside the devcontainer, and publish it as a PRERELEASE asset.
 #
@@ -30,7 +30,7 @@
 #   beta   = the aarch64 binary flashed to a real Jetson + tested with the app
 #   stable = shipped (release.yml on main, no rebuild)
 #
-# The aarch64 cross-build runs HERE on `develop`, never on `main` (the R3
+# The aarch64 cross-build runs HERE on `development`, never on `main` (the R3
 # "main never builds" guarantee). Default GITHUB_TOKEN only (contents:write);
 # the "Release Tags" ruleset permits creating compliant semver tags.
 #
@@ -49,9 +49,9 @@ name: release-alpha
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [development]
   push:
-    branches: [develop]
+    branches: [development]
   workflow_dispatch:
     inputs:
       version:
@@ -66,7 +66,7 @@ on:
 
 # Cancel superseded runs on the same ref to save runner time. A queued dispatch
 # tag-and-build is cheaper to let finish than to half-publish, but a superseded
-# develop push/PR run is safe to cancel.
+# development push/PR run is safe to cancel.
 concurrency:
   group: release-alpha-${{ github.ref }}
   cancel-in-progress: true
