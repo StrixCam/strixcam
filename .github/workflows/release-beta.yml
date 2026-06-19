@@ -1,0 +1,141 @@
+# =============================================================================
+# release-beta — on every push to a `release/X.Y.Z` branch, resolve the next
+# `vX.Y.Z-beta.N` tag, cross-build the aarch64 binary inside the devcontainer,
+# and publish it as a PRERELEASE Release asset. This is the exact binary that
+# promote.yml later copies onto the stable Release — no rebuild on `main`.
+#
+# The base version X.Y.Z is the release branch's own name (release/X.Y.Z), NOT a
+# commit scan: a release branch IS the declaration of its target version. A
+# branch name that is not `release/X.Y.Z` fails fast (resolve-version.sh rejects
+# a malformed beta base).
+#
+# INTEGRITY HAND-OFF: this workflow records the published binary's SHA-256 in the
+# Release notes (`sha256: <hex>`). promote.yml downloads the asset, recomputes
+# its SHA-256, and verifies it against this recorded digest before re-uploading
+# to the stable Release. Tag immutability protects the *tag*, not the Release
+# *asset* — a later `--clobber` upload could swap the asset — so the digest
+# compare makes promotion a verified hand-off, not trust-on-download.
+#
+# beta = the second rung of the maturity ladder: this binary is flashed to a
+# real Jetson and tested with the app before a maintainer opens the
+# `release/X.Y.Z -> main` PR.
+#
+# KNOWN RISK (same as ci.yml): heavy/flaky JetPack devcontainer build on hosted
+# runners — `gh run rerun <id> --failed`; self-hosted runner is the durable fix.
+# =============================================================================
+name: release-beta
+
+on:
+  push:
+    branches: ["release/**"]
+  workflow_dispatch:
+
+# Serialize betas on the same release branch; cancel a superseded push.
+concurrency:
+  group: release-beta-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    name: resolve beta version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Derive base X.Y.Z from the release branch + resolve next beta
+        id: ver
+        run: |
+          set -euo pipefail
+          # GITHUB_REF_NAME is the branch short name, e.g. "release/0.1.0".
+          base="${GITHUB_REF_NAME#release/}"
+          if [ "$base" = "$GITHUB_REF_NAME" ]; then
+            echo "::error::not a release/* branch: '${GITHUB_REF_NAME}'" >&2
+            exit 1
+          fi
+          # resolve-version.sh fails fast if $base is not a clean X.Y.Z.
+          scripts/ci/resolve-version.sh beta "$base"
+
+  build-and-upload:
+    name: cross-build beta binary
+    needs: resolve
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+    steps:
+      # Reclaim ~30GB so the JetPack base image + L4T sysroot fit on a hosted
+      # runner (else ENOSPC). Self-hosted runner needed if this still fails.
+      - name: Free up disk space (host)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Checkout (with proto submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore Conan cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan-${{ runner.os }}-
+
+      - name: cmake release preset + build
+        uses: devcontainers/ci@v0.3
+        with:
+          # Build the devcontainer locally — no ghcr imageName/cacheFrom (needs
+          # registry login + push perms; was failing at `docker tag ghcr.io/...`).
+          # Deferred caching optimization.
+          runCmd: |
+            set -euo pipefail
+            cmake --preset release
+            cmake --build --preset release
+            file build/release/bin/sst_cam_firmware
+            test -x build/release/bin/sst_cam_firmware
+
+      - name: Stage versioned asset + compute SHA-256
+        id: asset
+        run: |
+          set -euo pipefail
+          asset="sst_cam_firmware-${TAG}-aarch64"
+          cp build/release/bin/sst_cam_firmware "${asset}"
+          sha="$(sha256sum "${asset}" | cut -d' ' -f1)"
+          echo "path=${asset}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Create beta prerelease (records the binary SHA-256 in the notes)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA256: ${{ steps.asset.outputs.sha256 }}
+          ASSET: ${{ steps.asset.outputs.path }}
+        run: |
+          set -euo pipefail
+          # The `sha256: <hex>` line is the verified hand-off contract that
+          # promote.yml parses and checks the downloaded asset against. Keep the
+          # exact `sha256: <64-hex>` shape — promote.yml greps for it.
+          notes="$(printf 'Beta prerelease for hardware sign-off.\n\nAsset: `%s`\nsha256: %s\n' "$ASSET" "$SHA256")"
+          gh release create "${TAG}" \
+            --target "$GITHUB_SHA" \
+            --title "${TAG}" \
+            --prerelease \
+            --notes "$notes"
+
+      - name: Upload binary to the beta prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: ${{ steps.asset.outputs.path }}
+          fail_on_unmatched_files: true
