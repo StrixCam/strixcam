@@ -8,7 +8,7 @@ This directory ships the manual deployment path for the firmware:
 The firmware is distributed as a **private** GitHub Release asset named
 `sst_cam_firmware-<tag>-aarch64`. `install.sh` installs a **released** binary —
 either a **stable** `vX.Y.Z` (promoted to `main` by
-`.github/workflows/promote.yml`) or a **beta** `vX.Y.Z-beta.N` (cut on a
+`.github/workflows/release.yml`) or a **beta** `vX.Y.Z-beta.N` (cut on a
 `release/X.Y.Z` branch by `.github/workflows/release-beta.yml`) for on-device
 hardware sign-off. The stable asset is the exact, SHA-256-verified beta binary
 re-published unchanged — `main` never rebuilds. (See `CLAUDE.md` and `docs/ci/`

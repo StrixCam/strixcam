@@ -65,10 +65,10 @@ With the bogus tags gone, the next `feat:` merge into `develop` mints
 `v0.0.0`, so a first `feat:` → base `0.1.0`).
 
 To seed deterministically without waiting for a `feat:` merge, dispatch
-`alpha.yml` with the version override:
+`release-alpha.yml` with the version override:
 
 ```bash
-gh workflow run alpha.yml -f version=v0.1.0     # mints v0.1.0-alpha.1
+gh workflow run release-alpha.yml -f version=v0.1.0     # mints v0.1.0-alpha.1
 ```
 
 (`IN_VERSION=v0.1.0` forces the base; the alpha rung + counter still apply, so a

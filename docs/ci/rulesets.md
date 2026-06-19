@@ -1,12 +1,22 @@
 # Branch & tag rulesets — sst-cam-firmware
 
+> **APPLIED 2026-06-18.** These rulesets are **live** on the repo. Four rulesets
+> are active — **Release Tags** (immutable `v*` tags), **develop**, **main**, and
+> **release-branches** — with an **OrgAdmin** bypass actor on the branch rulesets.
+> The **develop** ruleset requires the green checks `ci-scripts` / `format` /
+> `tidy` / `test`. The **main** ruleset's `required_status_checks` is **deferred**
+> (see the OPEN caveat below); `main` is currently PR + no-direct-push + admin
+> bypass. The `gh api` commands below are kept for reference and re-apply.
+
 > **MAINTAINER RUNBOOK (admin only).** These `gh api` calls apply the GitHub
 > repository rulesets that enforce the SST branch model. They are NOT executed by
 > CI or by the implementing change — an admin applies them once, **after** U0
 > (bootstrap `develop` + default-branch flip) and **after** the first `develop`
-> CI run has emitted the `format` / `tidy` / `test` check runs so their exact
-> names can be wired as required status checks. Strict order: bootstrap → first
-> CI run (capture check names) → apply these rulesets (this is the last step).
+> CI run has emitted the `ci-scripts` / `format` / `tidy` / `test` check runs so
+> their exact names can be wired as required status checks. Strict order:
+> bootstrap → first CI run (capture check names) → apply these rulesets.
+> The PR gate checks now live **inside** `release-alpha.yml` (on `develop` PRs)
+> and `release-beta.yml` (on `release/**` PRs); there is no standalone `ci.yml`.
 
 ## Intent
 
@@ -16,24 +26,28 @@ enforce:
 
 | Branch          | Rule                                                                                                  |
 | --------------- | ----------------------------------------------------------------------------------------------------- |
-| `develop`       | PR required; green `format` / `tidy` / `test`; no force-push / delete.                                 |
-| `release/**`    | Same green `format` / `tidy` / `test` (reported on `release/*` pushes via ci.yml); no force-push / delete. |
-| `main`          | PR required; green `format` / `tidy` / `test`; **no direct push**; no force-push / delete; admin/hotfix bypass. |
+| `develop`       | PR required; green `ci-scripts` / `format` / `tidy` / `test` (from `release-alpha.yml` PR run); no force-push / delete. |
+| `release/**`    | Same green `ci-scripts` / `format` / `tidy` / `test` (from `release-beta.yml` PR run); no force-push / delete. |
+| `main`          | PR required; **no direct push**; no force-push / delete; admin/hotfix bypass. Required checks **deferred** (see OPEN caveat). |
 | tags `v*`       | Immutable — existing **"Release Tags"** ruleset; no delete / move / force. Keep it; do not weaken.     |
 
 `main` deliberately does **not** re-run the heavy aarch64 cross-build. A
 `release/X.Y.Z → main` PR's head SHA *is* the release-branch tip, which already
-carries green `format` / `tidy` / `test` from its `release/*` push; GitHub
-surfaces those runs on the PR, so the `main` ruleset requires the same check
-names with no devcontainer build re-running on `main` (the R3/AE5 mechanism).
-`ci.yml` is deliberately NOT on `main` PRs (see the OPEN caveat below).
+carries green `ci-scripts` / `format` / `tidy` / `test` from its `release/*` PR
+run; GitHub surfaces those runs on the PR, so the `main` ruleset could require the
+same check names with no devcontainer build re-running on `main` (the R3/AE5
+mechanism). The PR gate checks live **inside** `release-alpha.yml` (develop PRs)
+and `release-beta.yml` (release/* PRs), `pull_request`-gated — there is no
+standalone `ci.yml`. `main`'s required-status-checks rule stays **deferred** (see
+the OPEN caveat below).
 
 ## OPEN caveat — verify before relying on `main`'s required check
 
 > **(OPEN — do not resolve here, flag for the maintainer applying U7):** verify
 > GitHub surfaces the release-head SHA's *push* check-run as a *status on the
-> main PR* — `ci.yml` is deliberately NOT on `main` PRs (the cross-build is
-> heavy). If GitHub does NOT surface the push-event check run as a PR status on
+> main PR* — no product workflow runs the gate checks on `main` PRs (the
+> cross-build is heavy; `release.yml` on `main` only promotes). If GitHub does
+> NOT surface the push-event check run as a PR status on
 > the same SHA, the `main` ruleset's `required_status_checks` will never be
 > satisfiable (the `release/X.Y.Z → main` PR would have no checks, AE4/AE5
 > unrealizable). In that case add a lightweight `pull_request: [main]` gate that
@@ -43,9 +57,11 @@ names with no devcontainer build re-running on `main` (the R3/AE5 mechanism).
 
 ## Required-check names
 
-Captured from the first `develop` CI run (U0). They are the **job names** in
-`ci.yml`, kept byte-identical across the retarget:
+Captured from the first `develop` CI run (U0). They are the **job names** of the
+`pull_request`-gated check jobs inside `release-alpha.yml` (and the identical set
+inside `release-beta.yml`), kept byte-identical across the retarget:
 
+- `ci-scripts`
 - `format`
 - `tidy`
 - `test`
@@ -85,6 +101,7 @@ gh api -X POST repos/:owner/:repo/rulesets \
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
+          { "context": "ci-scripts" },
           { "context": "format" },
           { "context": "tidy" },
           { "context": "test" }
@@ -116,6 +133,7 @@ gh api -X POST repos/:owner/:repo/rulesets \
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
+          { "context": "ci-scripts" },
           { "context": "format" },
           { "context": "tidy" },
           { "context": "test" }
@@ -129,15 +147,19 @@ gh api -X POST repos/:owner/:repo/rulesets \
 JSON
 ```
 
-### main — PR + green checks + no direct push, admin bypass
+### main — PR + no direct push, admin bypass (required-checks deferred)
 
-`bypass_actors` grants the `RepositoryRole` id `5` (admin/maintainer — confirm
-the role id for this org via `gh api repos/:owner/:repo/rulesets/<id>` or the
-Roles UI) `always` bypass for hotfix/version-reset operations.
+`bypass_actors` grants an `OrgAdmin` bypass actor `always` bypass for
+hotfix/version-reset operations (live state; the JSON below shows the
+`RepositoryRole` id `5` form — confirm the role/org-admin id for this org via
+`gh api repos/:owner/:repo/rulesets/<id>` or the Roles UI).
 
-> Wire `required_status_checks` here only **after** confirming the OPEN caveat
-> above — if the push check-run is not surfaced as a PR status, swap in the
-> no-build assertion gate's context instead of `format`/`tidy`/`test`.
+> **DEFERRED — not in the live `main` ruleset.** The `required_status_checks`
+> rule below is **not** currently applied; `main` is live as PR + no-direct-push
+> + admin bypass only. Wire `required_status_checks` here only **after**
+> confirming the OPEN caveat above — if the push check-run is not surfaced as a
+> PR status, swap in the no-build assertion gate's context instead of
+> `ci-scripts`/`format`/`tidy`/`test`.
 
 ```bash
 gh api -X POST repos/:owner/:repo/rulesets \
@@ -167,6 +189,7 @@ gh api -X POST repos/:owner/:repo/rulesets \
       "parameters": {
         "strict_required_status_checks_policy": true,
         "required_status_checks": [
+          { "context": "ci-scripts" },
           { "context": "format" },
           { "context": "tidy" },
           { "context": "test" }
@@ -190,9 +213,9 @@ The existing **"Release Tags"** tag ruleset (immutable `v*`, no delete/move/
 force; `github-actions[bot]` may *create* compliant tags) stays as-is. Confirm
 its `ref_name` include pattern (`refs/tags/v*`) admits the ladder names:
 
-- `v0.1.0-alpha.1`, `v0.1.0-alpha.2`, … (develop / alpha.yml)
+- `v0.1.0-alpha.1`, `v0.1.0-alpha.2`, … (develop / release-alpha.yml)
 - `v0.1.0-beta.1`, `v0.1.0-beta.2`, … (release/* / release-beta.yml)
-- `v0.1.0`, `v1.0.0`, … (main / promote.yml)
+- `v0.1.0`, `v1.0.0`, … (main / release.yml)
 
 `refs/tags/v*` matches all three. The **only** sanctioned exception is the
 one-time version reset (see `version-reset-runbook.md`), where the ruleset is
@@ -204,5 +227,5 @@ immediately.
 - Direct push to `main` is rejected.
 - A `release/* → main` PR with red checks is blocked (AE4).
 - `develop` is the repository default branch; a PR into it triggers
-  `format` / `tidy` / `test`.
+  `ci-scripts` / `format` / `tidy` / `test` (from `release-alpha.yml`).
 - `git push --delete origin vX.Y.Z` on any released tag is rejected.

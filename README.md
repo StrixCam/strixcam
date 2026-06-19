@@ -163,12 +163,15 @@ with a three-rung release maturity ladder:
 - **stable** (`vX.Y.Z`) — promoted on merge to `main`: the verified beta binary
   re-published unchanged (its SHA-256 is checked before promotion).
 
-Two invariants hold: **`main` runs no failable build** — it only promotes the
-already-built beta binary — and **no CI job commits back to `main`**. The aarch64
-binary is published as a GitHub Release asset, `sst_cam_firmware-<tag>-aarch64`.
-`deploy/install.sh` installs a released (stable or beta) binary onto a Jetson.
-See `CLAUDE.md` and `docs/ci/` for the workflow, ruleset, and version-reset
-runbooks.
+Three branch-scoped product workflows drive this — `release-alpha.yml` owns
+`develop` (PR checks + the alpha build), `release-beta.yml` owns `release/**`
+(PR checks + the beta build), and `release.yml` owns `main` (promote only) —
+alongside the unchanged `devcontainer-image.yml`. Two invariants hold: **`main`
+runs no failable build** — it only promotes the already-built beta binary — and
+**no CI job commits back to `main`**. The aarch64 binary is published as a GitHub
+Release asset, `sst_cam_firmware-<tag>-aarch64`. `deploy/install.sh` installs a
+released (stable or beta) binary onto a Jetson. See `CLAUDE.md` and `docs/ci/`
+for the workflow, ruleset, and version-reset runbooks.
 
 ---
 

@@ -48,25 +48,30 @@ ladder**:
 
 **Two non-negotiables — do not break these:**
 
-1. **Build-in-PR / tag-on-merge** — the aarch64 cross-build (`format`/`tidy`/`test`) is required on `develop` / `release/*` PRs.
-2. **`main` never builds** — `promote.yml` only copies the already-built,
+1. **Build-in-PR / tag-on-merge** — the aarch64 cross-build (`ci-scripts`/`format`/`tidy`/`test`) is required on `develop` / `release/*` PRs.
+2. **`main` never builds** — `release.yml` only copies the already-built,
    **SHA-256-verified** beta binary. Never add a `cmake`/devcontainer build step
-   to `promote.yml`.
+   to `release.yml`.
 
-Four product workflows + the devcontainer-image publisher, trigger-separated:
+Three **branch-scoped** product workflows + the devcontainer-image publisher. Each
+product workflow owns one branch tier; the PR gate checks are folded **inside** the
+alpha/beta workflows (`pull_request`-gated), so there is **no standalone `ci.yml`**:
 
-| Workflow | Trigger | Does |
-| -------- | ------- | ---- |
-| `ci.yml` | PR → `develop` / `release/*` | `format` + `tidy` + `test` (required checks) + `ci-scripts` (shellcheck + resolve-version tests) |
-| `alpha.yml` | push → `develop` | `resolve-version.sh alpha` → cross-build → atomic `--prerelease` |
-| `release-beta.yml` | push → `release/**` | base = branch `X.Y.Z` → cross-build → atomic `-beta.N` `--prerelease`, records binary SHA-256 in notes |
-| `promote.yml` | push → `main` | derive `X.Y.Z`, tag `vX.Y.Z`, download + **verify SHA-256** of beta binary, re-upload renamed (no build) |
+| Workflow (name) | Trigger | Does |
+| --------------- | ------- | ---- |
+| `release-alpha.yml` (`release-alpha`) — owns `develop` | PR → `develop` | `ci-scripts` (shellcheck + resolve-version tests) + `format` + `tidy` + `test` (the required checks) |
+| `release-alpha.yml` (`release-alpha`) | push → `develop` (+ dispatch) | `resolve-version.sh alpha` → cross-build → atomic `vX.Y.Z-alpha.N` `--prerelease` |
+| `release-beta.yml` (`release-beta`) — owns `release/**` | PR → `release/**` | same `ci-scripts` + `format` + `tidy` + `test` checks |
+| `release-beta.yml` (`release-beta`) | push → `release/**` (+ dispatch) | base = branch `X.Y.Z` → cross-build → atomic `-beta.N` `--prerelease`, records binary SHA-256 in notes |
+| `release.yml` (`release`) — owns `main` | push → `main` (+ dispatch) | derive `X.Y.Z`, tag `vX.Y.Z`, download + **verify SHA-256** of beta binary, re-upload renamed (no build) |
 | `devcontainer-image.yml` | push → `main` touching `.devcontainer/**` | publish GHCR devcontainer image; surfaces digest in Summary, commits nothing |
 
-Version math is `scripts/ci/resolve-version.sh` (single source for all release
-workflows; tested by `scripts/ci/resolve-version-test.sh` — run it after editing
-the script, and `ci-scripts` gates it). Default `GITHUB_TOKEN` only — no
-PAT/App. The "Release Tags" ruleset permits creating compliant semver tags.
+The check jobs are `if: github.event_name == 'pull_request'`; the release jobs are
+`if: github.event_name != 'pull_request'`. Version math is
+`scripts/ci/resolve-version.sh` (single source for all release workflows; tested by
+`scripts/ci/resolve-version-test.sh` — run it after editing the script, and
+`ci-scripts` gates it). Default `GITHUB_TOKEN` only — no PAT/App. The "Release
+Tags" ruleset permits creating compliant semver tags.
 Prerelease publish is **atomic** (one `softprops/action-gh-release@v2` step
 creates the tag and attaches the binary) so a cancel can't leave an asset-less
 immutable tag.
