@@ -90,21 +90,36 @@ It runs `scripts/fix.sh` on staged C/C++ files and re-stages what it rewrote.
 
 ## CI/CD & releasing
 
-PR-gated, Conventional-Commit driven. CI runs **inside the devcontainer** (the cross-build env), via `devcontainers/ci`. Two workflows:
+PR-gated, Conventional-Commit driven. CI runs **inside the devcontainer** (the cross-build env), via `devcontainers/ci`. The pipeline follows the SST branch model `feat/* → develop → release/X.Y.Z → main` with a three-rung maturity ladder:
 
-- `.github/workflows/ci.yml` — **pull requests only**. Required status checks on `main`: `format` (clang-format `--dry-run --Werror`), `test` (cross-build the `test` preset + `ctest` under qemu; hardware-bound tests are excluded by name — they only pass on-device), and `tidy` (clang-tidy). `tidy` is now a **hard gate**: the cross-toolchain header flags live in `scripts/tidy-args.sh`, the tree is clean under the full check set, and `.clang-tidy` promotes every diagnostic to an error (`WarningsAsErrors: '*'`) — a new lint violation fails the PR. clang-tidy is version-locked to `clang-tidy-14`. Auto-fix fixable findings dev-side with `scripts/fix.sh` before pushing (CI is verify-only). Each job frees ~30GB host disk before building the ~37GB JetPack image.
-- `.github/workflows/release.yml` — on **push to `main`** (a merge) + manual `workflow_dispatch`. Conventional-commit bump (`feat:` → minor, `fix:`/`perf:` → patch, `BREAKING`/`type!:` → major, docs/chore-only → **skip**) → tag `vX.Y.Z` + GitHub Release, then cross-builds the production binary and uploads `sst_cam_firmware-<tag>-aarch64`. Default `GITHUB_TOKEN` only — no PAT/App.
+- **alpha** — the devcontainer cross-build + container `ctest` in isolation (no hardware).
+- **beta** — the aarch64 binary flashed to a **real Jetson** and tested **with the app**.
+- **stable** — shipped: the verified beta binary promoted unchanged.
+
+Tag scheme: `vX.Y.Z[-alpha.N|-beta.N]`. Four product workflows + the devcontainer-image publisher:
+
+- `.github/workflows/ci.yml` — **PRs into `develop` and `release/**`** (not `main`). Jobs `format` (clang-format `--dry-run --Werror`), `tidy` (clang-tidy), `test` (cross-build the `test` preset + `ctest` under qemu; hardware-bound tests excluded by name — they only pass on-device). These three job names are the required status checks. `tidy` is a **hard gate**: cross-toolchain header flags live in `scripts/tidy-args.sh`, the tree is clean under the full check set, and `.clang-tidy` promotes every diagnostic to an error (`WarningsAsErrors: '*'`). clang-tidy is version-locked to `clang-tidy-14`. Auto-fix fixable findings dev-side with `scripts/fix.sh` before pushing (CI is verify-only). Each job frees ~30GB host disk before building the ~37GB JetPack image.
+- `.github/workflows/alpha.yml` — on **push to `develop`** (a merge) + dispatch. `scripts/ci/resolve-version.sh alpha` picks the next `vX.Y.Z-alpha.N` from a Conventional-Commit base bump (`feat:` → minor, `fix:`/`perf:` → patch, `BREAKING`/`type!:` → major, docs/chore-only → **skip**), cross-builds the binary, and publishes a **prerelease** with `sst_cam_firmware-<tag>-aarch64`.
+- `.github/workflows/release-beta.yml` — on **push to `release/**`** + dispatch. Base `X.Y.Z` comes from the branch name; `resolve-version.sh beta X.Y.Z` → `vX.Y.Z-beta.N`. Cross-builds, publishes a prerelease binary, and **records the binary's SHA-256 in the Release notes** (the promote step verifies against it).
+- `.github/workflows/promote.yml` — on **push to `main`** (a `release/X.Y.Z → main` merge) + dispatch. Derives `X.Y.Z` from the merged branch, selects the highest `vX.Y.Z-beta.N` tag, tags the stable `vX.Y.Z`, **downloads the beta binary, verifies its SHA-256** against the recorded digest, renames it to `sst_cam_firmware-vX.Y.Z-aarch64` (bytes preserved), and uploads it to the stable Release. **No cross-build runs on `main`** — `main` only promotes.
+- `.github/workflows/devcontainer-image.yml` — on **push to `main`** touching `.devcontainer/**` + dispatch. Publishes the GHCR devcontainer image and surfaces its digest in the run Summary. It commits **nothing** back to `main` (only `packages: write`). CI image-cache consumption stays deferred; when un-deferred it must pin by `@sha256:` digest, never `:latest`.
+
+Default `GITHUB_TOKEN` only — no PAT/App. The "Release Tags" ruleset permits creating compliant semver tags. Ruleset + version-reset runbooks live in [docs/ci/](docs/ci/).
+
+**Two non-negotiables:** (1) `main` runs **no failable build/publish job** — it only promotes the already-built, digest-verified beta binary. (2) No CI job pushes a commit back to `main` (`devcontainer-image.yml` surfaces the digest in its Summary, never commits it).
 
 ### Branch + commit + tag rules
-- `main` is protected: no direct push; PR + 1 approval + green `format`/`tidy`/`test` to merge.
-- Tags `v*` are immutable semver (no delete/move/force-push).
-- Use Conventional Commits. The **squash-merge subject** is what `release.yml` reads to choose the bump — a non-conventional subject cuts no release.
+- Flow: `feat/* → develop → release/X.Y.Z → main`. `develop` is the default integration branch; `main` holds only released, promoted code.
+- `develop` / `release/**`: PR + green `format`/`tidy`/`test` to merge. `main`: PR + 1 approval + green checks + **no direct push** (admin/hotfix bypass).
+- Tags `v*` are immutable semver (no delete/move/force-push), including `-alpha.N` / `-beta.N` prereleases.
+- Use Conventional Commits. The **squash-merge subject** is what `resolve-version.sh` reads on `develop` to choose the alpha base bump — a docs/chore-only subject mints no alpha.
 
 ### Releasing
-- Normal: merge a `feat:`/`fix:`/… PR → release auto-cuts on merge with the aarch64 binary.
-- Manual: `gh workflow run release.yml -f bump=minor` (or `-f version=vX.Y.Z`).
+- Alpha: merge a `feat:`/`fix:`/… PR into `develop` → `alpha.yml` cuts `vX.Y.Z-alpha.N` with the aarch64 binary. Seed/override: `gh workflow run alpha.yml -f version=v0.1.0` (or `-f bump=minor`).
+- Beta: cut `release/X.Y.Z` from `develop` → `release-beta.yml` cuts `vX.Y.Z-beta.N`; iterate fixes on the branch for `-beta.2`, `-beta.3`. Flash a real Jetson + test with the app to sign off.
+- Stable: open the `release/X.Y.Z → main` PR; on merge, `promote.yml` tags `vX.Y.Z` and copies the verified beta binary — no rebuild. Afterward delete the release branch and merge `main` back into `develop`.
 - The devcontainer build is heavy and can flake on hosted runners — re-run with `gh run rerun <id> --failed` (a self-hosted runner is the durable fix).
-- Install/update on a Jetson: `deploy/install.sh` (see `deploy/README.md`).
+- Install/update on a Jetson: `deploy/install.sh` installs a **released** (stable or beta) binary (see `deploy/README.md`).
 
 ## Dependencies
 

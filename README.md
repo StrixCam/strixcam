@@ -151,6 +151,27 @@ If you are building your own unit, the STL files can be shared upon request.
 
 ---
 
+## Releases & branch model
+
+Development follows the SST branch model `feat/* → develop → release/X.Y.Z → main`
+with a three-rung release maturity ladder:
+
+- **alpha** (`vX.Y.Z-alpha.N`) — pushed to `develop`; the devcontainer
+  cross-build + container `ctest` in isolation, no hardware.
+- **beta** (`vX.Y.Z-beta.N`) — cut on a `release/X.Y.Z` branch; the aarch64
+  binary flashed to a **real Jetson** and tested **with the app**.
+- **stable** (`vX.Y.Z`) — promoted on merge to `main`: the verified beta binary
+  re-published unchanged (its SHA-256 is checked before promotion).
+
+Two invariants hold: **`main` runs no failable build** — it only promotes the
+already-built beta binary — and **no CI job commits back to `main`**. The aarch64
+binary is published as a GitHub Release asset, `sst_cam_firmware-<tag>-aarch64`.
+`deploy/install.sh` installs a released (stable or beta) binary onto a Jetson.
+See `CLAUDE.md` and `docs/ci/` for the workflow, ruleset, and version-reset
+runbooks.
+
+---
+
 ## Related repos
 
 - [`sst-cam-app`](https://github.com/ScoutSportTechnology/sst-cam-app) — Flutter companion app (BLE control + WiFi preview)

@@ -6,7 +6,13 @@ This directory ships the manual deployment path for the firmware:
 - `sst-cam-firmware.service` — the systemd unit that supervises the binary.
 
 The firmware is distributed as a **private** GitHub Release asset named
-`sst_cam_firmware-<tag>-aarch64` (built by `.github/workflows/release.yml`).
+`sst_cam_firmware-<tag>-aarch64`. `install.sh` installs a **released** binary —
+either a **stable** `vX.Y.Z` (promoted to `main` by
+`.github/workflows/promote.yml`) or a **beta** `vX.Y.Z-beta.N` (cut on a
+`release/X.Y.Z` branch by `.github/workflows/release-beta.yml`) for on-device
+hardware sign-off. The stable asset is the exact, SHA-256-verified beta binary
+re-published unchanged — `main` never rebuilds. (See `CLAUDE.md` and `docs/ci/`
+for the full branch model and maturity ladder.)
 
 ---
 
@@ -60,10 +66,12 @@ Install the latest release:
 sudo GITHUB_TOKEN=ghp_xxx deploy/install.sh
 ```
 
-Install a specific version:
+Install a specific version (a stable `vX.Y.Z` or a beta `vX.Y.Z-beta.N` for
+hardware sign-off):
 
 ```bash
 sudo GITHUB_TOKEN=ghp_xxx deploy/install.sh --version v1.2.3
+sudo GITHUB_TOKEN=ghp_xxx deploy/install.sh --version v0.1.0-beta.1
 ```
 
 If you stored the token in a file:
