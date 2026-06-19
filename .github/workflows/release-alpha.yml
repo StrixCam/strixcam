@@ -1,12 +1,38 @@
 # =============================================================================
-# PR CI — format + tidy + tests, run INSIDE the repo devcontainer.
+# release-alpha — the single product workflow that OWNS the `develop` branch.
 #
-# WHY the devcontainer: the Jetson aarch64 cross-build is only correct inside
-# the repo's devcontainer image (custom Bootlin toolchain, the order-sensitive
-# L4T sysroot prep scripts under .devcontainer/sysroot/, host-protoc codegen,
-# OpenCV SONAME pin, Conan cache). We reuse that image via devcontainers/ci
-# rather than re-deriving the toolchain here, so every cross-build gotcha stays
-# solved in exactly one place (see CLAUDE.md).
+# It carries two responsibilities, gated by event type:
+#
+#   * PULL REQUESTS into `develop` run the CI CHECK jobs (`ci-scripts`, `format`,
+#     `tidy`, `test`). These four job `name:` values are the REQUIRED STATUS
+#     CHECK contexts wired into the branch rulesets (see docs/ci/rulesets.md) —
+#     keep them BYTE-IDENTICAL; renaming silently breaks branch protection.
+#
+#   * PUSHES to `develop` (a merge) run the alpha RELEASE job: resolve the next
+#     `vX.Y.Z-alpha.N` tag from Conventional Commits, cross-build the aarch64
+#     binary inside the devcontainer, and publish it as a PRERELEASE asset.
+#
+# The check jobs are PR-only (`if: github.event_name == 'pull_request'`) and the
+# release job is push/dispatch-only (`if: github.event_name != 'pull_request'`),
+# so on any single run exactly one half is active. The release job deliberately
+# does NOT `needs:` the check jobs — they are SKIPPED on push, and a `needs:` on a
+# skipped job would block the release. The PR's own green checks are the gate.
+#
+# WHY the devcontainer: the Jetson aarch64 cross-build is only correct inside the
+# repo's devcontainer image (custom Bootlin toolchain, the order-sensitive L4T
+# sysroot prep scripts under .devcontainer/sysroot/, host-protoc codegen, OpenCV
+# SONAME pin, Conan cache). We reuse that image via devcontainers/ci rather than
+# re-deriving the toolchain here, so every cross-build gotcha stays solved in
+# exactly one place (see CLAUDE.md).
+#
+# This is the FIRST rung of the SST maturity ladder:
+#   alpha  = devcontainer cross-build + container ctest in isolation (here)
+#   beta   = the aarch64 binary flashed to a real Jetson + tested with the app
+#   stable = shipped (release.yml on main, no rebuild)
+#
+# The aarch64 cross-build runs HERE on `develop`, never on `main` (the R3
+# "main never builds" guarantee). Default GITHUB_TOKEN only (contents:write);
+# the "Release Tags" ruleset permits creating compliant semver tags.
 #
 # -----------------------------------------------------------------------------
 # !!! KNOWN RISK — VALIDATE ON FIRST RUN !!!
@@ -14,35 +40,47 @@
 # The devcontainer base image is nvcr.io/nvidia/jetpack-...:6.1 and the first
 # build unpacks a ~37 GB L4T targetfs sysroot (~20 min cold). A standard
 # GitHub-HOSTED runner (~14 GB free disk, 6h wall limit) MAY NOT have the disk
-# headroom or time to unpack the sysroot and build the image. If this job fails
-# on disk-full / timeout during the devcontainer build, the expected remedy is a
+# headroom or time to unpack the sysroot and build the image. If a job fails on
+# disk-full / timeout during the devcontainer build, the expected remedy is a
 # SELF-HOSTED runner that keeps /l4t/targetfs and the built image warm between
-# runs. This is anticipated and must be measured on the very first CI run.
-#
-# The job names below (`format`, `tidy`, `test`) are the REQUIRED STATUS CHECKS
-# wired into the branch rulesets (see docs/ci/rulesets.md) — keep them stable.
-#
-# These run on PRs into `develop` and `release/**` — the integration and
-# release-candidate branches. They are deliberately NOT on `main` PRs: a
-# `release/X.Y.Z -> main` PR's head SHA already carries the green
-# format/tidy/test from its `release/*` push, and the heavy aarch64 cross-build
-# must not re-run on `main` (see docs/ci/rulesets.md for the open caveat).
+# runs. Re-run with `gh run rerun <id> --failed`. Anticipated; measure on first run.
 # =============================================================================
-name: CI
+name: release-alpha
 
 on:
   pull_request:
-    branches: [develop, "release/**"]
+    branches: [develop]
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Force base version eg v0.1.0 (seeds vX.Y.Z-alpha.N)"
+        required: false
+        default: ""
+      bump:
+        description: "Force base bump level (overrides commit scan)"
+        type: choice
+        options: ["", patch, minor, major]
+        default: ""
 
-# Cancel superseded runs on the same ref to save runner time.
+# Cancel superseded runs on the same ref to save runner time. A queued dispatch
+# tag-and-build is cheaper to let finish than to half-publish, but a superseded
+# develop push/PR run is safe to cancel.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: release-alpha-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  # ===========================================================================
+  # CI CHECK JOBS — PR-only. The job names below (`ci-scripts`, `format`,
+  # `tidy`, `test`) are the REQUIRED STATUS CHECKS wired into the branch
+  # rulesets (see docs/ci/rulesets.md) — keep them BYTE-IDENTICAL.
+  # ===========================================================================
+
   # ---------------------------------------------------------------------------
   # ci-scripts — gate the shared release version-math script: shellcheck +
   # its own unit-test harness. Host-side only (no devcontainer). This is a
@@ -51,6 +89,7 @@ jobs:
   # ---------------------------------------------------------------------------
   ci-scripts:
     name: ci-scripts
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -67,6 +106,7 @@ jobs:
   # ---------------------------------------------------------------------------
   format:
     name: format
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
@@ -108,6 +148,7 @@ jobs:
   # ---------------------------------------------------------------------------
   tidy:
     name: tidy
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     # Hard gate: the cross-toolchain flags (scripts/tidy-args.sh) resolve all
     # std/system headers, the tree is clean, and .clang-tidy promotes every
@@ -193,6 +234,7 @@ jobs:
   # ---------------------------------------------------------------------------
   test:
     name: test
+    if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
       # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
@@ -240,3 +282,94 @@ jobs:
             cmake --build --preset test
             QEMU_LD_PREFIX=/l4t/targetfs ctest --preset test --output-on-failure \
               -E 'CaptureSingleFrameAndLog|AdvertisesOnRealBluez|FormsAutonomousGroupOwner|HttpServesByteRangeWithBearerToken'
+
+  # ===========================================================================
+  # ALPHA RELEASE JOBS — push/dispatch-only. NOT gated behind the check jobs:
+  # the checks are SKIPPED on push, so a `needs:` on them would block release.
+  # The PR's own green checks (run above on the PR) are the gate.
+  # ===========================================================================
+  resolve:
+    name: resolve alpha version
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.ver.outputs.released }}
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Resolve next alpha tag (conventional-commit aware)
+        id: ver
+        env:
+          IN_VERSION: ${{ inputs.version }}
+          IN_BUMP: ${{ inputs.bump }}
+        run: ./scripts/ci/resolve-version.sh alpha
+
+  build-and-upload:
+    name: cross-build alpha binary
+    needs: resolve
+    if: ${{ github.event_name != 'pull_request' && needs.resolve.outputs.released == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.resolve.outputs.tag }}
+    steps:
+      # Reclaim ~30GB so the JetPack base image + L4T sysroot fit on a hosted
+      # runner (else ENOSPC). Self-hosted runner needed if this still fails.
+      - name: Free up disk space (host)
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
+        with:
+          tool-cache: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Checkout (with proto submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore Conan cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.conan2
+          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
+          restore-keys: |
+            conan-${{ runner.os }}-
+
+      - name: cmake release preset + build
+        uses: devcontainers/ci@v0.3
+        with:
+          # Build the devcontainer locally — no ghcr imageName/cacheFrom (needs
+          # registry login + push perms; was failing at `docker tag ghcr.io/...`).
+          # Deferred caching optimization.
+          runCmd: |
+            set -euo pipefail
+            cmake --preset release
+            cmake --build --preset release
+            file build/release/bin/sst_cam_firmware
+            test -x build/release/bin/sst_cam_firmware
+
+      - name: Stage versioned asset
+        id: asset
+        run: |
+          set -euo pipefail
+          asset="sst_cam_firmware-${TAG}-aarch64"
+          cp build/release/bin/sst_cam_firmware "${asset}"
+          echo "path=${asset}" >> "$GITHUB_OUTPUT"
+
+      # Atomic publish: create the prerelease AND attach the binary in ONE step.
+      # softprops creates the Release+tag if missing. Splitting create-then-upload
+      # let a cancel between the two leave a dangling asset-less immutable tag,
+      # bricking the alpha line for this base — so this is deliberately one step.
+      - name: Publish alpha prerelease (create + attach binary, atomic)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ env.TAG }}
+          prerelease: true
+          files: ${{ steps.asset.outputs.path }}
+          fail_on_unmatched_files: true
