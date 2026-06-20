@@ -141,8 +141,8 @@ expect_eq "alpha perf -> v0.1.1-alpha.1" "$(run "$r" alpha)" "v0.1.1-alpha.1"
 
 # --- alpha: IN_BUMP=minor / =patch override paths ----------------------------
 r="$(new_repo)"; commit "$r" "feat: base"; tag "$r" v0.1.0; commit "$r" "docs: x"
-expect_eq "alpha IN_BUMP=minor -> v0.2.0-alpha.1" "$(IN_BUMP=minor run "$r" alpha)" "v0.2.0-alpha.1"
-expect_eq "alpha IN_BUMP=patch -> v0.1.1-alpha.1" "$(IN_BUMP=patch run "$r" alpha)" "v0.1.1-alpha.1"
+expect_eq "alpha IN_BUMP=minor -> v0.2.0-alpha.1" "$(IN_BUMP="minor" run "$r" alpha)" "v0.2.0-alpha.1"
+expect_eq "alpha IN_BUMP=patch -> v0.1.1-alpha.1" "$(IN_BUMP="patch" run "$r" alpha)" "v0.1.1-alpha.1"
 
 # --- alpha: invalid IN_BUMP -> non-zero exit ---------------------------------
 r="$(new_repo)"; commit "$r" "feat: a"
@@ -167,8 +167,11 @@ expect_eq "stable emits released=true" "$(run_released "$r" stable 0.1.0)" "true
 r="$(new_repo)"; commit "$r" "feat: a"
 gho="$(mktemp)"
 ( cd "$r" && GITHUB_OUTPUT="$gho" "$RESOLVE" alpha ) >/dev/null
-grep -qx 'tag=v0.1.0-alpha.1' "$gho" && grep -qx 'released=true' "$gho" \
-  && pass=$((pass + 1)) || { fail=$((fail + 1)); printf '  FAIL: GITHUB_OUTPUT keys not written as expected\n'; }
+if grep -qx 'tag=v0.1.0-alpha.1' "$gho" && grep -qx 'released=true' "$gho"; then
+  pass=$((pass + 1))
+else
+  fail=$((fail + 1)); printf '  FAIL: GITHUB_OUTPUT keys not written as expected\n'
+fi
 
 # --- stable: emits bare vX.Y.Z -----------------------------------------------
 r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-beta.2

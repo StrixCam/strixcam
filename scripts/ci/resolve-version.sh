@@ -99,11 +99,11 @@ bump_base() {
     fi
     log="$(git log --format='%s%n%b' "${range}" 2>/dev/null || true)"
     if echo "$log" | grep -qiE '^BREAKING[ -]CHANGE' || echo "$log" | grep -qE '^[a-z]+(\(.+\))?!:'; then
-      bump=major
+      bump="major"
     elif echo "$log" | grep -qE '^feat(\(.+\))?:'; then
-      bump=minor
+      bump="minor"
     elif echo "$log" | grep -qE '^(fix|perf)(\(.+\))?:'; then
-      bump=patch
+      bump="patch"
     fi
   fi
 
