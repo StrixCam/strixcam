@@ -5,7 +5,7 @@ This directory ships the manual deployment path for the firmware:
 - `install.sh` — fetches a GitHub Release asset and swaps the running binary, idempotently and safely.
 - `sst-cam-firmware.service` — the systemd unit that supervises the binary.
 
-The firmware is distributed as a **private** GitHub Release asset named
+The firmware is distributed as a **public** GitHub Release asset named
 `sst_cam_firmware-<tag>-aarch64`. `install.sh` installs a **released** binary —
 either a **stable** `vX.Y.Z` (promoted to `main` by
 `.github/workflows/release.yml`) or a **beta** `vX.Y.Z-beta.N` (cut on a
@@ -43,38 +43,37 @@ sudo systemctl enable sst-cam-firmware
 
 The service won't start successfully until a binary is installed (next step).
 
-### 3. Provide the GitHub auth token
+### 3. (Optional) GitHub token
 
-The repo is private, so downloading a Release asset requires a token with read
-access to the repo's releases (a fine-grained PAT scoped to the repo, a classic
-PAT, or a deploy token — **operator/security decision, see the plan**).
-
-Pass it inline to `install.sh` (it is read from the `GITHUB_TOKEN` environment
-variable). Avoid persisting it in shell history; prefer a root-only file:
+The repo is **public**, so Release assets download with **no auth** — no token
+is needed. Set `GITHUB_TOKEN` only if you hit the 60 req/hr unauthenticated
+GitHub API rate limit (e.g. re-running often); it is sent on the metadata
+request only, never on the asset download. Prefer a root-only file over shell
+history:
 
 ```bash
-sudo install -m 600 /dev/stdin /etc/sst-cam/github_token <<< 'ghp_xxx'   # example
+sudo install -m 600 /dev/stdin /etc/sst-cam/github_token <<< 'ghp_xxx'   # optional
 ```
 
 ---
 
 ## Updating the firmware
 
-Install the latest release:
+Install the latest release (no token needed — public repo):
 
 ```bash
-sudo GITHUB_TOKEN=ghp_xxx deploy/install.sh
+sudo deploy/install.sh
 ```
 
 Install a specific version (a stable `vX.Y.Z` or a beta `vX.Y.Z-beta.N` for
 hardware sign-off):
 
 ```bash
-sudo GITHUB_TOKEN=ghp_xxx deploy/install.sh --version v1.2.3
-sudo GITHUB_TOKEN=ghp_xxx deploy/install.sh --version v0.1.0-beta.1
+sudo deploy/install.sh --version v1.2.3
+sudo deploy/install.sh --version v0.1.0-beta.1
 ```
 
-If you stored the token in a file:
+If you set up an optional token file (rate-limit relief only):
 
 ```bash
 sudo GITHUB_TOKEN="$(cat /etc/sst-cam/github_token)" deploy/install.sh --version v1.2.3
@@ -82,9 +81,8 @@ sudo GITHUB_TOKEN="$(cat /etc/sst-cam/github_token)" deploy/install.sh --version
 
 ### What `install.sh` does
 
-1. **Fails early** (before stopping the service) if the token is missing, the
-   download fails, or the asset is not a valid aarch64 ELF — no downtime on a
-   bad fetch.
+1. **Fails early** (before stopping the service) if the download fails or the
+   asset is not a valid aarch64 ELF — no downtime on a bad fetch.
 2. **No-op** if the installed binary already matches the release (sha256) — no
    needless restart.
 3. Stops the service, **atomically** swaps in the new binary (keeping a
@@ -105,5 +103,5 @@ Install `jq` if missing: `sudo apt-get install -y jq`.
 - The service name (`sst-cam-firmware`) and install path
   (`/opt/sst-cam/bin/sst_cam_firmware`) match what is hard-coded in
   `install.sh` and the unit. Change both together if the device layout differs.
-- The chosen token strategy grants only release read access and is stored
-  root-only on the device.
+- A token is optional (public repo); if you use one for rate limits, store it
+  root-only on the device and grant only release read access.
