@@ -4,11 +4,14 @@
 # Release, idempotently and safely.
 #
 # Resolves a Release asset (named sst_cam_firmware-<tag>-aarch64) from the
-# PRIVATE repo ScoutSportTechnology/sst-cam-firmware via the authenticated
-# GitHub API, then performs a safe swap:
+# PUBLIC repo ScoutSportTechnology/sst-cam-firmware via the GitHub API, then
+# performs a safe swap. GITHUB_TOKEN is OPTIONAL: the repo is public, so the
+# asset downloads over its public browser_download_url with no auth. A token is
+# only useful to lift the 60 req/hr unauthenticated GitHub API rate limit, and
+# is sent on the metadata request only — never on the asset download.
 #
-#   1. Fail early (BEFORE touching the running service) on missing auth token,
-#      failed download, or a file that is not a valid aarch64 ELF.
+#   1. Fail early (BEFORE touching the running service) on a failed download or
+#      a file that is not a valid aarch64 ELF.
 #   2. If the installed binary already matches the new one (sha256) -> no-op.
 #   3. systemctl stop  <service>
 #   4. Atomic swap: download to a temp path on the SAME filesystem, `mv` into
@@ -18,8 +21,9 @@
 #      exit non-zero. Otherwise print `systemctl is-active`.
 #
 # Usage:
-#   sudo GITHUB_TOKEN=ghp_xxx ./install.sh                 # latest release
-#   sudo GITHUB_TOKEN=ghp_xxx ./install.sh --version v1.2.3
+#   sudo ./install.sh                          # latest release (public, no token)
+#   sudo ./install.sh --version v1.2.3
+#   sudo GITHUB_TOKEN=ghp_xxx ./install.sh     # optional: avoids API rate limit
 # =============================================================================
 set -euo pipefail
 
@@ -44,15 +48,16 @@ die() {
 # --- Argument parsing --------------------------------------------------------
 usage() {
   cat <<'EOF'
-Usage: sudo GITHUB_TOKEN=<token> ./install.sh [--version vX.Y.Z]
+Usage: sudo ./install.sh [--version vX.Y.Z]
 
 Options:
   --version vX.Y.Z   Install a specific release tag (default: latest).
   -h, --help         Show this help.
 
 Environment:
-  GITHUB_TOKEN       Required. A token with read access to the private repo's
-                     releases (fine-grained PAT / classic PAT / deploy token).
+  GITHUB_TOKEN       Optional. The repo is public, so releases download without
+                     auth. Set a token only to avoid the 60 req/hr
+                     unauthenticated GitHub API rate limit.
 EOF
 }
 
@@ -78,14 +83,20 @@ while [ "$#" -gt 0 ]; do
 done
 
 # --- Preconditions (fail BEFORE touching the service) ------------------------
-[ -n "${GITHUB_TOKEN:-}" ] || die "GITHUB_TOKEN is not set. Export a token with read access to ${REPO} releases."
-
 for cmd in curl jq sha256sum file systemctl install mv cp; do
   command -v "$cmd" >/dev/null 2>&1 || die "required command not found: $cmd"
 done
 
-AUTH_HEADER="Authorization: Bearer ${GITHUB_TOKEN}"
 API_VERSION_HEADER="X-GitHub-Api-Version: 2022-11-28"
+
+# GITHUB_TOKEN is optional (public repo). When set, send it on API metadata
+# requests only — it lifts the unauthenticated rate limit. The asset download
+# uses the public browser_download_url and never needs auth.
+auth_args=()
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  auth_args=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+  log "Using GITHUB_TOKEN for API requests (rate-limit relief)."
+fi
 
 # Temp workspace on the SAME filesystem as INSTALL_PATH so the final mv is
 # atomic. Created under INSTALL_DIR's parent; cleaned up on exit.
@@ -103,35 +114,34 @@ fi
 
 log "Resolving release '${VERSION}' from ${REPO} ..."
 release_json="$(curl -fsSL \
-  -H "$AUTH_HEADER" \
+  "${auth_args[@]}" \
   -H "Accept: application/vnd.github+json" \
   -H "$API_VERSION_HEADER" \
-  "$release_url")" || die "failed to query release '${VERSION}' (check token / network / tag exists)"
+  "$release_url")" || die "failed to query release '${VERSION}' (check network / tag exists)"
 
 resolved_tag="$(printf '%s' "$release_json" | jq -r '.tag_name // empty')"
 [ -n "$resolved_tag" ] || die "could not determine tag for release '${VERSION}'"
 log "Resolved tag: ${resolved_tag}"
 
 # --- Find the aarch64 asset --------------------------------------------------
-# Asset name convention: sst_cam_firmware-<tag>-aarch64 (published by alpha.yml and release-beta.yml)
-asset_api_url="$(printf '%s' "$release_json" \
-  | jq -r '.assets[] | select(.name | endswith("-aarch64")) | .url' \
+# Asset name convention: sst_cam_firmware-<tag>-aarch64 (published by
+# release-alpha.yml and release-beta.yml). Public repo -> the browser download
+# URL serves the raw asset with no auth.
+asset_url="$(printf '%s' "$release_json" \
+  | jq -r '.assets[] | select(.name | endswith("-aarch64")) | .browser_download_url' \
   | head -n1)"
 asset_name="$(printf '%s' "$release_json" \
   | jq -r '.assets[] | select(.name | endswith("-aarch64")) | .name' \
   | head -n1)"
-[ -n "$asset_api_url" ] || die "no '*-aarch64' asset found on release ${resolved_tag}"
+[ -n "$asset_url" ] || die "no '*-aarch64' asset found on release ${resolved_tag}"
 log "Found asset: ${asset_name}"
 
-# --- Download the asset (binary stream via the asset API) --------------------
+# --- Download the asset (public browser_download_url, no auth) ----------------
 new_bin="${TMP_DIR}/sst_cam_firmware"
 log "Downloading ${asset_name} ..."
 curl -fsSL \
-  -H "$AUTH_HEADER" \
-  -H "Accept: application/octet-stream" \
-  -H "$API_VERSION_HEADER" \
   -o "$new_bin" \
-  "$asset_api_url" || die "download failed for ${asset_name}"
+  "$asset_url" || die "download failed for ${asset_name}"
 
 [ -s "$new_bin" ] || die "downloaded file is empty: ${asset_name}"
 
