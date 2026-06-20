@@ -345,7 +345,6 @@ jobs:
             set -euo pipefail
             cmake --preset release
             cmake --build --preset release
-            file build/release/bin/sst_cam_firmware
             test -x build/release/bin/sst_cam_firmware
 
       - name: Stage versioned asset + compute SHA-256
