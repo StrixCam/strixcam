@@ -78,6 +78,39 @@ max_counter() {
 
 valid_base() { echo "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; }
 
+# Highest version tag of ANY kind (stable or prerelease) — the last mint point.
+latest_any_tag() {
+  git tag -l 'v*' --sort=-v:refname | head -1 || true
+}
+
+# Echo "<tag>..HEAD" when the tag exists and is non-empty, else "HEAD".
+range_since() {
+  local tag="$1"
+  if [ -n "$tag" ] && git rev-parse -q --verify "refs/tags/${tag}" >/dev/null 2>&1; then
+    echo "${tag}..HEAD"
+  else
+    echo "HEAD"
+  fi
+}
+
+# Highest Conventional-Commit bump across a git range; echoes major|minor|patch
+# (empty when none). Uses here-strings, NOT `echo "$log" | grep -q`: under
+# `set -o pipefail` a `grep -q` early-exit closes the pipe, `echo` takes SIGPIPE,
+# and the *matched* pattern is misreported as a pipeline failure once the log
+# exceeds the pipe buffer (~64 KB). That made release detection silently
+# size-dependent (small repos minted, large repos never did).
+highest_bump() {
+  local range="$1" log
+  log="$(git log --format='%s%n%b' "$range" 2>/dev/null || true)"
+  if grep -qiE '^BREAKING[ -]CHANGE' <<<"$log" || grep -qE '^[a-z]+(\(.+\))?!:' <<<"$log"; then
+    echo major
+  elif grep -qE '^feat(\(.+\))?:' <<<"$log"; then
+    echo minor
+  elif grep -qE '^(fix|perf)(\(.+\))?:' <<<"$log"; then
+    echo patch
+  fi
+}
+
 # Echo "<base>|<released>" for alpha mode given the latest stable tag.
 bump_base() {
   local latest="$1"
@@ -91,20 +124,10 @@ bump_base() {
       echo "::error::invalid IN_BUMP '$bump' (want major|minor|patch)" >&2; exit 2 ;;
     esac
   else
-    local range log
-    if [ -n "$latest" ] && git rev-parse -q --verify "refs/tags/${latest}" >/dev/null 2>&1; then
-      range="${latest}..HEAD"
-    else
-      range="HEAD"
-    fi
-    log="$(git log --format='%s%n%b' "${range}" 2>/dev/null || true)"
-    if echo "$log" | grep -qiE '^BREAKING[ -]CHANGE' || echo "$log" | grep -qE '^[a-z]+(\(.+\))?!:'; then
-      bump="major"
-    elif echo "$log" | grep -qE '^feat(\(.+\))?:'; then
-      bump="minor"
-    elif echo "$log" | grep -qE '^(fix|perf)(\(.+\))?:'; then
-      bump="patch"
-    fi
+    # Base version = highest bump over commits since the latest *stable* tag
+    # (all history when none, so the first feat yields 0.1.0). This sets the
+    # X.Y.Z; whether to actually mint is gated separately in alpha mode.
+    bump="$(highest_bump "$(range_since "$latest")")"
   fi
 
   if [ -z "$bump" ]; then echo "|false"; return; fi
@@ -128,6 +151,13 @@ case "$mode" in
       out="$(bump_base "$(latest_stable)")"
       base="${out%%|*}"
       [ "${out##*|}" = "true" ] || { emit "" false; exit 0; }
+      # Mint only when a NEW releasable commit landed since the last tag of any
+      # kind. The base scan above spans all history pre-stable, so without this
+      # gate a docs/chore/ci-only push would re-mint forever (it keeps re-finding
+      # the original feat). IN_BUMP forces a bump, so it intentionally bypasses.
+      if [ -z "${IN_BUMP:-}" ] && [ -z "$(highest_bump "$(range_since "$(latest_any_tag)")")" ]; then
+        emit "" false; exit 0
+      fi
     fi
     n="$(max_counter "$base" alpha)"
     emit "v${base}-alpha.$((n + 1))" true
