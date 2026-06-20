@@ -88,8 +88,11 @@ expect_eq "alpha docs-only released" "$(run_released "$r" alpha)" "false"
 expect_eq "alpha docs-only tag empty" "$(run "$r" alpha)" ""
 
 # --- alpha: numeric precedence -alpha.10 > -alpha.9 -> .11 -------------------
+# (trailing feat so there IS a releasable commit since the last tag — the mint
+# gate requires new work; this case exercises counter precedence, not the gate.)
 r="$(new_repo)"; commit "$r" "feat: a"
 for n in 1 2 9 10; do tag "$r" "v0.1.0-alpha.$n"; done
+commit "$r" "feat: more"
 expect_eq "alpha numeric precedence -> alpha.11" "$(run "$r" alpha)" "v0.1.0-alpha.11"
 
 # --- alpha: IN_VERSION seed -> exactly that base, alpha.1 --------------------
@@ -120,15 +123,18 @@ expect_eq "beta ignores other-base counter -> v0.1.0-beta.1" "$(run "$r" beta 0.
 
 # --- malformed counter: non-numeric N must be ignored, not crash -------------
 r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-alpha.2; tag "$r" v0.1.0-alpha.x
+commit "$r" "feat: b"
 expect_eq "alpha ignores non-numeric .x counter -> v0.1.0-alpha.3" "$(run "$r" alpha)" "v0.1.0-alpha.3"
 
 # --- malformed counter: only a non-numeric tag exists -> start at .1 ---------
 r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-alpha.beta
+commit "$r" "feat: b"
 expect_eq "alpha only-malformed counter -> v0.1.0-alpha.1" "$(run "$r" alpha)" "v0.1.0-alpha.1"
 
 # --- malformed counter: multi-dot tag must not mis-sort the counter ----------
 r="$(new_repo)"; commit "$r" "feat: a"
 tag "$r" v0.1.0-alpha.9; tag "$r" v0.1.0-alpha.10.2
+commit "$r" "feat: b"
 expect_eq "alpha ignores multi-dot alpha.10.2 -> v0.1.0-alpha.10" "$(run "$r" alpha)" "v0.1.0-alpha.10"
 
 # --- beta malformed counter ignored ------------------------------------------
@@ -193,6 +199,37 @@ if ( cd "$r" && IN_VERSION=0.1.0 "$RESOLVE" alpha ) >/dev/null 2>&1; then
 else
   pass=$((pass + 1))
 fi
+
+# --- mint gate: nothing new since the last alpha -> released=false ------------
+# (re-running on the same HEAD must not re-mint; the old all-history scan did.)
+r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-alpha.1
+expect_eq "alpha no new commit since last tag -> released=false" "$(run_released "$r" alpha)" "false"
+expect_eq "alpha no new commit since last tag -> tag empty" "$(run "$r" alpha)" ""
+
+# --- mint gate: docs-only since last alpha, NO stable -> released=false -------
+# The pre-stable case that made proto re-mint on every docs/ci push: the base
+# scan still sees the original feat, but nothing releasable is new since alpha.1.
+r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-alpha.1; commit "$r" "docs: x"
+expect_eq "alpha docs-only since last alpha (pre-stable) -> released=false" "$(run_released "$r" alpha)" "false"
+
+# --- mint gate: feat since last alpha (pre-stable) -> mints next --------------
+r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-alpha.1; commit "$r" "feat: b"
+expect_eq "alpha feat since last alpha -> released=true" "$(run_released "$r" alpha)" "true"
+
+# --- mint gate: IN_VERSION seed bypasses the gate even with no new commit -----
+r="$(new_repo)"; commit "$r" "feat: a"; tag "$r" v0.1.0-alpha.1; commit "$r" "docs: x"
+expect_eq "alpha IN_VERSION seed bypasses gate -> v0.2.0-alpha.1" \
+  "$(IN_VERSION=v0.2.0 run "$r" alpha)" "v0.2.0-alpha.1"
+
+# --- large-log regression: feat at HEAD, big body behind it -> released=true --
+# Guards the echo|grep SIGPIPE/pipefail bug: a >64KB log made grep -q's early
+# match register as a pipeline failure, so a real feat read as "no release".
+r="$(new_repo)"
+big="$(head -c 70000 </dev/zero | tr '\0' x)"
+git -C "$r" commit -q --allow-empty -m "chore: bulky old commit" -m "$big"
+commit "$r" "feat: recent"
+expect_eq "alpha large-log feat-at-HEAD (pipefail SIGPIPE regression) -> released=true" \
+  "$(run_released "$r" alpha)" "true"
 
 echo
 echo "resolve-version: ${pass} passed, ${fail} failed"
