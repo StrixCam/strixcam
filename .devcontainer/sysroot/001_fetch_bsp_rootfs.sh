@@ -48,6 +48,20 @@ rm -f "$RFS_TBZ"
 # blessed step; with the sample rootfs extracted into ./rootfs (its default
 # target) it needs no -r arg. It chroots aarch64 helpers, so qemu-user-static
 # must be registered (it is, via the Dockerfile's qemu-user-static install).
+# apply_binaries chroots into the arm64 rootfs to run dpkg/post-install scripts,
+# which requires qemu-aarch64 registered in the HOST's binfmt_misc. Verify now so
+# a missing registration surfaces as an actionable message instead of the cryptic
+# "chroot: failed to run command 'dpkg': Exec format error" (exit 126) mid-apply.
+echo "[001] Checking host can execute aarch64 binaries (binfmt) ..."
+if ! chroot Linux_for_Tegra/rootfs /bin/true 2>/dev/null; then
+    echo "ERROR: cannot execute aarch64 binaries inside the rootfs chroot." >&2
+    echo "  The build host is missing qemu-aarch64 binfmt_misc registration." >&2
+    echo "  Docker Desktop registers it automatically; CI uses docker/setup-qemu-action." >&2
+    echo "  On a plain Linux host, register it once with:" >&2
+    echo "    docker run --privileged --rm tonistiigi/binfmt --install arm64" >&2
+    exit 1
+fi
+
 echo "[001] Applying NVIDIA Tegra binaries to the rootfs ..."
 ( cd Linux_for_Tegra && ./apply_binaries.sh )
 

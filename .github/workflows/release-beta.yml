@@ -117,6 +117,13 @@ jobs:
         with:
           submodules: recursive
 
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 in the host binfmt_misc, else "Exec format error" (126).
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: clang-format --dry-run --Werror
         uses: devcontainers/ci@v0.3
         with:
@@ -187,6 +194,13 @@ jobs:
           restore-keys: |
             conan-${{ runner.os }}-
 
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 in the host binfmt_misc, else "Exec format error" (126).
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: clang-tidy (-p build/test)
         uses: devcontainers/ci@v0.3
         with:
@@ -252,6 +266,13 @@ jobs:
           key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
           restore-keys: |
             conan-${{ runner.os }}-
+
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 in the host binfmt_misc, else "Exec format error" (126).
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: cmake test preset + build + ctest (qemu)
         uses: devcontainers/ci@v0.3
@@ -334,6 +355,13 @@ jobs:
           key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
           restore-keys: |
             conan-${{ runner.os }}-
+
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 in the host binfmt_misc, else "Exec format error" (126).
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: cmake release preset + build
         uses: devcontainers/ci@v0.3

@@ -127,6 +127,15 @@ jobs:
         with:
           submodules: recursive
 
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 registered in the host's binfmt_misc, or the chroot
+      # fails with "Exec format error" (exit 126). Hosted runners don't register
+      # it by default; Docker Desktop does, which is why local builds pass.
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: clang-format --dry-run --Werror
         uses: devcontainers/ci@v0.3
         with:
@@ -174,6 +183,15 @@ jobs:
           submodules: recursive
           # Full history so the floor-NOLINT guard can diff against the PR base.
           fetch-depth: 0
+
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 registered in the host's binfmt_misc, or the chroot
+      # fails with "Exec format error" (exit 126). Hosted runners don't register
+      # it by default; Docker Desktop does, which is why local builds pass.
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       # Self-test the guard before trusting it: asserts every bypass class
       # (bare/wildcard/non-leading-list NOLINT, faked marker) is still caught.
@@ -255,6 +273,15 @@ jobs:
         with:
           submodules: recursive
 
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 registered in the host's binfmt_misc, or the chroot
+      # fails with "Exec format error" (exit 126). Hosted runners don't register
+      # it by default; Docker Desktop does, which is why local builds pass.
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Restore Conan cache
         uses: actions/cache@v4
         with:
@@ -331,6 +358,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 registered in the host's binfmt_misc, or the chroot
+      # fails with "Exec format error" (exit 126). Hosted runners don't register
+      # it by default; Docker Desktop does, which is why local builds pass.
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Restore Conan cache
         uses: actions/cache@v4
