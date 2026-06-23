@@ -19,7 +19,7 @@
 # skipped job would block the release. The PR's own green checks are the gate.
 #
 # WHY the devcontainer: the Jetson aarch64 cross-build is only correct inside the
-# repo's devcontainer image (custom Bootlin toolchain, the order-sensitive L4T
+# repo's devcontainer image (gcc-13 aarch64 cross toolchain, the order-sensitive L4T
 # sysroot prep scripts under .devcontainer/sysroot/, host-protoc codegen, OpenCV
 # SONAME pin, Conan cache). We reuse that image via devcontainers/ci rather than
 # re-deriving the toolchain here, so every cross-build gotcha stays solved in
@@ -37,13 +37,14 @@
 # -----------------------------------------------------------------------------
 # !!! KNOWN RISK — VALIDATE ON FIRST RUN !!!
 # -----------------------------------------------------------------------------
-# The devcontainer base image is nvcr.io/nvidia/jetpack-...:6.1 and the first
-# build unpacks a ~37 GB L4T targetfs sysroot (~20 min cold). A standard
-# GitHub-HOSTED runner (~14 GB free disk, 6h wall limit) MAY NOT have the disk
-# headroom or time to unpack the sysroot and build the image. If a job fails on
-# disk-full / timeout during the devcontainer build, the expected remedy is a
-# SELF-HOSTED runner that keeps /l4t/targetfs and the built image warm between
-# runs. Re-run with `gh run rerun <id> --failed`. Anticipated; measure on first run.
+# The devcontainer base is ubuntu:24.04 and the first build downloads NVIDIA's
+# L4T r39.2 BSP + sample rootfs (~3 GB) and assembles the JetPack 7.2 sysroot
+# via apply_binaries, then layers ~69 noble -dev .debs (~10-15 min cold, peak
+# disk ~15-20 GB). A standard GitHub-HOSTED runner (~14 GB free disk, 6h wall)
+# MAY NOT have the headroom; the `free-disk-space` step reclaims ~30 GB first.
+# If a job still fails on disk-full / timeout, the remedy is a SELF-HOSTED runner
+# that keeps the assembled sysroot + image warm between runs. Re-run with
+# `gh run rerun <id> --failed`. Measure peak disk on first run.
 # =============================================================================
 name: release-alpha
 
@@ -109,8 +110,8 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
-      # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
-      # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
+      # Assembling the JetPack 7.2 sysroot (~3GB BSP download + extracted r39.2
+      # rootfs + ~69 noble debs) is disk-heavy on a stock hosted runner. Reclaim ~30GB
       # of preinstalled toolchains first. If this still ENOSPCs, a self-hosted
       # runner is required (see header note).
       - name: Free up disk space (host)
@@ -153,10 +154,10 @@ jobs:
     # Hard gate: the cross-toolchain flags (scripts/tidy-args.sh) resolve all
     # std/system headers, the tree is clean, and .clang-tidy promotes every
     # diagnostic to an error via WarningsAsErrors. A new lint violation fails the
-    # PR. clang-tidy is version-locked to clang-tidy-14 (see .clang-tidy).
+    # PR. clang-tidy is noble clang-tidy v18 (see .clang-tidy).
     steps:
-      # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
-      # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
+      # Assembling the JetPack 7.2 sysroot (~3GB BSP download + extracted r39.2
+      # rootfs + ~69 noble debs) is disk-heavy on a stock hosted runner. Reclaim ~30GB
       # of preinstalled toolchains first. If this still ENOSPCs, a self-hosted
       # runner is required (see header note).
       - name: Free up disk space (host)
@@ -227,7 +228,7 @@ jobs:
             source scripts/tidy-args.sh
             # No blanket --warnings-as-errors='*' here: the repo's .clang-tidy
             # decides severity via WarningsAsErrors.
-            echo "$files" | xargs clang-tidy-14 -p build/test "${TIDY_EXTRA_ARGS[@]}"
+            echo "$files" | xargs clang-tidy -p build/test "${TIDY_EXTRA_ARGS[@]}"
 
   # ---------------------------------------------------------------------------
   # test — cross-build the test preset and run GTest under qemu (ctest)
@@ -237,8 +238,8 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
-      # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
-      # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
+      # Assembling the JetPack 7.2 sysroot (~3GB BSP download + extracted r39.2
+      # rootfs + ~69 noble debs) is disk-heavy on a stock hosted runner. Reclaim ~30GB
       # of preinstalled toolchains first. If this still ENOSPCs, a self-hosted
       # runner is required (see header note).
       - name: Free up disk space (host)
