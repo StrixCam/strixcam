@@ -9,8 +9,8 @@ struct fmt::formatter<sst::processing::CropRect> {
     static constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
 
     template <typename FormatContext>
-    auto format(const sst::processing::CropRect& r, FormatContext& ctx) const {
-        return fmt::format_to(ctx.out(), "CropRect{{x={}, y={}, w={}, h={}}}", r.x, r.y, r.width,
-                              r.height);
+    auto format(const sst::processing::CropRect& rect, FormatContext& ctx) const {
+        return fmt::format_to(ctx.out(), "CropRect{{x={}, y={}, w={}, h={}}}", rect.x, rect.y,
+                              rect.width, rect.height);
     }
 };
