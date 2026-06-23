@@ -26,8 +26,8 @@ System-wide arc — this repo's slice marked per phase. Module-level detail in
 This project currently targets only one platform:
 
 - NVIDIA Jetson Orin Nano
-- JetPack 6.2.2
-- L4T 36.5
+- JetPack 7.2
+- L4T r39.2 (Ubuntu 24.04)
 
 Development is done exclusively via the **Dev Container** in this repo, which cross-compiles for aarch64 from an x86_64 host. Native on-device builds are not supported.
 
