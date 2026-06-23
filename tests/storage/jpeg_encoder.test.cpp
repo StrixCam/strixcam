@@ -16,8 +16,8 @@ using sst::adapters::storage::OpenCvJpegEncoder;
 
 constexpr int kBgrChannels = 3;
 
-auto MakeBgrFrame(int width, int height, std::uint8_t value)
-    -> std::pair<sst::capture::Frame, std::vector<std::uint8_t>> {
+auto MakeBgrFrame(int width, int height,
+                  std::uint8_t value) -> std::pair<sst::capture::Frame, std::vector<std::uint8_t>> {
     std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * kBgrChannels,
                                      value);
     sst::capture::Frame frame;

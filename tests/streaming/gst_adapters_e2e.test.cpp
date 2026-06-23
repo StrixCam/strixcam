@@ -48,8 +48,8 @@ auto NextSuffix() -> std::string {
 auto MakeBgr8Frame(
     std::uint64_t frame_id,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok: test data
                              // builder; distinct widths, named call sites
-    std::uint8_t value, std::shared_ptr<std::vector<std::uint8_t>>& storage)
-    -> sst::capture::Frame {
+    std::uint8_t value,
+    std::shared_ptr<std::vector<std::uint8_t>>& storage) -> sst::capture::Frame {
     const std::size_t row_bytes = static_cast<std::size_t>(kWidth) * kBgrChannels;
     const std::size_t total = row_bytes * static_cast<std::size_t>(kHeight);
     storage = std::make_shared<std::vector<std::uint8_t>>(total, value);

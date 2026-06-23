@@ -27,8 +27,8 @@ class DownloadServer {
 
     // Mint a token for `recording_id` valid for `ttl_seconds`. nullopt if the
     // recording does not exist on disk.
-    auto MintToken(const std::string& recording_id, std::uint64_t ttl_seconds)
-        -> std::optional<DownloadToken>;
+    auto MintToken(const std::string& recording_id,
+                   std::uint64_t ttl_seconds) -> std::optional<DownloadToken>;
 
     // Resolve a (non-expired) token to the file it authorizes. nullopt if the
     // token is unknown or expired.

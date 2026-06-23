@@ -22,8 +22,8 @@ class IPostprocessor {
     // Returns std::nullopt and logs a warning on invalid input (unsupported
     // pixel format, out-of-bounds crop, zero geometry, unsupported output
     // format, etc).
-    virtual auto Process(const sst::capture::Frame& source, const CropRect& crop)
-        -> std::optional<sst::capture::Frame> = 0;
+    virtual auto Process(const sst::capture::Frame& source,
+                         const CropRect& crop) -> std::optional<sst::capture::Frame> = 0;
 };
 
 }  // namespace sst::processing

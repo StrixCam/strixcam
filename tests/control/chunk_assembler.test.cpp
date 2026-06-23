@@ -39,8 +39,8 @@ struct ChunkSpan {
     std::uint32_t total;
 };
 
-auto MakeChunk(const std::string& corr, ChunkSpan span, const std::string& data)
-    -> sst_cam::ChunkedPayload {
+auto MakeChunk(const std::string& corr, ChunkSpan span,
+               const std::string& data) -> sst_cam::ChunkedPayload {
     sst_cam::ChunkedPayload payload;
     payload.set_correlation_id(corr);
     payload.set_chunk_index(span.index);
@@ -50,8 +50,8 @@ auto MakeChunk(const std::string& corr, ChunkSpan span, const std::string& data)
 }
 
 // Serialize a Command and split it into N chunks of `chunk_size` bytes.
-auto SplitCommand(const sst_cam::Command& cmd, const std::string& corr, std::size_t chunk_size)
-    -> std::vector<sst_cam::ChunkedPayload> {
+auto SplitCommand(const sst_cam::Command& cmd, const std::string& corr,
+                  std::size_t chunk_size) -> std::vector<sst_cam::ChunkedPayload> {
     const std::string wire = cmd.SerializeAsString();
     std::vector<sst_cam::ChunkedPayload> out;
     const auto total = static_cast<std::uint32_t>((wire.size() + chunk_size - 1) / chunk_size);
