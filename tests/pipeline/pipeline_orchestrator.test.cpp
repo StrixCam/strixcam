@@ -362,7 +362,10 @@ TEST(PipelineOrchestratorTest, GrabLatestReturnsLatestFinalFrame) {
     }
     orchestrator.Stop();
 
-    ASSERT_TRUE(snap.has_value()) << "no final frame produced within the poll window";
+    if (!snap) {
+        FAIL() << "no final frame produced within the poll window";
+        return;
+    }
     EXPECT_EQ(snap->format, sst::common::PixelFormat::BGR8);
     EXPECT_EQ(snap->geometry.width, kOutputDims.width);
     EXPECT_EQ(snap->geometry.height, kOutputDims.height);

@@ -60,7 +60,10 @@ TEST(OpenCvPreprocessorTest, GrayscalePathDimensionsAndFormat) {
     auto frame = MakeNv12Frame(kSrcWidth, kSrcHeight, kLuma, kNeutralChroma, kNeutralChroma);
 
     auto out = pre.Process(frame);
-    ASSERT_TRUE(out.has_value());
+    if (!out) {
+        FAIL() << "Process returned nullopt";
+        return;
+    }
 
     // source_frame is a value-copy of raw — still NV12.
     EXPECT_EQ(out->source_frame.format, sst::common::PixelFormat::NV12);
@@ -92,7 +95,10 @@ TEST(OpenCvPreprocessorTest, BinaryPathThresholdsHigh) {
                                             .binary_threshold = kMidThreshold}};
     auto out =
         pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kHighLuma, kNeutralChroma, kNeutralChroma));
-    ASSERT_TRUE(out.has_value());
+    if (!out) {
+        FAIL() << "Process returned nullopt";
+        return;
+    }
     EXPECT_EQ(out->ai_frame.format, sst::common::PixelFormat::GRAY8);
     ExpectPlaneAllEqual(out->ai_frame, kWhite);
 }
@@ -107,7 +113,10 @@ TEST(OpenCvPreprocessorTest, BinaryPathThresholdsLow) {
                                             .binary_threshold = kMidThreshold}};
     auto out =
         pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kLowLuma, kNeutralChroma, kNeutralChroma));
-    ASSERT_TRUE(out.has_value());
+    if (!out) {
+        FAIL() << "Process returned nullopt";
+        return;
+    }
     ExpectPlaneAllEqual(out->ai_frame, 0);
 }
 
@@ -123,7 +132,10 @@ TEST(OpenCvPreprocessorTest, RgbPathChannelsAndOrder) {
     OpenCvPreprocessor pre{PreprocessConfig{
         .ai_width = kAiSize, .ai_height = kAiSize, .ai_color_mode = ColorMode::RGB}};
     auto out = pre.Process(MakeNv12Frame(kSrcSize, kSrcSize, kRedLuma, kRedU, kRedV));
-    ASSERT_TRUE(out.has_value());
+    if (!out) {
+        FAIL() << "Process returned nullopt";
+        return;
+    }
     EXPECT_EQ(out->ai_frame.format, sst::common::PixelFormat::RGB8);
     ASSERT_EQ(out->ai_frame.planes.size(), 1U);
     EXPECT_EQ(out->ai_frame.planes[0].stride, kAiSize * 3U);
@@ -150,8 +162,14 @@ TEST(OpenCvPreprocessorTest, StridedNv12RgbCopyFallback) {
     auto out_strided = pre.Process(strided);
     auto out_contig = pre.Process(contig);
 
-    ASSERT_TRUE(out_strided.has_value());
-    ASSERT_TRUE(out_contig.has_value());
+    if (!out_strided) {
+        FAIL() << "Process(strided) returned nullopt";
+        return;
+    }
+    if (!out_contig) {
+        FAIL() << "Process(contig) returned nullopt";
+        return;
+    }
     ASSERT_EQ(out_strided->ai_frame.planes[0].size, out_contig->ai_frame.planes[0].size);
 
     // Pixels from strided input must match the contiguous reference.
@@ -168,7 +186,10 @@ TEST(OpenCvPreprocessorTest, SourceFrameSharesOwnerWithRaw) {
 
     const auto before = raw.owner.use_count();
     auto out = pre.Process(raw);
-    ASSERT_TRUE(out.has_value());
+    if (!out) {
+        FAIL() << "Process returned nullopt";
+        return;
+    }
 
     EXPECT_EQ(raw.owner.use_count(), before + 1);
     EXPECT_EQ(out->source_frame.owner, raw.owner);
@@ -192,7 +213,10 @@ TEST(OpenCvPreprocessorTest, AiFrameOwnerOutlivesRaw) {
         return bundle;
     }();
 
-    ASSERT_TRUE(out.has_value());
+    if (!out) {
+        FAIL() << "Process returned nullopt";
+        return;
+    }
     ASSERT_NE(out->ai_frame.owner, nullptr);
     ExpectPlaneAllNear(out->ai_frame, kLuma, kTol);
 }

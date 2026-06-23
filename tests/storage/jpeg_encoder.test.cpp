@@ -38,7 +38,10 @@ TEST(JpegEncoderTest, EncodesBgrFrameToJpegBytes) {
     auto [frame, storage] = MakeBgrFrame(kSrcWidth, kSrcHeight, kFill);
     OpenCvJpegEncoder encoder;
     auto bytes = encoder.Encode(frame, sst::common::OutputSize{0, 0}, /*quality=*/0);
-    ASSERT_TRUE(bytes.has_value());
+    if (!bytes) {
+        FAIL() << "Encode returned nullopt";
+        return;
+    }
     ASSERT_GE(bytes->size(), 2U);
     EXPECT_EQ((*bytes)[0], 0xFF);  // JPEG Start Of Image marker
     EXPECT_EQ((*bytes)[1], 0xD8);
@@ -60,7 +63,10 @@ TEST(JpegEncoderTest, ResizesToRequestedDimensions) {
     auto [frame, storage] = MakeBgrFrame(kSrcDim, kSrcDim, kFill);
     OpenCvJpegEncoder encoder;
     auto small = encoder.Encode(frame, sst::common::OutputSize{kOutDim, kOutDim}, kQuality);
-    ASSERT_TRUE(small.has_value());
+    if (!small) {
+        FAIL() << "Encode returned nullopt";
+        return;
+    }
     EXPECT_FALSE(small->empty());
 
     const cv::Mat decoded = cv::imdecode(cv::Mat(*small), cv::IMREAD_COLOR);

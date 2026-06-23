@@ -102,7 +102,10 @@ TEST(ChunkAssemblerTest, MultiChunkInboundReassemblesExactly) {
     OfferAllButLast(assembler, chunks);
     const auto done = assembler.OfferInbound(chunks.back());
     EXPECT_TRUE(done.accepted);
-    ASSERT_TRUE(done.payload.has_value());
+    if (!done.payload) {
+        FAIL() << "OfferInbound payload returned nullopt";
+        return;
+    }
     EXPECT_EQ(*done.payload, wire);
 
     sst_cam::Command parsed;
@@ -117,7 +120,10 @@ TEST(ChunkAssemblerTest, SingleChunkFastPath) {
     auto chunk = MakeChunk("c1", {0, 1}, "hello");
     auto done = assembler.OfferInbound(chunk);
     EXPECT_TRUE(done.accepted);
-    ASSERT_TRUE(done.payload.has_value());
+    if (!done.payload) {
+        FAIL() << "OfferInbound payload returned nullopt";
+        return;
+    }
     EXPECT_EQ(*done.payload, "hello");
     EXPECT_EQ(assembler.InflightInboundCount(), 0U);
 }
@@ -179,7 +185,10 @@ TEST(ChunkAssemblerTest, OutOfOrderAndDuplicateInbound) {
     EXPECT_FALSE(assembler.OfferInbound(MakeChunk("x", {0, 3}, "aaa")).payload.has_value());
     EXPECT_FALSE(assembler.OfferInbound(MakeChunk("x", {0, 3}, "aaa")).payload.has_value());  // dup
     auto done = assembler.OfferInbound(MakeChunk("x", {1, 3}, "bbb"));
-    ASSERT_TRUE(done.payload.has_value());
+    if (!done.payload) {
+        FAIL() << "OfferInbound payload returned nullopt";
+        return;
+    }
     EXPECT_EQ(*done.payload, "aaabbbccc");
 }
 
