@@ -32,7 +32,7 @@ TEST(ConfigLoaderTest, YieldsDeviceIdentityAndCalibrationWithoutDb) {
     EXPECT_TRUE(cfg.device.name.has_value());
     EXPECT_TRUE(cfg.device.model.has_value());
     EXPECT_TRUE(cfg.device.serial_number.has_value());
-    EXPECT_EQ(cfg.device.serial_number.value(), "00000001");
+    EXPECT_EQ(cfg.device.serial_number.value_or(""), "00000001");
 
     // Lens calibration is present and config-sourced.
     ASSERT_TRUE(cfg.calibration.cameras.has_value());

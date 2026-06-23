@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-SST Cam firmware — C++20 embedded runtime for NVIDIA Jetson Orin Nano (JetPack 6.2.2 / L4T 36.5). Dual IMX477 cameras, GStreamer pipeline, AI sports tracking. `_old/` contains deprecated Python prototypes; ignore it.
+SST Cam firmware — C++20 embedded runtime for NVIDIA Jetson Orin Nano (JetPack 7.2 / L4T r39.2 / Ubuntu 24.04). Dual IMX477 cameras, GStreamer pipeline, AI sports tracking. `_old/` contains deprecated Python prototypes; ignore it.
 
 ## Build
 
@@ -12,7 +12,12 @@ The **only supported build method is cross-compilation from the Dev Container.**
 
 1. Install the **Dev Containers** extension (`ms-vscode-remote.remote-containers`).
 2. Open this repo → **"Reopen in Container"** (or `Dev Containers: Reopen in Container`).
-   VSCode builds the image automatically (~37 GB JetPack sysroot extraction, ~20 min first time).
+   VSCode builds the image automatically (~3 GB L4T r39.2 BSP fetch + sysroot assembly, ~10-15 min first time).
+   The image build assembles the sysroot via `apply_binaries`, which chroots into the
+   arm64 rootfs — it needs **qemu-aarch64 binfmt** on the host. Docker Desktop registers
+   this automatically; on a plain Linux Docker host, register it once with
+   `docker run --privileged --rm tonistiigi/binfmt --install arm64` (CI does this via
+   `docker/setup-qemu-action`). Without it the build fails with `Exec format error`.
 3. VSCode opens inside the container — cmake, clangd, and CMake Tools all work.
 4. Configure + build:
 
@@ -55,10 +60,10 @@ Tests must verify behaviour end-to-end at the **module** boundary: feed real inp
 clang-format -i src/**/*.cpp src/**/*.hpp
 
 # Tidy (checks defined in .clang-tidy — bugprone, performance, modernize, readability, google-*)
-# clang-tidy is PINNED to clang-tidy-14 (jammy). The enforced check set + the
-# warning baseline are version-locked; treat a version bump as a deliberate,
+# clang-tidy is noble's v18 (JetPack 7.2 / Ubuntu 24.04). The enforced check set
+# + the warning baseline are version-locked; treat a version bump as a deliberate,
 # re-triaged change. Cross-toolchain flags live in scripts/tidy-args.sh.
-clang-tidy-14 -p build/test src/path/to/file.cpp
+clang-tidy -p build/test src/path/to/file.cpp
 ```
 
 `compile_commands.json` is exported automatically to `build/<preset>/` and symlinked by clangd.
@@ -70,7 +75,7 @@ verify-only — it never writes fixes back to your branch. Correct fixable
 findings **dev-side**, inside the devcontainer, before pushing:
 
 ```bash
-scripts/fix.sh          # clang-format + clang-tidy-14 --fix on STAGED C/C++ only
+scripts/fix.sh          # clang-format + clang-tidy --fix on STAGED C/C++ only
 scripts/fix.sh --all    # the whole src/ + tests/ tree (bulk cleanup)
 ```
 
@@ -103,7 +108,7 @@ Tag scheme: `vX.Y.Z[-alpha.N|-beta.N]`. Three **branch-scoped** product workflow
 - `.github/workflows/release.yml` (name `release`) — **owns `main`**. On **push to `main`** (a `release/X.Y.Z → main` merge) + dispatch it **promotes**: derives `X.Y.Z` from the merged branch, selects the highest `vX.Y.Z-beta.N` tag, tags the stable `vX.Y.Z`, **downloads the beta binary, verifies its SHA-256** against the recorded digest, renames it to `sst_cam_firmware-vX.Y.Z-aarch64` (bytes preserved), and uploads it to the stable Release. **No cross-build runs on `main`** — `main` only promotes.
 - `.github/workflows/devcontainer-image.yml` — on **push to `main`** touching `.devcontainer/**` + dispatch. Publishes the GHCR devcontainer image and surfaces its digest in the run Summary. It commits **nothing** back to `main` (only `packages: write`). CI image-cache consumption stays deferred; when un-deferred it must pin by `@sha256:` digest, never `:latest`.
 
-The `tidy` hard gate is intact inside `release-alpha.yml` / `release-beta.yml`: cross-toolchain header flags live in `scripts/tidy-args.sh`, the tree is clean under the full check set, and `.clang-tidy` promotes every diagnostic to an error (`WarningsAsErrors: '*'`); clang-tidy is version-locked to `clang-tidy-14`. The floor-NOLINT guard ships alongside it. Auto-fix fixable findings dev-side with `scripts/fix.sh` before pushing (CI is verify-only). Each build/check job frees ~30GB host disk before building the ~37GB JetPack image.
+The `tidy` hard gate is intact inside `release-alpha.yml` / `release-beta.yml`: cross-toolchain header flags live in `scripts/tidy-args.sh`, the tree is clean under the full check set, and `.clang-tidy` promotes every diagnostic to an error (`WarningsAsErrors: '*'`); clang-tidy is noble's v18 (treat a version bump as a deliberate, re-triaged change). The floor-NOLINT guard ships alongside it. Auto-fix fixable findings dev-side with `scripts/fix.sh` before pushing (CI is verify-only). Each build/check job frees ~30GB host disk before assembling the JetPack 7.2 sysroot (~3 GB BSP fetch + r39.2 rootfs).
 
 Default `GITHUB_TOKEN` only — no PAT/App. The "Release Tags" ruleset permits creating compliant semver tags. Ruleset + version-reset runbooks live in [docs/ci/](docs/ci/).
 
@@ -270,4 +275,4 @@ If a new feature needs a new system dep, install it in the sysroot via `.devcont
 
 ## Adding system dependencies to the JetPack sysroot
 
-The JetPack `targetfs` tarball does not include every Ubuntu package — when a new system dep is needed (e.g. `sdbus-c++`, `gst-rtsp-server`), add the matching Ubuntu jammy `arm64` `.deb` URLs to [.devcontainer/sysroot/003_install_extra_pkgs.sh](.devcontainer/sysroot/003_install_extra_pkgs.sh). The Dockerfile runs `003_install_extra_pkgs.sh` *before* `002_fix_sysroot.sh`, so newly extracted libraries are picked up by the symlink-fix and `.so` linker-stub passes automatically.
+The L4T r39.2 BSP sample rootfs does not include every `-dev` package — when a new system dep is needed (e.g. `sdbus-c++`, `gst-rtsp-server`), add the matching Ubuntu **noble** (24.04) `arm64` `.deb` URL to [.devcontainer/sysroot/noble-deb-urls.txt](.devcontainer/sysroot/noble-deb-urls.txt) (resolve the exact version + dep closure with `apt-get install --print-uris` against the assembled rootfs). `003_install_extra_pkgs.sh` extracts that list, and the Dockerfile runs it *before* `002_fix_sysroot.sh`, so newly extracted libraries are picked up by the symlink-fix and `.so` linker-stub passes automatically.

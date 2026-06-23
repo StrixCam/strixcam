@@ -91,8 +91,8 @@ auto ChunkAssembler::OfferInbound(const sst_cam::ChunkedPayload& chunk) -> Offer
 }
 
 auto ChunkAssembler::BeginOutbound(const sst::control::CorrelationId& correlation_id,
-                                   const std::string& data, const SendChunkFn& send)
-    -> std::uint32_t {
+                                   const std::string& data,
+                                   const SendChunkFn& send) -> std::uint32_t {
     const std::size_t chunk_size = std::max<std::size_t>(cfg_.max_chunk_payload_bytes, 1);
     // At least one chunk, even for an empty payload.
     const std::uint32_t total =

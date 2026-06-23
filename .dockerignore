@@ -1,0 +1,7 @@
+.git
+.cache
+build
+**/build
+node_modules
+_old
+.devcontainer/Dockerfile.sysroot-probe

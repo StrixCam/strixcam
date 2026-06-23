@@ -11,7 +11,10 @@ namespace {
 TEST(WpaWifiManagerE2E, FormsAutonomousGroupOwner) {
     sst::adapters::control::WpaWifiManager manager("wlan0");
     auto group = manager.StartP2pGroupOwner();
-    ASSERT_TRUE(group.has_value()) << "P2P group owner did not form (expected to fail off-device)";
+    if (!group) {
+        FAIL() << "P2P group owner did not form (expected to fail off-device)";
+        return;
+    }
     EXPECT_FALSE(group->ssid.empty());
     EXPECT_FALSE(group->psk.empty());
     EXPECT_EQ(group->group_owner_ip, "192.168.49.1");

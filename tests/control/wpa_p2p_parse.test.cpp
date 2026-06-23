@@ -16,7 +16,10 @@ TEST(WpaP2pParseTest, ParsesGroupStartedEvent) {
         "passphrase=\"swXY1234\" go_dev_addr=02:11:22:33:44:55";
 
     auto parsed = ParseGroupStarted(event);
-    ASSERT_TRUE(parsed.has_value());
+    if (!parsed) {
+        FAIL() << "ParseGroupStarted returned nullopt";
+        return;
+    }
     EXPECT_EQ(parsed->interface, "p2p-wlan0-0");
     EXPECT_EQ(parsed->ssid, "DIRECT-Ab-ScoutCam");
     EXPECT_EQ(parsed->passphrase, "swXY1234");

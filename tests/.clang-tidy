@@ -1,0 +1,13 @@
+# Test-scoped clang-tidy overrides (merged on top of the repo-root .clang-tidy).
+#
+# JetPack 7.2 / Ubuntu 24.04 ships clang-tidy 18. Its
+# readability-function-cognitive-complexity counts gtest EXPECT_/ASSERT_ macro
+# expansions (and the bugprone-unchecked-optional-access `if (!opt){FAIL();return;}`
+# guards) markedly higher than clang-tidy 14 did — pushing several linear,
+# assertion-list TEST bodies over the threshold even though they were "driven to
+# zero" under the 14 baseline. Cognitive complexity is not a meaningful signal for
+# a flat sequence of gtest assertions, so the check is disabled for test code ONLY.
+# Production code under src/ keeps the full readability-* set (see ../.clang-tidy).
+InheritParentConfig: true
+Checks: >
+  -readability-function-cognitive-complexity

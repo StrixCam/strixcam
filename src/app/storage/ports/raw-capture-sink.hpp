@@ -29,8 +29,8 @@ class IRawCaptureSink {
     // Enqueue a materialized frame from `camera_index`. Non-blocking: no-ops when
     // not capturing or the index is out of range; drops the oldest queued frame
     // rather than blocking the caller when the writer can't keep up.
-    virtual auto PushCamera(std::uint32_t camera_index, const sst::capture::Frame& frame)
-        -> void = 0;
+    virtual auto PushCamera(std::uint32_t camera_index,
+                            const sst::capture::Frame& frame) -> void = 0;
 
     // Flush every per-camera queue, close the files, join the writer threads.
     // Returns false when no session was active. Idempotent enough for cleanup.

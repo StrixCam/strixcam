@@ -38,7 +38,7 @@
 # `release/X.Y.Z -> main` PR.
 #
 # WHY the devcontainer: the Jetson aarch64 cross-build is only correct inside the
-# repo's devcontainer image (custom Bootlin toolchain, the order-sensitive L4T
+# repo's devcontainer image (gcc-13 aarch64 cross toolchain, the order-sensitive L4T
 # sysroot prep scripts, host-protoc codegen, OpenCV SONAME pin, Conan cache). We
 # reuse that image via devcontainers/ci rather than re-deriving the toolchain
 # here, so every cross-build gotcha stays solved in one place (see CLAUDE.md).
@@ -100,8 +100,8 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
-      # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
-      # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
+      # Assembling the JetPack 7.2 sysroot (~3GB BSP download + extracted r39.2
+      # rootfs + ~69 noble debs) is disk-heavy on a stock hosted runner. Reclaim ~30GB
       # of preinstalled toolchains first. If this still ENOSPCs, a self-hosted
       # runner is required (see header note).
       - name: Free up disk space (host)
@@ -116,6 +116,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 in the host binfmt_misc, else "Exec format error" (126).
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: clang-format --dry-run --Werror
         uses: devcontainers/ci@v0.3
@@ -144,10 +151,10 @@ jobs:
     # Hard gate: the cross-toolchain flags (scripts/tidy-args.sh) resolve all
     # std/system headers, the tree is clean, and .clang-tidy promotes every
     # diagnostic to an error via WarningsAsErrors. A new lint violation fails the
-    # PR. clang-tidy is version-locked to clang-tidy-14 (see .clang-tidy).
+    # PR. clang-tidy is noble clang-tidy v18 (see .clang-tidy).
     steps:
-      # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
-      # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
+      # Assembling the JetPack 7.2 sysroot (~3GB BSP download + extracted r39.2
+      # rootfs + ~69 noble debs) is disk-heavy on a stock hosted runner. Reclaim ~30GB
       # of preinstalled toolchains first. If this still ENOSPCs, a self-hosted
       # runner is required (see header note).
       - name: Free up disk space (host)
@@ -187,6 +194,13 @@ jobs:
           restore-keys: |
             conan-${{ runner.os }}-
 
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 in the host binfmt_misc, else "Exec format error" (126).
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: clang-tidy (-p build/test)
         uses: devcontainers/ci@v0.3
         with:
@@ -218,7 +232,7 @@ jobs:
             source scripts/tidy-args.sh
             # No blanket --warnings-as-errors='*' here: the repo's .clang-tidy
             # decides severity via WarningsAsErrors.
-            echo "$files" | xargs clang-tidy-14 -p build/test "${TIDY_EXTRA_ARGS[@]}"
+            echo "$files" | xargs clang-tidy -p build/test "${TIDY_EXTRA_ARGS[@]}"
 
   # ---------------------------------------------------------------------------
   # test — cross-build the test preset and run GTest under qemu (ctest)
@@ -228,8 +242,8 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
-      # The JetPack base image + ~37GB L4T sysroot exhaust a stock hosted
-      # runner's disk (observed: ENOSPC pulling the base image). Reclaim ~30GB
+      # Assembling the JetPack 7.2 sysroot (~3GB BSP download + extracted r39.2
+      # rootfs + ~69 noble debs) is disk-heavy on a stock hosted runner. Reclaim ~30GB
       # of preinstalled toolchains first. If this still ENOSPCs, a self-hosted
       # runner is required (see header note).
       - name: Free up disk space (host)
@@ -252,6 +266,13 @@ jobs:
           key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
           restore-keys: |
             conan-${{ runner.os }}-
+
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 in the host binfmt_misc, else "Exec format error" (126).
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: cmake test preset + build + ctest (qemu)
         uses: devcontainers/ci@v0.3
@@ -334,6 +355,13 @@ jobs:
           key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
           restore-keys: |
             conan-${{ runner.os }}-
+
+      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
+      # needs qemu-aarch64 in the host binfmt_misc, else "Exec format error" (126).
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: cmake release preset + build
         uses: devcontainers/ci@v0.3

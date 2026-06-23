@@ -297,8 +297,8 @@ auto BluezBleTransport::SendResponse(const sst_cam::CommandResponse& response) -
                   response.correlation_id(), static_cast<int>(response.status()), total);
 }
 
-auto BluezBleTransport::SendInboundAck(const std::string& correlation_id, std::uint32_t chunk_index)
-    -> void {
+auto BluezBleTransport::SendInboundAck(const std::string& correlation_id,
+                                       std::uint32_t chunk_index) -> void {
     if (!gatt_app_) {
         spdlog::warn("BluezBleTransport::SendInboundAck: GATT app not active");
         return;

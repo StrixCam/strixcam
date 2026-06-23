@@ -37,8 +37,8 @@ constexpr float kBannerWidth = 400;
 constexpr float kBannerHeight = 80;
 constexpr std::uint32_t kBannerZ = 10;
 
-auto TextElement(const std::string& element_id, OverlayBinding binding, std::uint32_t zorder)
-    -> OverlayElement {
+auto TextElement(const std::string& element_id, OverlayBinding binding,
+                 std::uint32_t zorder) -> OverlayElement {
     OverlayElement element;
     element.id = element_id;
     element.shape = OverlayShape::kText;

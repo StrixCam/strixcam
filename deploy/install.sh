@@ -157,6 +157,20 @@ case "$file_desc" in
 esac
 chmod +x "$new_bin"
 
+# --- Platform guard: don't cross the JetPack boundary within a version line ---
+# Firmware 0.1.0 moved its target from JetPack 6.2 (L4T r36, glibc 2.35) at
+# beta.1 to JetPack 7.2 (L4T r39.2, glibc 2.39) at beta.2+. A 7.2 binary will
+# not load on a 6.2 flash (and vice versa). The aarch64 ELF check above cannot
+# catch this — both are aarch64. Read the device's L4T major and refuse a
+# mismatch. Override with SST_SKIP_PLATFORM_CHECK=1 if you know what you're doing.
+EXPECTED_L4T_MAJOR=39
+if [ "${SST_SKIP_PLATFORM_CHECK:-0}" != "1" ] && [ -r /etc/nv_tegra_release ]; then
+  dev_l4t="$(sed -n 's/^# R\([0-9]\{1,\}\).*/\1/p' /etc/nv_tegra_release | head -n1)"
+  if [ -n "$dev_l4t" ] && [ "$dev_l4t" != "$EXPECTED_L4T_MAJOR" ]; then
+    die "platform mismatch: ${asset_name} targets JetPack 7.2 (L4T r${EXPECTED_L4T_MAJOR}.x) but this device reports L4T r${dev_l4t}.x. Flash JetPack 7.2, or set SST_SKIP_PLATFORM_CHECK=1 to override."
+  fi
+fi
+
 # --- Idempotency: skip if already installed and identical --------------------
 if [ -f "$INSTALL_PATH" ]; then
   new_sum="$(sha256sum "$new_bin" | awk '{print $1}')"

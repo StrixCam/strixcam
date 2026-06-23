@@ -30,7 +30,7 @@ auto ExtractBearer(const httplib::Request& req) -> std::string {
         return {};
     }
     const std::string auth = req.get_header_value("Authorization");
-    if (auth.rfind(kBearerPrefix, 0) != 0) {
+    if (!auth.starts_with(kBearerPrefix)) {
         return {};
     }
     return auth.substr(std::char_traits<char>::length(kBearerPrefix));

@@ -22,8 +22,8 @@ class FakeRawSink final : public sst::storage::IRawCaptureSink {
         capturing_ = start_ok;
         return start_ok;
     }
-    auto PushCamera(std::uint32_t /*camera_index*/, const sst::capture::Frame& /*frame*/)
-        -> void override {
+    auto PushCamera(std::uint32_t /*camera_index*/,
+                    const sst::capture::Frame& /*frame*/) -> void override {
         ++pushes;
     }
     auto Stop() -> bool override {
