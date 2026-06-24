@@ -151,7 +151,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.pick.outputs.stable }}
-          files: ${{ steps.verify.outputs.path }}
+          # Bundle the self-contained installer alongside the promoted binary.
+          files: |
+            ${{ steps.verify.outputs.path }}
+            deploy/install.sh
           fail_on_unmatched_files: true
 
       - name: Remind to delete the release branch + merge back to development
