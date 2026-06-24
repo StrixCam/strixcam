@@ -87,7 +87,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: shellcheck resolve-version scripts
-        run: shellcheck scripts/ci/resolve-version*.sh
+        run: shellcheck scripts/ci/resolve-version*.sh deploy/install.sh
 
       - name: resolve-version unit tests
         run: ./scripts/ci/resolve-version-test.sh
@@ -414,5 +414,9 @@ jobs:
           name: ${{ env.TAG }}
           prerelease: true
           body: ${{ steps.notes.outputs.body }}
-          files: ${{ steps.asset.outputs.path }}
+          # Bundle the self-contained installer so a device can run it straight
+          # off the release: curl .../download/install.sh | sudo bash -s -- ...
+          files: |
+            ${{ steps.asset.outputs.path }}
+            deploy/install.sh
           fail_on_unmatched_files: true
