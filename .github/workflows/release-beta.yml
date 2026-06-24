@@ -65,7 +65,94 @@ concurrency:
 permissions:
   contents: write
 
+env:
+  # Content-hashed devcontainer image. Tag = hash of .devcontainer/** (the full
+  # image recipe — Dockerfile + sysroot scripts + noble-deb-urls.txt). Built once
+  # per recipe; format/tidy/test/release pull it instead of rebuilding (U1/U2).
+  IMAGE: ghcr.io/scoutsporttechnology/sst-cam-firmware-devcontainer
+
 jobs:
+  # ===========================================================================
+  # image — ensure the content-hashed devcontainer image exists in GHCR, building
+  # + pushing ONLY on a cache miss. format/tidy/test (and the release cross-build)
+  # `needs:` this job and pull `${IMAGE}:<hash>` rather than each rebuilding the
+  # ~3 GB BSP sysroot. A `.devcontainer/**` change is the only thing that triggers
+  # a rebuild; everything else is a pull. Fork PRs get a read-only token, so the
+  # push is skipped (build-only) — they can neither poison nor benefit (U1, R5).
+  # ===========================================================================
+  image:
+    name: image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    outputs:
+      tag: ${{ steps.hash.outputs.tag }}
+    steps:
+      - name: Compute image tag from .devcontainer content
+        id: hash
+        run: echo "tag=${{ hashFiles('.devcontainer/**') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        id: login
+        continue-on-error: true # fork PRs have a read-only token — fall through to build-only
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache check (does ${IMAGE}:<hash> already exist?)
+        id: cache
+        run: |
+          set -euo pipefail
+          ref="${IMAGE}:${{ steps.hash.outputs.tag }}"
+          if docker manifest inspect "$ref" >/dev/null 2>&1; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+            echo "cache hit: ${ref} already published — no build."
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+            echo "cache miss: ${ref} will be built."
+          fi
+
+      # ---- build-on-miss (heavy; runs only when the recipe changed) ----
+      - name: Free up disk space (host)
+        if: ${{ steps.cache.outputs.hit == 'false' }}
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Checkout (with proto submodule)
+        if: ${{ steps.cache.outputs.hit == 'false' }}
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
+        if: ${{ steps.cache.outputs.hit == 'false' }}
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build devcontainer image
+        if: ${{ steps.cache.outputs.hit == 'false' }}
+        uses: devcontainers/ci@v0.3
+        with:
+          push: never
+
+      - name: Tag + push to GHCR (skipped on fork / read-only token)
+        if: ${{ steps.cache.outputs.hit == 'false' && steps.login.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          ref="${IMAGE}:${{ steps.hash.outputs.tag }}"
+          docker tag sst-cam-firmware "$ref"
+          # Tolerate a concurrent first-build race on the same recipe: an identical
+          # image under the same content hash is benign last-writer-wins.
+          docker push "$ref" || docker manifest inspect "$ref" >/dev/null
+
   # ===========================================================================
   # CI CHECK JOBS — PR-only. The job names below (`ci-scripts`, `format`,
   # `tidy`, `test`) are the REQUIRED STATUS CHECKS wired into the branch
@@ -100,54 +187,37 @@ jobs:
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     steps:
-      # Assembling the JetPack 7.2 sysroot (~3GB BSP download + extracted r39.2
-      # rootfs + ~69 noble debs) is disk-heavy on a stock hosted runner. Reclaim ~30GB
-      # of preinstalled toolchains first. If this still ENOSPCs, a self-hosted
-      # runner is required (see header note).
-      - name: Free up disk space (host)
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          large-packages: true
-          docker-images: false
-          swap-storage: true
-
-      - name: Checkout (with proto submodule)
+      # clang-format is a HOST tool — no cross sysroot needed. ubuntu-24.04 ships
+      # clang-format-18 (matches the devcontainer's noble clang-format), so run it
+      # on the runner directly instead of building/pulling the ~15 GB image.
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
-      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
-      # needs qemu-aarch64 in the host binfmt_misc, else "Exec format error" (126).
-      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+      - name: Install clang-format-18
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends clang-format-18
 
       - name: clang-format --dry-run --Werror
-        uses: devcontainers/ci@v0.3
-        with:
-          # Build the devcontainer locally per run — no ghcr imageName/cacheFrom.
-          # ghcr image caching needs registry login + push perms and was failing
-          # at `docker tag ... ghcr.io/...`; deferred as an optimization. Each run
-          # rebuilds the image (sysroot unpack ~13 min, observed to fit the runner).
-          runCmd: |
-            set -euo pipefail
-            files=$(find src tests \
-              \( -name '*.cpp' -o -name '*.hpp' -o -name '*.cc' -o -name '*.h' \) \
-              -not -path '*/_old/*')
-            if [ -z "$files" ]; then
-              echo "No C++ sources found to format-check"; exit 1
-            fi
-            echo "$files" | xargs clang-format --dry-run --Werror
+        run: |
+          set -euo pipefail
+          files=$(find src tests \
+            \( -name '*.cpp' -o -name '*.hpp' -o -name '*.cc' -o -name '*.h' \) \
+            -not -path '*/_old/*')
+          if [ -z "$files" ]; then
+            echo "No C++ sources found to format-check"; exit 1
+          fi
+          echo "$files" | xargs clang-format-18 --dry-run --Werror
 
   # ---------------------------------------------------------------------------
   # tidy — clang-tidy over a configured preset's compile_commands.json
   # ---------------------------------------------------------------------------
   tidy:
     name: tidy
+    needs: image
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     # Hard gate: the cross-toolchain flags (scripts/tidy-args.sh) resolve all
     # std/system headers, the tree is clean, and .clang-tidy promotes every
     # diagnostic to an error via WarningsAsErrors. A new lint violation fails the
@@ -201,38 +271,39 @@ jobs:
         with:
           platforms: arm64
 
-      - name: clang-tidy (-p build/test)
-        uses: devcontainers/ci@v0.3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          # Build the devcontainer locally per run — no ghcr imageName/cacheFrom.
-          # ghcr image caching needs registry login + push perms and was failing
-          # at `docker tag ... ghcr.io/...`; deferred as an optimization. Each run
-          # rebuilds the image (sysroot unpack ~13 min, observed to fit the runner).
-          runCmd: |
-            set -euo pipefail
-            # Configure the test preset to generate compile_commands.json.
-            cmake --preset test
-            # Generate the protobuf headers (bluetooth.pb.h / wifi.pb.h) before
-            # tidy. clang-tidy does not build — without this the generated
-            # headers are absent, every TU that includes them hits
-            # clang-diagnostic-error 'bluetooth.pb.h not found', and the broken
-            # AST yields a cascade of phantom findings (members "can be made
-            # static", spurious easily-swappable, etc.). Building just sst_proto
-            # runs protoc only — seconds, not the full cross-build.
-            cmake --build --preset test --target sst_proto
-            files=$(find src tests \
-              \( -name '*.cpp' -o -name '*.cc' \) \
-              -not -path '*/_old/*')
-            if [ -z "$files" ]; then
-              echo "No C++ translation units found to tidy"; exit 1
-            fi
-            # Cross-toolchain flags live in scripts/tidy-args.sh — the single
-            # source of truth shared with scripts/fix.sh so the two can't drift.
-            # shellcheck source=scripts/tidy-args.sh
-            source scripts/tidy-args.sh
-            # No blanket --warnings-as-errors='*' here: the repo's .clang-tidy
-            # decides severity via WarningsAsErrors.
-            echo "$files" | xargs clang-tidy -p build/test "${TIDY_EXTRA_ARGS[@]}"
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pull the prebuilt devcontainer (built once by the `image` job) and run the
+      # tidy check inside it — no per-run sysroot rebuild. Run as root so the
+      # bind-mounted workspace (owned by the runner uid) is writable for the build
+      # dir; the image's PATH already exposes conan + the gcc-13 cross toolchain.
+      - name: clang-tidy (-p build/test)
+        env:
+          TAG: ${{ needs.image.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE}:${TAG}"
+          docker run --rm --user root \
+            -v "$PWD":/workspace -w /workspace \
+            -v "$HOME/.conan2":/root/.conan2 -e CONAN_HOME=/root/.conan2 \
+            "${IMAGE}:${TAG}" bash -lc '
+              set -euo pipefail
+              # Configure the test preset to generate compile_commands.json, then
+              # generate the protobuf headers (sst_proto = protoc only, seconds)
+              # so every TU that includes bluetooth.pb.h / wifi.pb.h has them and
+              # clang-tidy does not cascade phantom findings off a broken AST.
+              cmake --preset test
+              cmake --build --preset test --target sst_proto
+              files=$(find src tests \( -name "*.cpp" -o -name "*.cc" \) -not -path "*/_old/*")
+              if [ -z "$files" ]; then echo "No C++ translation units found to tidy"; exit 1; fi
+              # Cross-toolchain flags: scripts/tidy-args.sh (shared with scripts/fix.sh).
+              source scripts/tidy-args.sh
+              echo "$files" | xargs clang-tidy -p build/test "${TIDY_EXTRA_ARGS[@]}"'
 
   # ---------------------------------------------------------------------------
   # test — cross-build the test preset and run GTest under qemu (ctest)
