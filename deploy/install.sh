@@ -3,12 +3,15 @@
 # install.sh — set up and update the sst-cam-firmware binary on a Jetson from a
 # GitHub Release, idempotently and safely.
 #
-# This script is SELF-CONTAINED and published as a Release asset, so it can run
-# straight off the release with no repo clone:
+# This script is SELF-CONTAINED. It lives only in the repo (single source of
+# truth — it is NOT duplicated as a release asset); pull it from the repo at the
+# tag you're installing and pipe to bash (the exact line is in each release's
+# notes):
 #
-#   curl -fsSL https://github.com/ScoutSportTechnology/sst-cam-firmware/releases/latest/download/install.sh | sudo bash
-#   curl -fsSL .../releases/latest/download/install.sh | sudo bash -s -- --version v0.1.0-beta.2
-#   curl -fsSL .../releases/latest/download/install.sh | sudo bash -s -- --sha256 <hex>
+#   curl -fsSL https://raw.githubusercontent.com/ScoutSportTechnology/sst-cam-firmware/<TAG>/deploy/install.sh \
+#     | sudo bash -s -- --version <TAG>
+#
+# Or, from a repo checkout on the device:  sudo deploy/install.sh --version <TAG>
 #
 # On every run it:
 #   0. ONE-TIME SETUP (idempotent): creates the `sst-cam` system user, the
