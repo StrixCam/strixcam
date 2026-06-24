@@ -89,6 +89,13 @@ jobs:
     outputs:
       tag: ${{ steps.hash.outputs.tag }}
     steps:
+      # Checkout first (unconditional) so hashFiles('.devcontainer/**') sees the
+      # files — without it the hash is empty and the image ref is invalid.
+      - name: Checkout (with proto submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
       - name: Compute image tag from .devcontainer content
         id: hash
         run: echo "tag=${{ hashFiles('.devcontainer/**') }}" >> "$GITHUB_OUTPUT"
@@ -124,12 +131,6 @@ jobs:
           large-packages: true
           docker-images: false
           swap-storage: true
-
-      - name: Checkout (with proto submodule)
-        if: ${{ steps.cache.outputs.hit == 'false' }}
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
         if: ${{ steps.cache.outputs.hit == 'false' }}
