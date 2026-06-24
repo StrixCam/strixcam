@@ -3,11 +3,13 @@
 #include <spdlog/spdlog.h>
 
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 
+#include "./config-defaults.hpp"
 #include "adapters/config/json/json.hpp"
 
 namespace sst::config::app {
@@ -45,7 +47,33 @@ ConfigLoader::ConfigLoader(std::string root_path, std::string file_type)
     }
 }
 
+void ConfigLoader::EnsureDefault(const std::string& name, std::string_view default_json) {
+    const std::filesystem::path path = MakePath(root_path_, name, file_type_);
+    std::error_code ecode;
+    if (std::filesystem::exists(path, ecode)) {
+        return;  // never clobber an existing (possibly operator-edited) file
+    }
+    std::filesystem::create_directories(path.parent_path(), ecode);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        spdlog::error("Config: could not write default '{}' to {}", name, path.string());
+        return;  // get() then fails the load and throws, as it did before
+    }
+    out << default_json;
+    spdlog::info("Config: wrote default '{}' -> {}", name, path.string());
+}
+
 auto ConfigLoader::get() -> ConfigData {
+    // First run: provision built-in defaults for any missing file so a fresh
+    // device (empty /etc/sst/cam/config) starts out-of-box. json is the only
+    // file_type with adapters + defaults built.
+    if (file_type_ == "json") {
+        EnsureDefault("device", defaults::kDeviceJson);
+        EnsureDefault("calibration", defaults::kCalibrationJson);
+        EnsureDefault("storage", defaults::kStorageJson);
+        EnsureDefault("wifi-direct", defaults::kWifiDirectJson);
+    }
+
     if (!deviceAdapter_ || !calibrationAdapter_ || !storageAdapter_ || !wifiDirectAdapter_) {
         throw std::logic_error("ConfigLoader adapters not initialized");
     }
