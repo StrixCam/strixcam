@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include "app/config/ports/config-reader.hpp"
 #include "domain/config/models/calibration.hpp"
@@ -26,6 +27,11 @@ class ConfigLoader {
     auto get() -> ConfigData;
 
    private:
+    // First-run self-provisioning: write `default_json` to <root>/<name>.<type>
+    // when that file is missing, so a fresh device starts without hand-placed
+    // config. Existing files are never overwritten.
+    void EnsureDefault(const std::string& name, std::string_view default_json);
+
     std::string root_path_;
     std::string file_type_;
     std::unique_ptr<IConfigFileReaderAdapter<DeviceData>> deviceAdapter_;

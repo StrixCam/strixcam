@@ -102,7 +102,8 @@ auto NowEpochMs() -> std::uint64_t {
 // contract. main() wires config + pipeline + the full control plane (BLE
 // transport -> proto dispatcher -> session SM + per-concern handlers) and runs
 // until terminated.
-auto main() -> int {
+namespace {
+auto RunFirmware() -> int {
     spdlog::set_level(spdlog::level::debug);
     spdlog::info("sst-cam-firmware starting");
 
@@ -295,4 +296,20 @@ auto main() -> int {
     ble_transport.Stop();
     pipeline.Stop();
     return 0;
+}
+}  // namespace
+
+// Catch any startup/runtime exception so the failure is LOGGED and the exit is
+// clean, instead of a silent std::terminate/abort that systemd merely restarts
+// (e.g. a malformed config file, or a subsystem that can't reach its hardware).
+auto main() -> int {
+    try {
+        return RunFirmware();
+    } catch (const std::exception& e) {
+        spdlog::critical("sst-cam-firmware: fatal error: {}", e.what());
+        return 1;
+    } catch (...) {
+        spdlog::critical("sst-cam-firmware: fatal error (unknown exception)");
+        return 1;
+    }
 }

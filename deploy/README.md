@@ -1,42 +1,32 @@
 # Deploying sst-cam-firmware to a Jetson
 
-The firmware ships as a **public** GitHub Release with two assets:
-
-- `sst_cam_firmware-<tag>-aarch64` — the cross-built binary (JetPack 7.2 / L4T r39.2).
-- `install.sh` — a **self-contained** installer, bundled on the release so the
-  device never needs a repo clone.
-
-A release is either a **beta** `vX.Y.Z-beta.N` (cut on `release/X.Y.Z` for
-on-device sign-off) or a **stable** `vX.Y.Z` (the exact, SHA-256-verified beta
-binary promoted to `main` unchanged). See `CLAUDE.md` / `docs/ci/` for the ladder.
+Each GitHub Release carries **one** asset — the cross-built binary
+`sst_cam_firmware-<tag>-aarch64` (JetPack 7.2 / L4T r39.2). The installer
+(`deploy/install.sh`) lives only here in the repo — the single source of truth —
+and is run straight from the repo at the tag you're installing (the exact command
+is printed in every release's notes). A release is either a **beta**
+`vX.Y.Z-beta.N` (cut on `release/X.Y.Z` for on-device sign-off) or a **stable**
+`vX.Y.Z` (the SHA-256-verified beta binary promoted to `main` unchanged). See
+`CLAUDE.md` / `docs/ci/` for the ladder.
 
 ---
 
 ## Install / update — one command
 
-On the Jetson (must be on **JetPack 7.2 / L4T r39.2**), run the installer straight
-off the release. The **first run sets everything up automatically** (creates the
-`sst-cam` system user, `/opt/sst-cam`, and the systemd unit) — no manual steps.
+On the Jetson (must be on **JetPack 7.2 / L4T r39.2**), pull the installer from the
+repo at the tag and run it. The **first run sets everything up automatically**
+(creates the `sst-cam` system user, `/opt/sst-cam`, and the systemd unit) — no
+manual steps. (This exact line is also in each release's notes — copy it from there.)
 
 ```bash
-# latest release
-curl -fsSL https://github.com/ScoutSportTechnology/sst-cam-firmware/releases/latest/download/install.sh \
-  | sudo bash
-
-# a specific version (by tag)
-curl -fsSL https://github.com/ScoutSportTechnology/sst-cam-firmware/releases/latest/download/install.sh \
-  | sudo bash -s -- --version v0.1.0-beta.2
-
-# a specific binary (by recorded sha256 — finds the release with that digest)
-curl -fsSL https://github.com/ScoutSportTechnology/sst-cam-firmware/releases/latest/download/install.sh \
-  | sudo bash -s -- --sha256 82ec55b03d45a9383d332d469666a59b4cb58074017cb8499cd0ca8b2be2dfff
+# install a specific release (replace the tag)
+curl -fsSL https://raw.githubusercontent.com/ScoutSportTechnology/sst-cam-firmware/v0.1.0-beta.3/deploy/install.sh \
+  | sudo bash -s -- --version v0.1.0-beta.3
 ```
 
-> `releases/latest/download/install.sh` always serves the newest installer; it
-> can still install any older `--version` / `--sha256` you ask for.
-
-If you have the repo checked out on the device, `sudo deploy/install.sh [...]`
-is equivalent.
+If the repo is checked out on the device, `sudo deploy/install.sh --version <tag>`
+is equivalent. To pin by digest instead of tag, add `--sha256 <hex>` (it finds the
+matching release and verifies the download); a repo clone is easiest for that.
 
 Watch it run:
 

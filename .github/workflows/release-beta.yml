@@ -398,6 +398,9 @@ jobs:
           {
             echo 'body<<EOF'
             printf 'Beta prerelease for hardware sign-off.\n\nAsset: `%s`\nsha256: %s\n' "$ASSET" "$SHA256"
+            # Install command — pull the installer from the repo AT THIS TAG (single
+            # source of truth; the script is not duplicated as a release asset).
+            printf '\n## Install on a JetPack 7.2 Jetson\n\n```bash\ncurl -fsSL https://raw.githubusercontent.com/%s/%s/deploy/install.sh | sudo bash -s -- --version %s\n```\n' "$GITHUB_REPOSITORY" "$TAG" "$TAG"
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -414,9 +417,5 @@ jobs:
           name: ${{ env.TAG }}
           prerelease: true
           body: ${{ steps.notes.outputs.body }}
-          # Bundle the self-contained installer so a device can run it straight
-          # off the release: curl .../download/install.sh | sudo bash -s -- ...
-          files: |
-            ${{ steps.asset.outputs.path }}
-            deploy/install.sh
+          files: ${{ steps.asset.outputs.path }}
           fail_on_unmatched_files: true
