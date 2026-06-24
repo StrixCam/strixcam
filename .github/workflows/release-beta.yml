@@ -311,8 +311,12 @@ jobs:
   # ---------------------------------------------------------------------------
   test:
     name: test
+    needs: image
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       # Assembling the JetPack 7.2 sysroot (~3GB BSP download + extracted r39.2
       # rootfs + ~69 noble debs) is disk-heavy on a stock hosted runner. Reclaim ~30GB
@@ -346,26 +350,36 @@ jobs:
         with:
           platforms: arm64
 
-      - name: cmake test preset + build + ctest (qemu)
-        uses: devcontainers/ci@v0.3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          # Build the devcontainer locally per run — no ghcr imageName/cacheFrom.
-          # ghcr image caching needs registry login + push perms and was failing
-          # at `docker tag ... ghcr.io/...`; deferred as an optimization. Each run
-          # rebuilds the image (sysroot unpack ~13 min, observed to fit the runner).
-          # Hardware-bound tests (real IMX477 / BlueZ / radio / live GStreamer)
-          # are expected to fail in the cross-compile container — see CLAUDE.md.
-          # They are NOT yet tagged with a CTest LABEL, so we exclude the known
-          # hardware-bound test names by regex (-E) here.
-          # DURABLE FIX (firmware owner): add `set_tests_properties(... PROPERTIES
-          # LABELS hardware)` (or a gtest naming convention) and switch this to
-          # `ctest -LE hardware`, so new hardware tests are excluded automatically.
-          runCmd: |
-            set -euo pipefail
-            cmake --preset test
-            cmake --build --preset test
-            QEMU_LD_PREFIX=/l4t/targetfs ctest --preset test --output-on-failure \
-              -E 'CaptureSingleFrameAndLog|AdvertisesOnRealBluez|FormsAutonomousGroupOwner|HttpServesByteRangeWithBearerToken'
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pull the prebuilt devcontainer (built once by the `image` job) and run the
+      # cross-build + ctest inside it — no per-run sysroot rebuild. ctest runs the
+      # aarch64 GTest binaries under qemu (host binfmt from setup-qemu-action);
+      # QEMU_LD_PREFIX points the emulator at the L4T targetfs for shared libs.
+      # Hardware-bound tests (real IMX477 / BlueZ / radio / live GStreamer) fail in
+      # the cross container — see CLAUDE.md — so the known names are excluded by -E.
+      # DURABLE FIX (firmware owner): tag them `LABELS hardware` + switch to -LE.
+      - name: cmake test preset + build + ctest (qemu)
+        env:
+          TAG: ${{ needs.image.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE}:${TAG}"
+          docker run --rm --user root \
+            -v "$PWD":/workspace -w /workspace \
+            -v "$HOME/.conan2":/root/.conan2 -e CONAN_HOME=/root/.conan2 \
+            -e QEMU_LD_PREFIX=/l4t/targetfs \
+            "${IMAGE}:${TAG}" bash -lc '
+              set -euo pipefail
+              cmake --preset test
+              cmake --build --preset test
+              ctest --preset test --output-on-failure \
+                -E "CaptureSingleFrameAndLog|AdvertisesOnRealBluez|FormsAutonomousGroupOwner|HttpServesByteRangeWithBearerToken"'
 
   # ===========================================================================
   # BETA RELEASE JOBS — push/dispatch-only. NOT gated behind the check jobs:
@@ -399,14 +413,16 @@ jobs:
 
   build-and-upload:
     name: cross-build beta binary
-    needs: resolve
+    needs: [resolve, image]
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # upload the release asset
+      packages: read # pull the prebuilt devcontainer image
     env:
       TAG: ${{ needs.resolve.outputs.tag }}
     steps:
-      # Reclaim ~30GB so the JetPack base image + L4T sysroot fit on a hosted
-      # runner (else ENOSPC). Self-hosted runner needed if this still fails.
+      # Reclaim disk before pulling the prebuilt image (no sysroot rebuild here).
       - name: Free up disk space (host)
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
         with:
@@ -420,32 +436,30 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Restore Conan cache
-        uses: actions/cache@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          path: ~/.conan2
-          key: conan-${{ runner.os }}-${{ hashFiles('conanfile.py') }}
-          restore-keys: |
-            conan-${{ runner.os }}-
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # apply_binaries.sh (in 001) chroots into the arm64 rootfs to run dpkg —
-      # needs qemu-aarch64 in the host binfmt_misc, else "Exec format error" (126).
-      - name: Set up QEMU (arm64 binfmt for apply_binaries chroot)
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
+      # Pull the prebuilt devcontainer (built once by the `image` job) and run the
+      # release cross-build inside it — no per-run sysroot rebuild. The binary lands
+      # in the bind-mounted build/ on the host for the staging step below.
       - name: cmake release preset + build
-        uses: devcontainers/ci@v0.3
-        with:
-          # Build the devcontainer locally — no ghcr imageName/cacheFrom (needs
-          # registry login + push perms; was failing at `docker tag ghcr.io/...`).
-          # Deferred caching optimization.
-          runCmd: |
-            set -euo pipefail
-            cmake --preset release
-            cmake --build --preset release
-            test -x build/release/bin/sst_cam_firmware
+        env:
+          IMG_TAG: ${{ needs.image.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker pull "${IMAGE}:${IMG_TAG}"
+          docker run --rm --user root \
+            -v "$PWD":/workspace -w /workspace \
+            -v "$HOME/.conan2":/root/.conan2 -e CONAN_HOME=/root/.conan2 \
+            "${IMAGE}:${IMG_TAG}" bash -lc '
+              set -euo pipefail
+              cmake --preset release
+              cmake --build --preset release
+              test -x build/release/bin/sst_cam_firmware'
 
       - name: Stage versioned asset + compute SHA-256
         id: asset
