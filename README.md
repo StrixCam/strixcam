@@ -165,10 +165,13 @@ with a three-rung release maturity ladder:
 
 Three branch-scoped product workflows drive this — `release-alpha.yml` owns
 `development` (PR checks + the alpha build), `release-beta.yml` owns `release/**`
-(PR checks + the beta build), and `release.yml` owns `main` (promote only) —
-alongside the unchanged `devcontainer-image.yml`. Two invariants hold: **`main`
-runs no failable build** — it only promotes the already-built beta binary — and
-**no CI job commits back to `main`**. The aarch64 binary is published as a GitHub
+(PR checks + the beta build), and `release.yml` owns `main` (promote only). The
+cross-build devcontainer is built **once per `.devcontainer/**` content** by an
+in-CI `image` job (content-hash tag in GHCR) and pulled by `tidy`/`test`/the
+release build — not rebuilt per run; docs/workflow-only PRs skip the heavy
+checks (see `CLAUDE.md`). Two invariants hold: **`main` runs no failable build**
+— it only promotes the already-built beta binary — and **no CI job commits back
+to `main`**. The aarch64 binary is published as a GitHub
 Release asset, `sst_cam_firmware-<tag>-aarch64`. `deploy/install.sh` installs a
 released (stable or beta) binary onto a Jetson. See `CLAUDE.md` and `docs/ci/`
 for the workflow, ruleset, and version-reset runbooks.

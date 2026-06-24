@@ -39,14 +39,18 @@
 #
 # WHY the devcontainer: the Jetson aarch64 cross-build is only correct inside the
 # repo's devcontainer image (gcc-13 aarch64 cross toolchain, the order-sensitive L4T
-# sysroot prep scripts, host-protoc codegen, OpenCV SONAME pin, Conan cache). We
-# reuse that image via devcontainers/ci rather than re-deriving the toolchain
-# here, so every cross-build gotcha stays solved in one place (see CLAUDE.md).
+# sysroot prep scripts, host-protoc codegen, OpenCV SONAME pin, Conan cache). So
+# every cross-build gotcha stays solved in one place (see CLAUDE.md).
 #
-# KNOWN RISK: heavy/flaky JetPack devcontainer build on hosted runners — first
-# build unpacks a ~37 GB L4T targetfs sysroot (~20 min cold) and may exceed a
-# stock hosted runner's disk/time. Re-run with `gh run rerun <id> --failed`; a
-# self-hosted runner that keeps the sysroot + image warm is the durable fix.
+# IMAGE REUSE (content-hash build-or-pull): the image is built ONCE per
+# `.devcontainer/**` content and reused. The `image` job tags it by
+# `hashFiles('.devcontainer/**')`; if GHCR already has `${IMAGE}:<hash>` it is a
+# pull, else it builds + pushes that hash once. tidy/test/cross-build `needs:` it
+# and `docker pull`+`docker run` the image (no per-run sysroot rebuild). format +
+# ci-scripts are host-only (no image). A `.devcontainer/**` change is the only
+# trigger for a rebuild. SECURITY: consumers pull by content-hash tag (never a
+# mutable `:latest`); the push needs `packages: write`, so fork PRs (read-only
+# token) skip it and build-only — they can neither poison nor benefit.
 # =============================================================================
 name: release-beta
 
