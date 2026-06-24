@@ -179,7 +179,7 @@ ensure_setup() {
 # Temp workspace on the SAME filesystem as INSTALL_PATH so the final mv is atomic.
 mkdir -p "$INSTALL_DIR"
 TMP_DIR="$(mktemp -d "${INSTALL_DIR%/}/.install.XXXXXX")"
-# shellcheck disable=SC2329  # invoked indirectly via the EXIT trap below
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via the EXIT trap below
 cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
 
