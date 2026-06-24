@@ -184,3 +184,5 @@ for the workflow, ruleset, and version-reset runbooks.
 ---
 
 ⚽ **Goal:** Build a fully open-source sports camera capable of streaming, tracking, capturing, and broadcasting with overlays — bringing professional-style coverage to any field.
+
+<!-- ci path-filter skip test -->
