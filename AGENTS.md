@@ -53,18 +53,20 @@ ladder**:
    **SHA-256-verified** beta binary. Never add a `cmake`/devcontainer build step
    to `release.yml`.
 
-Three **branch-scoped** product workflows + the devcontainer-image publisher. Each
-product workflow owns one branch tier; the PR gate checks are folded **inside** the
-alpha/beta workflows (`pull_request`-gated), so there is **no standalone `ci.yml`**:
+Three **branch-scoped** product workflows. Each owns one branch tier; the PR gate
+checks are folded **inside** the alpha/beta workflows (`pull_request`-gated), so
+there is **no standalone `ci.yml`**. Each starts with an `image` job that builds
+the devcontainer **once per `.devcontainer/**` content** (content-hash tag in
+GHCR) and is pulled by `tidy`/`test`/the cross-build — no per-run rebuild; a
+`changes` job skips `tidy`/`test` on docs/workflow-only PRs:
 
 | Workflow (name) | Trigger | Does |
 | --------------- | ------- | ---- |
-| `release-alpha.yml` (`release-alpha`) — owns `development` | PR → `development` | `ci-scripts` (shellcheck + resolve-version tests) + `format` + `tidy` + `test` (the required checks) |
-| `release-alpha.yml` (`release-alpha`) | push → `development` (+ dispatch) | `resolve-version.sh alpha` → cross-build → atomic `vX.Y.Z-alpha.N` `--prerelease` |
+| `release-alpha.yml` (`release-alpha`) — owns `development` | PR → `development` | `ci-scripts` (shellcheck + resolve-version tests) + `format` (host clang-format) + `tidy` + `test` (the required checks; `tidy`/`test` pull the image) |
+| `release-alpha.yml` (`release-alpha`) | push → `development` (+ dispatch) | `resolve-version.sh alpha` → cross-build (pulls image) → atomic `vX.Y.Z-alpha.N` `--prerelease` |
 | `release-beta.yml` (`release-beta`) — owns `release/**` | PR → `release/**` | same `ci-scripts` + `format` + `tidy` + `test` checks |
 | `release-beta.yml` (`release-beta`) | push → `release/**` (+ dispatch) | base = branch `X.Y.Z` → cross-build → atomic `-beta.N` `--prerelease`, records binary SHA-256 in notes |
 | `release.yml` (`release`) — owns `main` | push → `main` (+ dispatch) | derive `X.Y.Z`, tag `vX.Y.Z`, download + **verify SHA-256** of beta binary, re-upload renamed (no build) |
-| `devcontainer-image.yml` | push → `main` touching `.devcontainer/**` | publish GHCR devcontainer image; surfaces digest in Summary, commits nothing |
 
 The check jobs are `if: github.event_name == 'pull_request'`; the release jobs are
 `if: github.event_name != 'pull_request'`. Version math is
