@@ -293,7 +293,13 @@ jobs:
       # findings in a single run instead of stopping at the first failure.
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3] # 4 shards — keep in sync with the `4` passed below
+        # The shard TOTAL is derived from this list via ${{ strategy.job-total }}
+        # and passed to tidy-run.sh, so the index and the total can never drift
+        # (a hardcoded total is a silent-coverage-hole hazard). Retune by editing
+        # this list alone. Entries MUST be the contiguous range 0..N-1 — the
+        # round-robin covers bins 0..total-1, and any gap/out-of-range fails
+        # CLOSED (tidy-run.sh rejects an index >= total).
+        shard: [0, 1, 2, 3]
     steps:
       # Assembling the JetPack 7.2 sysroot (~3GB BSP download + extracted r39.2
       # rootfs + ~69 noble debs) is disk-heavy on a stock hosted runner. Reclaim ~30GB
@@ -347,17 +353,18 @@ jobs:
           image: ${{ env.IMAGE }}
           tag: ${{ needs.image.outputs.tag }}
 
-      - name: clang-tidy shard ${{ matrix.shard }}/4 (-p build/test)
+      - name: clang-tidy shard ${{ matrix.shard }} of ${{ strategy.job-total }} (-p build/test)
         env:
           TAG: ${{ needs.image.outputs.tag }}
           SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ strategy.job-total }}
         run: |
           set -euo pipefail
           docker run --rm --user root \
             -v "$PWD":/workspace -w /workspace \
             -v "$HOME/.conan2":/root/.conan2 -e CONAN_HOME=/root/.conan2 \
-            -e SHARD="${SHARD}" \
-            "${IMAGE}:${TAG}" bash -lc 'set -euo pipefail; scripts/ci/tidy-run.sh shard "${SHARD}" 4'
+            -e SHARD="${SHARD}" -e TOTAL="${TOTAL}" \
+            "${IMAGE}:${TAG}" bash -lc 'set -euo pipefail; scripts/ci/tidy-run.sh shard "${SHARD}" "${TOTAL}"'
 
   # ---------------------------------------------------------------------------
   # tidy — AGGREGATOR + floor-NOLINT guard. This is the wired REQUIRED STATUS
