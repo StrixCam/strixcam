@@ -39,6 +39,12 @@ INSTALL_DIR="${INSTALL_ROOT}/bin"
 INSTALL_PATH="${INSTALL_DIR}/sst_cam_firmware"
 BACKUP_PATH="${INSTALL_PATH}.bak"
 UNIT_PATH="/etc/systemd/system/${SERVICE}.service"
+# Config dir the firmware reads on boot. MUST match the compiled-in path in
+# src/main.cpp (kConfigDir). The service runs as the non-root SERVICE_USER and
+# self-writes default JSON here on first boot, so the dir must exist and be owned
+# by that user — it lives under root-owned /etc, which the user cannot create on
+# its own. deploy/install-test.sh guards this path against drift from main.cpp.
+CONFIG_DIR="/etc/sst/cam/config"
 API="https://api.github.com/repos/${REPO}"
 EXPECTED_L4T_MAJOR=39   # JetPack 7.2
 
@@ -171,6 +177,16 @@ ensure_setup() {
     changed="yes"
   fi
   chown -R "${SERVICE_USER}:${SERVICE_USER}" "$INSTALL_ROOT"
+
+  # Config dir: the firmware self-writes default JSON here on first boot, but it
+  # runs as the non-root SERVICE_USER and cannot create a dir under root-owned
+  # /etc. Provision it (and its parents) here and hand ownership to that user.
+  if [ ! -d "$CONFIG_DIR" ]; then
+    log "Setup: creating ${CONFIG_DIR} ..."
+    mkdir -p "$CONFIG_DIR"
+    changed="yes"
+  fi
+  chown -R "${SERVICE_USER}:${SERVICE_USER}" "/etc/sst"
 
   if [ ! -f "$UNIT_PATH" ] || ! embedded_unit | cmp -s - "$UNIT_PATH"; then
     log "Setup: installing systemd unit -> ${UNIT_PATH} ..."

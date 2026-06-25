@@ -72,5 +72,35 @@ else
   bad "preflight check_runtime_libs must run before the service is stopped"
 fi
 
+# 5. Config-dir provisioning: the firmware self-writes default JSON on first boot
+#    as the non-root service user, so install.sh must create CONFIG_DIR and own
+#    it to that user. Without this the service crash-loops on a fresh device.
+config_dir="$(sed -nE 's/^CONFIG_DIR="([^"]+)".*/\1/p' "$INSTALL_SH" | head -n1)"
+if [ -n "$config_dir" ]; then ok; else bad "CONFIG_DIR not defined in install.sh"; fi
+# shellcheck disable=SC2016
+if grep -q 'mkdir -p "$CONFIG_DIR"' "$INSTALL_SH"; then ok; else bad "install.sh must mkdir CONFIG_DIR"; fi
+# the SST config subtree must be chowned to the service user (string-built path ok)
+# shellcheck disable=SC2016
+if grep -qE 'chown -R "\$\{SERVICE_USER\}:\$\{SERVICE_USER\}" "/etc/sst"' "$INSTALL_SH"; then
+  ok
+else
+  bad "install.sh must chown the /etc/sst config subtree to SERVICE_USER"
+fi
+
+# 6. Drift guard: install.sh CONFIG_DIR must byte-match the compiled-in path in
+#    src/main.cpp (kConfigDir) — a mismatch silently reintroduces this bug
+#    (firmware reads one path, install.sh provisions another).
+MAIN_CPP="${REPO_ROOT}/src/main.cpp"
+if [ -f "$MAIN_CPP" ]; then
+  main_dir="$(sed -nE 's/.*kConfigDir *= *"([^"]+)".*/\1/p' "$MAIN_CPP" | head -n1)"
+  if [ -n "$main_dir" ] && [ "$main_dir" = "$config_dir" ]; then
+    ok
+  else
+    bad "CONFIG_DIR ('$config_dir') != src/main.cpp kConfigDir ('$main_dir')"
+  fi
+else
+  bad "src/main.cpp not found: $MAIN_CPP"
+fi
+
 printf '\ndeploy/install-test.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
