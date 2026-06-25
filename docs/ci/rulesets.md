@@ -222,6 +222,13 @@ one-time version reset (see `version-reset-runbook.md`), where the ruleset is
 temporarily bypassed to delete the bogus `v0.1.0` / `v0.1.1` tags and re-enabled
 immediately.
 
+## Related
+
+- **[release-commit-signing.md](release-commit-signing.md)** — why a release's
+  green **"Verified"** badge depends on the target commit being PR-merged (web-flow
+  signed) and not a local direct push; the proper flow to keep `-alpha.N`/`-beta.N`
+  tags Verified.
+
 ## Verify
 
 - Direct push to `main` is rejected.
