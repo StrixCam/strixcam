@@ -67,10 +67,7 @@ TEST(FrameMatTest, WrapNv12FastPathPointsAtInputMemory) {
     auto frame = MakeNv12Frame(kWidth, kHeight, kLuma, kNeutralChroma, kNeutralChroma);
 
     auto wrapped = WrapNv12(frame);
-    if (!wrapped) {
-        FAIL() << "WrapNv12 returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(wrapped.has_value());
     EXPECT_EQ(wrapped->rows, 48);  // H * 3/2  NOLINT(readability-magic-numbers)
     EXPECT_EQ(wrapped->cols, static_cast<int>(kWidth));
     EXPECT_EQ(wrapped->type(), CV_8UC1);
@@ -89,10 +86,7 @@ TEST(FrameMatTest, WrapNv12CopiesWhenStrided) {
     auto frame = MakeNv12Frame(kWidth, kHeight, kLuma, kChromaU, kChromaV, kStride);
 
     auto wrapped = WrapNv12(frame);
-    if (!wrapped) {
-        FAIL() << "WrapNv12 returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(wrapped.has_value());
     EXPECT_EQ(wrapped->rows, 24);  // H * 3/2  NOLINT(readability-magic-numbers)
     EXPECT_EQ(wrapped->cols, static_cast<int>(kWidth));
     // Fallback path: Mat must NOT point at the strided input.

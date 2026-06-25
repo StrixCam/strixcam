@@ -12,8 +12,8 @@ namespace sst::adapters::storage {
 // dev container (no GPU) — a real module-boundary writer, not hardware-bound.
 class OpenCvThumbnailWriter final : public sst::storage::IThumbnailWriter {
    public:
-    auto Write(const sst::capture::Frame& frame,
-               const std::filesystem::path& output_path) -> bool override;
+    auto Write(const sst::capture::Frame& frame, const std::filesystem::path& output_path)
+        -> bool override;
 };
 
 }  // namespace sst::adapters::storage

@@ -216,8 +216,8 @@ auto GstRtspAppStreamServer::Push(const sst::capture::Frame& frame) -> void {
 }
 
 auto GstRtspAppStreamServer::OnMediaConfigureStatic(GstRTSPMediaFactory* /*factory*/,
-                                                    GstRTSPMedia* media,
-                                                    gpointer user_data) -> void {
+                                                    GstRTSPMedia* media, gpointer user_data)
+    -> void {
     auto* self = static_cast<GstRtspAppStreamServer*>(user_data);
     self->OnMediaConfigure(media);
 }

@@ -139,10 +139,7 @@ TEST(DownloadServerTest, TokenMintValidateExpire) {
     DownloadServer server(root, [&now] { return now; });
 
     auto token = server.MintToken("match-a", /*ttl_seconds=*/kTokenTtlSeconds);
-    if (!token) {
-        FAIL() << "MintToken returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(token.has_value());
     EXPECT_EQ(token->expires_at_unix, kFixedExpiry);
     EXPECT_TRUE(server.ValidateToken(token->token).has_value());
 
@@ -172,10 +169,7 @@ TEST(DownloadServerTest, HttpServesByteRangeWithBearerToken) {
                                               .count());
     });
     auto token = downloads.MintToken("match-a", kLongTokenTtlSeconds);
-    if (!token) {
-        FAIL() << "MintToken returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(token.has_value());
 
     sst::adapters::network::HttpDownloadServer http(
         "127.0.0.1", 0,

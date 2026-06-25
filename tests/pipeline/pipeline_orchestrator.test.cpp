@@ -167,8 +167,8 @@ class CountingSink final : public IFrameSink {
 // these helpers and pass it straight into the constructor. Single-camera tests
 // use OneCamera + a real StaticDecision (deterministic: cam 0 full-frame).
 
-auto OneCamera(std::unique_ptr<ICaptureFrame> capture,
-               std::unique_ptr<IPreprocessor> preprocessor) -> std::vector<CameraChain> {
+auto OneCamera(std::unique_ptr<ICaptureFrame> capture, std::unique_ptr<IPreprocessor> preprocessor)
+    -> std::vector<CameraChain> {
     std::vector<CameraChain> chains;
     chains.push_back(
         CameraChain{.capture = std::move(capture), .preprocessor = std::move(preprocessor)});
@@ -176,8 +176,8 @@ auto OneCamera(std::unique_ptr<ICaptureFrame> capture,
 }
 
 auto TwoCameras(std::unique_ptr<ICaptureFrame> cam0, std::unique_ptr<IPreprocessor> pre0,
-                std::unique_ptr<ICaptureFrame> cam1,
-                std::unique_ptr<IPreprocessor> pre1) -> std::vector<CameraChain> {
+                std::unique_ptr<ICaptureFrame> cam1, std::unique_ptr<IPreprocessor> pre1)
+    -> std::vector<CameraChain> {
     std::vector<CameraChain> chains;
     chains.push_back(CameraChain{.capture = std::move(cam0), .preprocessor = std::move(pre0)});
     chains.push_back(CameraChain{.capture = std::move(cam1), .preprocessor = std::move(pre1)});
@@ -362,10 +362,7 @@ TEST(PipelineOrchestratorTest, GrabLatestReturnsLatestFinalFrame) {
     }
     orchestrator.Stop();
 
-    if (!snap) {
-        FAIL() << "no final frame produced within the poll window";
-        return;
-    }
+    ASSERT_TRUE(snap.has_value()) << "no final frame produced within the poll window";
     EXPECT_EQ(snap->format, sst::common::PixelFormat::BGR8);
     EXPECT_EQ(snap->geometry.width, kOutputDims.width);
     EXPECT_EQ(snap->geometry.height, kOutputDims.height);

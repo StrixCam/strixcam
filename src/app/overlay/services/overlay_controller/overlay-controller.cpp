@@ -22,8 +22,8 @@ auto OverlayController::SetBindingData(const BindingData& data) -> void {
 
 auto OverlayController::ActivateBanner(const std::string& template_id,
                                        const std::map<std::string, std::string>& params,
-                                       std::uint32_t duration_s_override,
-                                       std::uint64_t now_ms) -> bool {
+                                       std::uint32_t duration_s_override, std::uint64_t now_ms)
+    -> bool {
     std::lock_guard lock(mtx_);
     return scene_.ActivateBanner(template_id, params, duration_s_override, now_ms);
 }

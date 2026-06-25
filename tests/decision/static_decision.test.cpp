@@ -40,10 +40,7 @@ constexpr Size kCam1Size720p{1280, 720};
 // Extracted from the table-driven test to keep its loop body — and the
 // expanded gtest macros — under the cognitive-complexity threshold.
 void ExpectFullFrameCamera0(const std::optional<CameraChoice>& choice, Size size) {
-    if (!choice) {
-        FAIL() << "expected a choice for " << size.width << "x" << size.height;
-        return;
-    }
+    ASSERT_TRUE(choice.has_value()) << "expected a choice for " << size.width << "x" << size.height;
     EXPECT_EQ(choice->camera_index, 0U);
     EXPECT_EQ(choice->crop.x, 0U);
     EXPECT_EQ(choice->crop.y, 0U);
@@ -69,10 +66,7 @@ TEST(StaticDecisionTest, IgnoresCamera1WhenCamera0Present) {
         // NOLINTNEXTLINE(readability-magic-numbers) — self-evident 1080p/720p dims
         BundleWithGeometry({1920, 1080}), BundleWithGeometry({1280, 720})};
     const auto choice = decision.Decide(cameras);
-    if (!choice) {
-        FAIL() << "Decide returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(choice.has_value());
     // Always cam 0 even though cam 1 also has a (differently-sized) frame.
     EXPECT_EQ(choice->camera_index, 0U);
     EXPECT_EQ(choice->crop.width, 1920U);   // NOLINT(readability-magic-numbers) — 1080p width

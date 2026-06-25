@@ -1,0 +1,145 @@
+# =============================================================================
+# Publish the devcontainer image to GHCR so the PR CI jobs (format/tidy/test)
+# can reuse a prebuilt, digest-pinned image instead of unpacking the ~37 GB L4T
+# sysroot every run.
+#
+# SECURITY MODEL (do not weaken):
+#   - Triggers ONLY on push to main touching .devcontainer/** (+ manual dispatch).
+#     There is NO `pull_request` trigger, so a fork PR can never obtain the
+#     `packages: write` token or publish an image.
+#   - `packages: write` is granted at the JOB level, not workflow-wide. This job
+#     no longer requests `contents: write`: it does NOT commit anything back to
+#     `main` (no publish job may push to main — see the plan's R9). The published
+#     image's digest is surfaced in the run Summary only, for a manual bump.
+#   - WHY this stays on `push:[main]` and is NOT retargeted to `development`: `main`
+#     is the most-protected branch (no direct push, admin-only bypass).
+#     Publishing the GHCR `:latest` from a less-protected `development` would let any
+#     actor with development write access push a poisoned image that all CI then
+#     builds from. The trigger retarget is separable from R9 and unnecessary.
+#
+# DEFERRED CACHE WIRE-IN OBLIGATION: when the CI image-cache consumption is
+# eventually un-deferred (ci.yml consuming this image via imageName/cacheFrom),
+# it MUST first re-establish digest pinning — pin by `@sha256:<digest>`, NEVER
+# the mutable `:latest`. Dropping the auto-commit of .devcontainer/image-digest
+# removed the stored pin, so the wire-in must re-introduce a pinned digest (read
+# from this run's Summary) before consuming, or it reopens the mutable-tag
+# image-poisoning hole this security model exists to close.
+#
+# MEASUREMENT GATE (see the plan / CLAUDE.md): the CI jobs are NOT yet rewired to
+# consume this image. Before wiring `imageName`/`cacheFrom` into ci.yml, MEASURE
+# a real pull's wall-time + peak disk on a hosted runner with free-disk applied.
+# An ephemeral runner that already needs jlumbroso/free-disk-space to fit the
+# *build* may ENOSPC on the ~37 GB *pull*, or not beat the per-run rebuild. If it
+# doesn't clearly win, keep the per-run build (the documented rollback) and leave
+# this workflow publishing for later.
+# =============================================================================
+name: devcontainer-image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".devcontainer/**"
+  workflow_dispatch:
+
+# Serialize publishes: two overlapping .devcontainer/** pushes would otherwise
+# race on the :latest tag. Do not cancel an in-progress publish — a half-pushed
+# image is worse than a queued one.
+concurrency:
+  group: devcontainer-image
+  cancel-in-progress: false
+
+# Note: a workflow-level permissions block is intentionally omitted so each job
+# can request the narrowest set it needs.
+
+env:
+  IMAGE: ghcr.io/scoutsporttechnology/sst-cam-firmware-devcontainer
+
+jobs:
+  publish:
+    name: build + push devcontainer image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write # only to push the image to GHCR (no contents:write — this
+      # job pushes nothing back to main; the digest is surfaced in the Summary).
+    steps:
+      # Third-party actions are SHA-pinned (tag in trailing comment) — this is a
+      # privileged packages:write (GHCR publish) job, so a mutable-ref overwrite
+      # upstream must not silently run in it. Bump deliberately (e.g. Dependabot).
+      # The ~37 GB L4T sysroot unpack exhausts a stock hosted runner's disk.
+      - name: Free up disk space (host)
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main
+        with:
+          tool-cache: true
+          large-packages: true
+          docker-images: false
+          swap-storage: true
+
+      - name: Checkout (with proto submodule)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Build the devcontainer. push:always does NOT work here — this devcontainer
+      # is docker-compose based, so devcontainers/ci builds the compose service
+      # image under its local compose name (`sst-cam-firmware`, per
+      # .devcontainer/docker-compose.yml) and never pushes it to imageName. So
+      # build only, then tag + push that local image to GHCR in the next step.
+      - name: Build devcontainer image
+        uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3
+        with:
+          push: never
+
+      # The compose service `app` builds `image: sst-cam-firmware` — tag that
+      # local image to the GHCR name and push. Fail loudly if the local image is
+      # absent (compose naming changed) rather than committing a stale digest.
+      - name: Tag + push to GHCR
+        run: |
+          set -euo pipefail
+          if ! docker image inspect sst-cam-firmware >/dev/null 2>&1; then
+            echo "ERROR: local image 'sst-cam-firmware' not found after build" >&2
+            docker image ls >&2
+            exit 1
+          fi
+          docker tag sst-cam-firmware "${IMAGE}:latest"
+          docker push "${IMAGE}:latest"
+
+      - name: Resolve published digest
+        id: digest
+        run: |
+          set -euo pipefail
+          digest=$(docker buildx imagetools inspect "${IMAGE}:latest" \
+            --format '{{.Manifest.Digest}}')
+          # imagetools exits 0 even when the template yields an empty string; a
+          # blank digest would commit "ghcr.io/...@" and break every consumer.
+          case "${digest}" in
+            sha256:*) ;;
+            *) echo "ERROR: imagetools returned no sha256 digest: '${digest}'" >&2; exit 1 ;;
+          esac
+          echo "Published ${IMAGE}@${digest}"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      # The digest is surfaced in the run Summary only — this job does NOT commit
+      # it back to main (no publish job may push to main; see header / plan R9).
+      # When the deferred CI cache wire-in is un-deferred, it must re-establish
+      # digest pinning (`@sha256:`, never `:latest`) using this recorded digest.
+      # if: always() so the digest is recoverable even if an earlier step failed.
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### devcontainer image published"
+            echo ""
+            echo "- \`${IMAGE}@${{ steps.digest.outputs.digest }}\`"
+            echo ""
+            echo "CI consumers are not yet wired to this image — measure pull"
+            echo "wall-time + peak disk on a hosted runner before rewiring ci.yml"
+            echo "(see the workflow header / plan)."
+          } >> "$GITHUB_STEP_SUMMARY"

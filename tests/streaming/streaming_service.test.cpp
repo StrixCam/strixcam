@@ -126,8 +126,8 @@ class StreamingServiceTest : public ::testing::Test {
         service_ = std::make_unique<StreamingService>(std::move(app), sink_.MakeFactory());
     }
 
-    static auto MakePlatformConfig(std::int64_t stream_id,
-                                   std::string name = "test") -> PlatformStreamConfig {
+    static auto MakePlatformConfig(std::int64_t stream_id, std::string name = "test")
+        -> PlatformStreamConfig {
         PlatformStreamConfig cfg;
         cfg.stream_id = stream_id;
         cfg.name = std::move(name);

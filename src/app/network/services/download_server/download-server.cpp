@@ -93,8 +93,8 @@ auto DownloadServer::ResolveRecordingPath(const std::string& recording_id) const
     return std::nullopt;
 }
 
-auto DownloadServer::MintToken(const std::string& recording_id,
-                               std::uint64_t ttl_seconds) -> std::optional<DownloadToken> {
+auto DownloadServer::MintToken(const std::string& recording_id, std::uint64_t ttl_seconds)
+    -> std::optional<DownloadToken> {
     auto path = ResolveRecordingPath(recording_id);
     if (!path) {
         spdlog::warn("DownloadServer::MintToken: recording {} not found", recording_id);

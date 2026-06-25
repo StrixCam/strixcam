@@ -189,18 +189,6 @@ auto BluezBleTransport::Start() -> void {
             spdlog::warn("BluezBleTransport: could not set adapter Alias: {}", e.what());
         }
 
-        // Start dispatching the connection BEFORE the blocking Register* calls.
-        // BlueZ replies to RegisterApplication only after it has synchronously
-        // called org.freedesktop.DBus.ObjectManager.GetManagedObjects back on our
-        // root object (and read each characteristic's properties). If our event
-        // loop is not already running, that callback is never serviced, so
-        // RegisterApplication blocks until the 25s D-Bus reply timeout
-        // ("org.freedesktop.DBus.Error.Timeout: Connection timed out") and BLE
-        // aborts. Running the async loop first lets the loop thread answer those
-        // BlueZ-side callbacks while this thread waits on the sync replies.
-        connection_->enterEventLoopAsync();
-        running_ = true;
-
         auto adv_proxy = sdbus::createProxy(*connection_, kBluezBus, adapter_path_);
         adv_proxy->callMethod("RegisterAdvertisement")
             .onInterface(kIfaceLeAdvManager)
@@ -213,6 +201,9 @@ auto BluezBleTransport::Start() -> void {
             .withArguments(sdbus::ObjectPath{app_root_path_},
                            std::map<std::string, sdbus::Variant>{});
         application_registered_ = true;
+
+        connection_->enterEventLoopAsync();
+        running_ = true;
 
         spdlog::info("BluezBleTransport: advertising as \"{}\" with service {} on adapter {}",
                      advertised_name_, sst::control::BootstrapDefaults::kGattServiceUuid,
@@ -306,8 +297,8 @@ auto BluezBleTransport::SendResponse(const sst_cam::CommandResponse& response) -
                   response.correlation_id(), static_cast<int>(response.status()), total);
 }
 
-auto BluezBleTransport::SendInboundAck(const std::string& correlation_id,
-                                       std::uint32_t chunk_index) -> void {
+auto BluezBleTransport::SendInboundAck(const std::string& correlation_id, std::uint32_t chunk_index)
+    -> void {
     if (!gatt_app_) {
         spdlog::warn("BluezBleTransport::SendInboundAck: GATT app not active");
         return;

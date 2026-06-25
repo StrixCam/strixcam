@@ -18,7 +18,7 @@ namespace sst::overlay {
 // then passes the original frame through unchanged. Fully-transparent overlays
 // blend to a visually clean frame, so a "disabled" overlay (empty scene → all
 // alpha 0) needs no special-casing upstream.
-auto CompositeOverlay(const sst::capture::Frame& source,
-                      const RgbaImage& overlay) -> std::optional<sst::capture::Frame>;
+auto CompositeOverlay(const sst::capture::Frame& source, const RgbaImage& overlay)
+    -> std::optional<sst::capture::Frame>;
 
 }  // namespace sst::overlay

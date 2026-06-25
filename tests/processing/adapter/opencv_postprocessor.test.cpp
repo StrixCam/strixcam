@@ -55,10 +55,7 @@ TEST(OpenCvPostprocessorTest, CropAndResizeProducesExpectedDimsAndFormat) {
     auto src = MakeNv12Frame(200, 200, /*luma=*/76, /*chroma_u=*/84, /*chroma_v=*/255);
 
     auto out = post.Process(src, CropRect{0, 0, 100, 100});
-    if (!out) {
-        FAIL() << "Process returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(out.has_value());
 
     EXPECT_EQ(out->format, sst::common::PixelFormat::BGR8);
     EXPECT_EQ(out->geometry.width, 50U);
@@ -81,14 +78,8 @@ TEST(OpenCvPostprocessorTest, RespectsSourceStride) {
     auto out_strided = post.Process(strided, CropRect{0, 0, 32, 32});
     auto out_contig = post.Process(contig, CropRect{0, 0, 32, 32});
 
-    if (!out_strided) {
-        FAIL() << "Process(strided) returned nullopt";
-        return;
-    }
-    if (!out_contig) {
-        FAIL() << "Process(contig) returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(out_strided.has_value());
+    ASSERT_TRUE(out_contig.has_value());
     EXPECT_EQ(out_strided->planes[0].size, out_contig->planes[0].size);
 
     // Sample center pixel of both — strided should match contig within
@@ -107,10 +98,7 @@ TEST(OpenCvPostprocessorTest, OutputFrameOwnsBuffer) {
         return post.Process(src, CropRect{0, 0, 32, 32});
     }();
 
-    if (!out) {
-        FAIL() << "Process returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(out.has_value());
     ASSERT_NE(out->owner, nullptr);
     for (std::size_t i = 0; i < out->planes[0].size; ++i) {
         // After NV12→BGR with Y=200, U=V=128, all channels should be ~200.
@@ -123,10 +111,7 @@ TEST(OpenCvPostprocessorTest, OutputFormatGray8) {
         .output_width = 16, .output_height = 16, .output_format = sst::common::PixelFormat::GRAY8}};
     auto out = post.Process(MakeNv12Frame(64, 64, 200, 128, 128), CropRect{0, 0, 32, 32});
 
-    if (!out) {
-        FAIL() << "Process returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(out.has_value());
     EXPECT_EQ(out->format, sst::common::PixelFormat::GRAY8);
     ASSERT_EQ(out->planes.size(), 1U);
     EXPECT_EQ(out->planes[0].stride, 16U);
@@ -138,10 +123,7 @@ TEST(OpenCvPostprocessorTest, MetadataPropagated) {
     auto src = MakeNv12Frame(64, 64, 100, 128, 128, /*stride=*/0, /*frame_id=*/0xCAFE);
 
     auto out = post.Process(src, CropRect{0, 0, 32, 32});
-    if (!out) {
-        FAIL() << "Process returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(out.has_value());
     EXPECT_EQ(out->frame_id, src.frame_id);
     EXPECT_EQ(out->captured_at, src.captured_at);
 }

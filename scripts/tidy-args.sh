@@ -1,32 +1,36 @@
 # shellcheck shell=bash
 # Shared clang-tidy cross-compilation arg-builder — the single source of truth
-# for the CI `tidy` job (.github/workflows/release-*.yml) and the dev-side fix
-# script (scripts/fix.sh). Source this file, then pass "${TIDY_EXTRA_ARGS[@]}"
-# to clang-tidy so CI and the fix script can never drift on flags.
+# for the CI `tidy` job (.github/workflows/ci.yml) and the dev-side fix script
+# (scripts/fix.sh). Source this file, then pass "${TIDY_EXTRA_ARGS[@]}" to
+# clang-tidy-14 so CI and the fix script can never drift on flags.
 #
-# JetPack 7.2: the cross toolchain is Ubuntu's gcc-13 aarch64 package, which
-# installs the gcc tree under /usr/lib/gcc-cross/<triple>/<ver> with libstdc++
-# headers under /usr/<triple>/include/c++/<ver>. Host clang-tidy (noble v18)
-# must be pointed at that gcc install with a MATCHED triple so it finds
-# libstdc++; the targetfs sysroot supplies GStreamer/OpenCV/system headers.
+# Why these flags: host x86 clang-tidy must parse aarch64-buildroot cross TUs.
+# clang auto-detects the Bootlin gcc layout (lib/gcc/<triple>/<ver> plus
+# <triple>/include/c++/<ver>, both present in the toolchain tree) when pointed
+# at the toolchain ROOT with a MATCHED target triple — and crucially keeps
+# clang's own builtin/resource dir in the search path, so gcc's intrinsic
+# headers (arm_neon.h) and a conflicting <stdint.h> don't collide with clang's.
 #
-#   --target=aarch64-linux-gnu       the Ubuntu cross triple (no Bootlin buildroot).
-#   --gcc-install-dir=<dir>          the exact gcc-cross version dir, so clang-18
-#       resolves libstdc++ under the split Ubuntu cross layout (a bare
-#       --gcc-toolchain does not reliably find /usr/lib/gcc-cross/...).
-#   --sysroot=<targetfs>             GStreamer/OpenCV + system headers.
-#   -Qunused-arguments               silence link-only flags clang-tidy ignores.
+#   --target=aarch64-buildroot-linux-gnu  the toolchain's REAL triple. Using
+#       aarch64-linux-gnu defeats gcc auto-detection and libstdc++ goes missing
+#       (the original "file not found" / exit-123 failure).
+#   --gcc-toolchain=<root>                lets clang find lib/gcc/<triple>/<ver>.
+#   --sysroot=<targetfs>                  targetfs supplies GStreamer/OpenCV and
+#       system headers; libc/libstdc++ come from the toolchain tree above.
+#   -Qunused-arguments                    silence link-only flags from the TU's
+#       compile command that clang-tidy doesn't consume.
 
-_tidy_triple="${CROSS_TRIPLE:-aarch64-linux-gnu}"
-_tidy_gccsuf="${CROSS_GCC_SUFFIX:--13}"
-_tidy_gccver="${_tidy_gccsuf#-}"
-_tidy_gcc_install_dir="/usr/lib/gcc-cross/${_tidy_triple}/${_tidy_gccver}"
+# Toolchain bin dir is exported by .devcontainer/Dockerfile. Default to the REAL
+# path — note there is no "/toolchain/" segment (an earlier CI default had it
+# wrong, a latent bug if the env var ever stopped being set).
+_tidy_tc_bin="${BOOTLIN_TOOLCHAIN_BIN:-/l4t/aarch64--glibc--stable-2022.08-1/bin}"
+_tidy_tc_root="$(dirname "${_tidy_tc_bin}")"
 _tidy_sysroot="${CROSS_SYSROOT:-/l4t/targetfs}"
 
 # shellcheck disable=SC2034  # consumed by the sourcing script
 TIDY_EXTRA_ARGS=(
-  --extra-arg=--target="${_tidy_triple}"
-  --extra-arg=--gcc-install-dir="${_tidy_gcc_install_dir}"
+  --extra-arg=--target=aarch64-buildroot-linux-gnu
+  --extra-arg=--gcc-toolchain="${_tidy_tc_root}"
   --extra-arg=--sysroot="${_tidy_sysroot}"
   --extra-arg=-Qunused-arguments
 )

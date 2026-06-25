@@ -13,8 +13,8 @@ constexpr std::uint32_t kRgbaBytesPerPixel = 4;
 constexpr std::uint32_t kMaxAlpha = 255U;  // opaque alpha / 8-bit channel max
 }  // namespace
 
-auto CompositeOverlay(const sst::capture::Frame& source,
-                      const RgbaImage& overlay) -> std::optional<sst::capture::Frame> {
+auto CompositeOverlay(const sst::capture::Frame& source, const RgbaImage& overlay)
+    -> std::optional<sst::capture::Frame> {
     // Only BGR8 single-plane frames are supported (the postprocessor's output).
     if (source.format != sst::common::PixelFormat::BGR8 || source.planes.empty() ||
         source.planes[0].data == nullptr) {
