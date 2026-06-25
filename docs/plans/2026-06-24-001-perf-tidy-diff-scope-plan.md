@@ -113,9 +113,9 @@ carry over the floor-guard, R-SELECT, and R-NEWFILE concerns from the original.
 - No `ccache` / PCH compile caching **in this plan**. Sharding and a compile
   cache are *composable* (a cache would further cut each shard's build), but the
   cache is deferred (see Deferred to Follow-Up).
-- Shard count is fixed at **N=4** in this plan (matrix list + the `4` passed to
-  `tidy-run.sh`, kept in lockstep). Tuning N is a one-line follow-up, not a
-  redesign.
+- Shard count is fixed at **N=4** in this plan (the matrix `shard:` list; the
+  total is derived from it via `${{ strategy.job-total }}`, so there is no second
+  value to keep in sync). Tuning N is a one-line follow-up, not a redesign.
 - `release.yml` (`main`) stays promote-only; no tidy is added there. Unlike the
   diff-scope design, this is **not** a coverage gap: the PR `tidy` gate now lints
   the whole tree and blocks the merge, so a blocking full-tree lint **does** run
@@ -348,8 +348,9 @@ shards.
   `strategy: { fail-fast: false, matrix: { shard: [0, 1, 2, 3] } }`. Steps:
   free-disk, checkout (`submodules: recursive`, **no** `fetch-depth: 0` — no diff
   needed), conan cache, QEMU, GHCR login, then
-  `docker run … -e SHARD=${{ matrix.shard }} … bash -lc 'scripts/ci/tidy-run.sh shard "${SHARD}" 4'`.
-  Keep the `4` in sync with the matrix list length.
+  `docker run … -e SHARD=${{ matrix.shard }} -e TOTAL=${{ strategy.job-total }} … bash -lc 'scripts/ci/tidy-run.sh shard "${SHARD}" "${TOTAL}"'`.
+  The total is derived from the matrix via `strategy.job-total`, so it can never
+  drift from the `shard:` list length.
 - **`tidy`** (aggregator, the wired required check): `name: tidy`,
   `needs: [changes, tidy-shard]`,
   `if: ${{ always() && github.event_name == 'pull_request' && needs.changes.outputs.code == 'true' }}`,
