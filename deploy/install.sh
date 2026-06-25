@@ -342,7 +342,15 @@ if [ -f "$INSTALL_PATH" ]; then
   cur_sum="$(sha256sum "$INSTALL_PATH" | awk '{print $1}')"
   if [ "$dl_sha" = "$cur_sum" ]; then
     log "Installed binary already matches ${resolved_tag} (sha256 ${dl_sha}). No-op."
+    # A matching binary is useless if the unit is down (e.g. a prior crash-loop
+    # left it inactive/failed). On a no-op, bring it back up if it isn't active.
+    if ! systemctl is-active --quiet "$SERVICE"; then
+      log "Service not active; starting ${SERVICE} ..."
+      systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
+      systemctl start "$SERVICE" || log "warning: start returned non-zero"
+    fi
     log "Service status: $(systemctl is-active "$SERVICE" 2>/dev/null || echo unknown)"
+    log "Logs: journalctl -u ${SERVICE} -f"
     exit 0
   fi
 fi
@@ -401,4 +409,5 @@ fi
 if [ "$service_was_active" = "yes" ]; then
   err "See 'journalctl -u ${SERVICE}' for the new binary's failure."
 fi
+log "Logs: journalctl -u ${SERVICE} -f"
 exit 1
