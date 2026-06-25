@@ -318,16 +318,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pull the prebuilt devcontainer (built once by the `image` job) and run the
-      # tidy check inside it — no per-run sysroot rebuild. Run as root so the
-      # bind-mounted workspace (owned by the runner uid) is writable for the build
-      # dir; the image's PATH already exposes conan + the gcc-13 cross toolchain.
+      # Make the prebuilt devcontainer image available locally (built once by the
+      # `image` job; pulled here, or built locally on pull failure — R6), then run
+      # the tidy check inside it — no per-run sysroot rebuild on the fast path. Run
+      # as root so the bind-mounted workspace (owned by the runner uid) is writable
+      # for the build dir; the image's PATH already exposes conan + the gcc-13
+      # cross toolchain.
+      - name: Ensure devcontainer image
+        uses: ./.github/actions/pull-or-build-devcontainer
+        with:
+          image: ${{ env.IMAGE }}
+          tag: ${{ needs.image.outputs.tag }}
+
       - name: clang-tidy (-p build/test)
         env:
           TAG: ${{ needs.image.outputs.tag }}
         run: |
           set -euo pipefail
-          docker pull "${IMAGE}:${TAG}"
           docker run --rm --user root \
             -v "$PWD":/workspace -w /workspace \
             -v "$HOME/.conan2":/root/.conan2 -e CONAN_HOME=/root/.conan2 \
@@ -396,19 +403,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pull the prebuilt devcontainer (built once by the `image` job) and run the
-      # cross-build + ctest inside it — no per-run sysroot rebuild. ctest runs the
-      # aarch64 GTest binaries under qemu (host binfmt from setup-qemu-action);
-      # QEMU_LD_PREFIX points the emulator at the L4T targetfs for shared libs.
-      # Hardware-bound tests (real IMX477 / BlueZ / radio / live GStreamer) fail in
-      # the cross container — see CLAUDE.md — so the known names are excluded by -E.
+      # Make the prebuilt devcontainer image available locally (pull, or build
+      # locally on pull failure — R6), then run the cross-build + ctest inside it —
+      # no per-run sysroot rebuild on the fast path. ctest runs the aarch64 GTest
+      # binaries under qemu (host binfmt from setup-qemu-action); QEMU_LD_PREFIX
+      # points the emulator at the L4T targetfs for shared libs. Hardware-bound
+      # tests (real IMX477 / BlueZ / radio / live GStreamer) fail in the cross
+      # container — see CLAUDE.md — so the known names are excluded by -E.
       # DURABLE FIX (firmware owner): tag them `LABELS hardware` + switch to -LE.
+      - name: Ensure devcontainer image
+        uses: ./.github/actions/pull-or-build-devcontainer
+        with:
+          image: ${{ env.IMAGE }}
+          tag: ${{ needs.image.outputs.tag }}
+
       - name: cmake test preset + build + ctest (qemu)
         env:
           TAG: ${{ needs.image.outputs.tag }}
         run: |
           set -euo pipefail
-          docker pull "${IMAGE}:${TAG}"
           docker run --rm --user root \
             -v "$PWD":/workspace -w /workspace \
             -v "$HOME/.conan2":/root/.conan2 -e CONAN_HOME=/root/.conan2 \
@@ -482,15 +495,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Pull the prebuilt devcontainer (built once by the `image` job) and run the
-      # release cross-build inside it — no per-run sysroot rebuild. The binary lands
-      # in the bind-mounted build/ on the host for the staging step below.
+      # Make the prebuilt devcontainer image available locally (pull, or build
+      # locally on pull failure — R6), then run the release cross-build inside it —
+      # no per-run sysroot rebuild on the fast path. The binary lands in the
+      # bind-mounted build/ on the host for the staging step below.
+      - name: Ensure devcontainer image
+        uses: ./.github/actions/pull-or-build-devcontainer
+        with:
+          image: ${{ env.IMAGE }}
+          tag: ${{ needs.image.outputs.tag }}
+
       - name: cmake release preset + build
         env:
           IMG_TAG: ${{ needs.image.outputs.tag }}
         run: |
           set -euo pipefail
-          docker pull "${IMAGE}:${IMG_TAG}"
           docker run --rm --user root \
             -v "$PWD":/workspace -w /workspace \
             -v "$HOME/.conan2":/root/.conan2 -e CONAN_HOME=/root/.conan2 \
