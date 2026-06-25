@@ -72,10 +72,29 @@ probably targeting the wrong base.
 
 | Live state | Change type | Correct target |
 |---|---|---|
-| `release/X.Y.Z` exists, highest tag is `-beta.N` | fix / improvement / CI hardening | `release/X.Y.Z` |
-| `release/X.Y.Z` exists, highest tag is `-beta.N` | new feature for next cycle | `development` (confirm with user) |
-| No `release/*` exists, highest tag is `-alpha.N` | any | `development` |
+| `release/X.Y.Z` open (mid-beta) | **fix, improvement, or CI/CD change — anything for the current release** | `release/X.Y.Z` |
+| `release/X.Y.Z` open (mid-beta) | genuinely next-cycle feature (rare) | **confirm with the user** — do *not* default to a direct `development` PR |
+| No `release/*` open, highest tag is `-alpha.N` | any | `development` |
 | No tags at all | any | `development` |
+
+**Fixes go into the current cut-off.** While a `release/X.Y.Z` is open, that branch
+is the integration target for essentially all work — fixes, improvements, and CI/CD
+changes alike. A bug fix or CI fix is *not* "next-cycle"; it belongs on the active
+release so it's flashed/tested in the next beta.
+
+**The cascade — `development` is NOT a direct merge target while a release is open.**
+`development` catches up *after* the release finishes, not via direct PRs:
+
+```
+release/X.Y.Z  ──(fixes land here, beta.N…)──►  merge to main (release done)
+                                                      │
+main  ──────────────────────────────────────────────►  development pulls from main
+                                                      └─►  cascades down
+```
+
+So during an active release: land everything on `release/X.Y.Z`; let it reach
+`development` through `main` afterward. Opening a PR straight to `development`
+mid-release duplicates the work and pointlessly runs the alpha pipeline.
 
 **When base divergence is large (>~10 commits or >~20 files), stop and confirm the
 target with the user before opening the PR.** Do not treat "auto-merge when green"
