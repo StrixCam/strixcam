@@ -135,7 +135,12 @@ while [ "$#" -gt 0 ]; do
     --camera-overlay=*) CAMERA_OVERLAY="${1#*=}"; shift ;;
     --list-camera-overlays)
       echo "Available camera overlays in /boot:"
-      ls /boot/*camera*.dtbo 2>/dev/null | sed 's:.*/:  :;s:\.dtbo$::' || echo "  (none found)"
+      _any="no"
+      for _f in /boot/*camera*.dtbo; do
+        [ -e "$_f" ] || continue
+        _any="yes"; _b="${_f##*/}"; echo "  ${_b%.dtbo}"
+      done
+      [ "$_any" = "yes" ] || echo "  (none found)"
       exit 0 ;;
     -h | --help) usage; exit 0 ;;
     *) die "Unknown argument: $1 (try --help)" ;;
@@ -375,6 +380,7 @@ check_runtime_libs() {  # <binary>
 # Print the reboot reminder on EVERY exit path (the no-op and success paths both
 # exit 0 early), so a freshly-provisioned camera overlay is never silently
 # pending. Defined + armed before setup runs so it fires no matter where we exit.
+# shellcheck disable=SC2317  # reached only via the 'trap ... EXIT' armed below
 print_pending_actions() {
   if [ "${REBOOT_NEEDED:-no}" = "yes" ]; then
     log ""
