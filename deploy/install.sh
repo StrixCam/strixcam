@@ -48,6 +48,23 @@ CONFIG_DIR="/etc/sst/cam/config"
 API="https://api.github.com/repos/${REPO}"
 EXPECTED_L4T_MAJOR=39   # JetPack 7.2
 
+# Camera device-tree overlay to provision. jetson-io is broken on this board
+# ("No DTB found"), so we pre-merge the chosen overlay into the device tree
+# offline and point the bootloader at the result via an FDT line.
+#
+# NOT pinned to one camera: this is the OVERLAY NAME, overridable per device.
+# Accepts a bare .dtbo basename (resolved under /boot) or an absolute path.
+# Default is the dual-IMX477 overlay for the Orin Nano p3768 carrier (the stock
+# NVIDIA imx477 driver drives the RPi-HQ-compatible ArduCAM 12MP IMX477; ArduCAM
+# ships no JetPack-7.2 build). Override per device with --camera-overlay <name>
+# or SST_CAMERA_OVERLAY, list choices with --list-camera-overlays, or skip
+# camera provisioning entirely with --no-camera.
+DEFAULT_CAMERA_OVERLAY="tegra234-p3767-camera-p3768-imx477-dual.dtbo"
+CAMERA_OVERLAY="${SST_CAMERA_OVERLAY:-$DEFAULT_CAMERA_OVERLAY}"
+PROVISION_CAMERA="yes"
+EXTLINUX_CONF="/boot/extlinux/extlinux.conf"
+REBOOT_NEEDED="no"
+
 # Runtime shared-library packages the firmware dynamically links that the JetPack
 # 7.2 base flash does NOT already ship. SOURCE OF TRUTH for this list:
 # .devcontainer/sysroot/003_install_extra_pkgs.sh — the packages it ADDS to the
@@ -80,12 +97,21 @@ Selects the release to install (default: latest):
   --no-setup         Skip the one-time setup (user/dir/systemd unit) check.
   -h, --help         Show this help.
 
+Camera (device-tree overlay) provisioning:
+  --camera-overlay <name|path>  Overlay to apply (a .dtbo basename resolved under
+                     /boot, or an absolute path). Not pinned to one camera;
+                     default: dual-IMX477 for the Orin Nano p3768 carrier.
+  --no-camera        Skip camera overlay provisioning entirely.
+  --list-camera-overlays  List camera .dtbo overlays available in /boot and exit.
+
 The first run performs one-time setup automatically (creates the sst-cam user,
-/opt/sst-cam, and the systemd unit). Re-running is safe and idempotent.
+/opt/sst-cam, and the systemd unit). Re-running is safe and idempotent. Applying
+a camera overlay requires a reboot, which the script will remind you to do.
 
 Environment:
   GITHUB_TOKEN            Optional; lifts the GitHub API rate limit only.
   SST_SKIP_PLATFORM_CHECK Set to 1 to bypass the JetPack-7.2 device guard.
+  SST_CAMERA_OVERLAY      Default camera overlay (same value as --camera-overlay).
 EOF
 }
 
@@ -102,6 +128,20 @@ while [ "$#" -gt 0 ]; do
       WANT_SHA="$2"; shift 2 ;;
     --sha256=*) WANT_SHA="${1#*=}"; shift ;;
     --no-setup) DO_SETUP="no"; shift ;;
+    --no-camera) PROVISION_CAMERA="no"; shift ;;
+    --camera-overlay)
+      [ "$#" -ge 2 ] || die "--camera-overlay requires a .dtbo basename or path"
+      CAMERA_OVERLAY="$2"; shift 2 ;;
+    --camera-overlay=*) CAMERA_OVERLAY="${1#*=}"; shift ;;
+    --list-camera-overlays)
+      echo "Available camera overlays in /boot:"
+      _any="no"
+      for _f in /boot/*camera*.dtbo; do
+        [ -e "$_f" ] || continue
+        _any="yes"; _b="${_f##*/}"; echo "  ${_b%.dtbo}"
+      done
+      [ "$_any" = "yes" ] || echo "  (none found)"
+      exit 0 ;;
     -h | --help) usage; exit 0 ;;
     *) die "Unknown argument: $1 (try --help)" ;;
   esac
@@ -139,13 +179,16 @@ embedded_unit() {
   cat <<'UNIT'
 [Unit]
 Description=SST Cam firmware runtime
-After=network-online.target
+# Order after the Argus camera daemon so the capture pipeline isn't racing its
+# socket at cold boot. Ordering-only: harmless if nvargus-daemon is absent.
+After=network-online.target nvargus-daemon.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-# Non-root system user. Hardware access (cameras, GPIO, NVENC, BlueZ) may need
-# extra group membership / udev rules on the device — grant those to this user.
+# Non-root system user. ensure_setup() grants it the video + render groups for
+# camera + GPU/CUDA access; BlueZ/GPIO/NVENC may need further udev rules on the
+# device.
 User=sst-cam
 Group=sst-cam
 WorkingDirectory=/opt/sst-cam
@@ -166,10 +209,17 @@ ensure_setup() {
     useradd --system --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
     changed="yes"
   fi
-  # Best-effort camera access; harmless if the group is absent.
-  if getent group video >/dev/null 2>&1; then
-    usermod -aG video "$SERVICE_USER" 2>/dev/null || true
-  fi
+  # Best-effort hardware-access groups; harmless if a group is absent.
+  #   video  — cameras (/dev/video*, nvhost, VI/ISP capture nodes)
+  #   render — GPU/CUDA via the DRM render node (/dev/dri/renderD*). The capture
+  #            pipeline's nvvidconv/NvBufSurface runs CUDA in the firmware's own
+  #            process; without render the non-root service gets
+  #            cudaErrorNotSupported (status=801) and captures zero frames.
+  for _grp in video render; do
+    if getent group "$_grp" >/dev/null 2>&1; then
+      usermod -aG "$_grp" "$SERVICE_USER" 2>/dev/null || true
+    fi
+  done
 
   if [ ! -d "$INSTALL_DIR" ]; then
     log "Setup: creating ${INSTALL_DIR} ..."
@@ -201,6 +251,92 @@ ensure_setup() {
   else
     log "Setup already in place."
   fi
+}
+
+# Provision the dual-IMX477 device-tree overlay so the sensors are detected.
+# Idempotent: once the FDT line is wired to our merged DTB, every later run is a
+# no-op (and crucially never re-merges onto an already-merged tree). Requires a
+# reboot to take effect, signalled via REBOOT_NEEDED.
+ensure_camera_overlay() {
+  if [ "$PROVISION_CAMERA" != "yes" ]; then
+    log "Camera: provisioning skipped (--no-camera)."
+    return 0
+  fi
+  # Resolve the configured overlay: a bare basename is looked up under /boot, an
+  # absolute path is used as-is. Existence here is the guard — no board/camera is
+  # hardcoded; an absent overlay (wrong device, or the user wants none) is a
+  # clean skip, not an error.
+  local dtbo="$CAMERA_OVERLAY"
+  case "$dtbo" in
+    /*) : ;;
+    */*) dtbo="$PWD/$dtbo" ;;
+    *) dtbo="/boot/$dtbo" ;;
+  esac
+  case "$dtbo" in *.dtbo) : ;; *) dtbo="${dtbo}.dtbo" ;; esac
+  if [ ! -f "$dtbo" ]; then
+    log "Camera: overlay '${CAMERA_OVERLAY}' not found (looked at ${dtbo}) — skipping."
+    log "        Pick one with --list-camera-overlays, or pass --no-camera."
+    return 0
+  fi
+  if [ ! -f "$EXTLINUX_CONF" ]; then
+    log "Camera: ${EXTLINUX_CONF} not found — skipping overlay."
+    return 0
+  fi
+
+  local stem merged
+  stem="$(basename "$dtbo" .dtbo)"
+  merged="/boot/sst-cam-${stem}.dtb"
+
+  # Idempotent + switch-safe: if THIS overlay's FDT line is already wired, done.
+  if grep -q "FDT ${merged}\$" "$EXTLINUX_CONF"; then
+    log "Camera: overlay '${stem}' already provisioned."
+    return 0
+  fi
+
+  if ! command -v fdtoverlay >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    log "Camera: installing device-tree-compiler (fdtoverlay) ..."
+    apt-get install -y --no-install-recommends device-tree-compiler >/dev/null 2>&1 || true
+  fi
+  command -v fdtoverlay >/dev/null 2>&1 || {
+    log "Camera: fdtoverlay unavailable (install device-tree-compiler) — skipping overlay."
+    return 0
+  }
+
+  # A pre-existing FDT line that we did NOT place (no /boot/sst-cam-*.dtb) means
+  # the device has a custom DTB override — don't clobber it.
+  if grep -qE '^\s*FDT ' "$EXTLINUX_CONF" && ! grep -qE '^\s*FDT /boot/sst-cam-.*\.dtb' "$EXTLINUX_CONF"; then
+    log "Camera: a non-managed FDT override is already set in ${EXTLINUX_CONF} — skipping to avoid clobbering it."
+    return 0
+  fi
+
+  # Always merge from a PRISTINE base DTB so switching overlays never stacks one
+  # tree onto another. Capture that base once, on first provisioning, while the
+  # live tree (/sys/firmware/fdt) still carries no overlay.
+  local base_dtb="/boot/sst-cam-base.dtb"
+  if grep -qE '^[[:space:]]*FDT /boot/sst-cam-.*\.dtb' "$EXTLINUX_CONF" && [ ! -f "$base_dtb" ]; then
+    log "Camera: a managed FDT is set but base ${base_dtb} is missing — cannot re-merge safely."
+    log "        Remove the FDT line from ${EXTLINUX_CONF}, reboot, then re-run."
+    return 0
+  fi
+
+  log "Camera: provisioning overlay '${stem}' ..."
+  if [ ! -f "$base_dtb" ] && ! cp /sys/firmware/fdt "$base_dtb" 2>/dev/null; then
+    log "warning: could not capture base device tree — skipping camera overlay."
+    return 0
+  fi
+  if ! fdtoverlay -i "$base_dtb" -o "$merged" "$dtbo" 2>/dev/null; then
+    log "warning: fdtoverlay merge failed — cameras will not be available."
+    return 0
+  fi
+  cp -a "$EXTLINUX_CONF" "${EXTLINUX_CONF}.bak-sstcam" 2>/dev/null || true
+  # Drop any previously-managed FDT line, then point the bootloader at the new
+  # merged DTB (insert after the primary label's LINUX line; the OVERLAYS
+  # directive is NOT honoured by this board's boot flow).
+  sed -i '\#^[[:space:]]*FDT /boot/sst-cam-.*\.dtb#d' "$EXTLINUX_CONF"
+  sed -i "/LABEL primary/,/APPEND/ { /LINUX /a\\      FDT ${merged}
+}" "$EXTLINUX_CONF"
+  REBOOT_NEEDED="yes"
+  log "Camera: overlay installed -> ${merged} (reboot required to load it)."
 }
 
 # Install the runtime shared-library packages the binary needs but a base JetPack
@@ -241,7 +377,24 @@ check_runtime_libs() {  # <binary>
     "$(printf '%s\n' "$missing_libs" | sed 's/^/  /')" "${RUNTIME_DEPS[*]}" "${RUNTIME_DEPS[*]}")"
 }
 
-[ "$DO_SETUP" = "yes" ] && ensure_setup
+# Print the reboot reminder on EVERY exit path (the no-op and success paths both
+# exit 0 early), so a freshly-provisioned camera overlay is never silently
+# pending. Defined + armed before setup runs so it fires no matter where we exit.
+# shellcheck disable=SC2317  # reached only via the 'trap ... EXIT' armed below
+print_pending_actions() {
+  if [ "${REBOOT_NEEDED:-no}" = "yes" ]; then
+    log ""
+    log "==> ACTION REQUIRED: a camera device-tree overlay was installed."
+    log "==> REBOOT to load it:  sudo reboot"
+    log "==> Until you reboot, the IMX477 cameras will not be detected."
+  fi
+}
+trap print_pending_actions EXIT
+
+if [ "$DO_SETUP" = "yes" ]; then
+  ensure_setup
+  ensure_camera_overlay
+fi
 # Runtime deps are about the binary, not host setup — install them even with
 # --no-setup so an unloadable binary is never deployed.
 ensure_runtime_deps

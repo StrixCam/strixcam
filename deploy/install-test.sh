@@ -102,5 +102,30 @@ else
   bad "src/main.cpp not found: $MAIN_CPP"
 fi
 
+# 7. GPU/CUDA access: install.sh must add the service user to the 'render' group.
+#    The capture pipeline runs CUDA (nvvidconv/NvBufSurface) in the firmware's own
+#    process; without render the non-root service gets cudaErrorNotSupported
+#    (status=801) and captures zero frames.
+if grep -qE 'video render' "$INSTALL_SH"; then ok; else bad "install.sh must grant SERVICE_USER the render group (GPU/CUDA)"; fi
+
+# 8. Camera overlay provisioning: an idempotent, fdtoverlay-based merge that wires
+#    the bootloader via an FDT line, merging from a captured pristine base DTB so
+#    switching overlays never stacks one tree onto another.
+if grep -q 'ensure_camera_overlay()' "$INSTALL_SH"; then ok; else bad "install.sh must define ensure_camera_overlay"; fi
+if grep -q 'fdtoverlay -i' "$INSTALL_SH"; then ok; else bad "ensure_camera_overlay must merge via fdtoverlay"; fi
+if grep -q 'sst-cam-base.dtb' "$INSTALL_SH"; then ok; else bad "ensure_camera_overlay must merge from a captured pristine base DTB"; fi
+
+# 9. NOT pinned to one camera: the overlay must be configurable + skippable.
+if grep -q -- '--no-camera' "$INSTALL_SH" && grep -q -- '--camera-overlay' "$INSTALL_SH"; then
+  ok
+else
+  bad "install.sh must expose --camera-overlay/--no-camera (configurable, not pinned)"
+fi
+if grep -q 'SST_CAMERA_OVERLAY' "$INSTALL_SH"; then ok; else bad "install.sh must honour the SST_CAMERA_OVERLAY override"; fi
+
+# 10. A camera overlay needs a reboot; install.sh must surface that on EVERY exit
+#     (the no-op and success paths both exit 0 early) via the EXIT trap.
+if grep -q 'trap print_pending_actions EXIT' "$INSTALL_SH"; then ok; else bad "install.sh must announce the pending reboot on every exit path"; fi
+
 printf '\ndeploy/install-test.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
