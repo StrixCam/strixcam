@@ -51,11 +51,13 @@ Cflags: -I\${includedir}
 EOF
 echo "[fix-sysroot] opencv4.pc written (ver=${VER})"
 
-# ── crt*.o linker stubs ───────────────────────────────────────────────────────
-# (JetPack 7.2 uses the single aarch64-linux-gnu triple via the Ubuntu gcc-13
-# cross toolchain — no Bootlin aarch64-buildroot-linux-gnu bridge needed.)
+# ── Bootlin triplet compat ────────────────────────────────────────────────────
+# Bootlin uses aarch64-buildroot-linux-gnu-* but the sysroot uses aarch64-linux-gnu paths.
 
 mkdir -p "$USRLIB"
+ln -sfn aarch64-linux-gnu "$USRLIB/aarch64-buildroot-linux-gnu"
+[[ -d "$SYSROOT/lib/aarch64-linux-gnu" || -L "$SYSROOT/lib/aarch64-linux-gnu" ]] && \
+  ln -sfn aarch64-linux-gnu "$SYSROOT/lib/aarch64-buildroot-linux-gnu"
 
 # crt*.o linker stubs so the cross-linker finds startup files via /usr/lib
 for f in crt1.o crti.o crtn.o Scrt1.o gcrt1.o grcrt1.o rcrt1.o; do

@@ -79,8 +79,8 @@ inline auto ToString(PeriodLabelState s) -> std::string_view {
     struct fmt::formatter<sst::overlay::Type> {                                             \
         static constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); } \
         template <typename Ctx>                                                             \
-        auto format(sst::overlay::Type val, Ctx& ctx) const {                               \
-            return fmt::format_to(ctx.out(), "{}", sst::overlay::detail::ToString(val));    \
+        auto format(sst::overlay::Type v, Ctx& ctx) const {                                 \
+            return fmt::format_to(ctx.out(), "{}", sst::overlay::detail::ToString(v));      \
         }                                                                                   \
     }
 

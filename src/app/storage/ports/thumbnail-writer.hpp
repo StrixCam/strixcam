@@ -12,8 +12,8 @@ class IThumbnailWriter {
    public:
     virtual ~IThumbnailWriter() = default;
 
-    virtual auto Write(const sst::capture::Frame& frame,
-                       const std::filesystem::path& output_path) -> bool = 0;
+    virtual auto Write(const sst::capture::Frame& frame, const std::filesystem::path& output_path)
+        -> bool = 0;
 };
 
 }  // namespace sst::storage

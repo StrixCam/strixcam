@@ -12,8 +12,8 @@ namespace {
 constexpr std::uint64_t kMsPerSecond = 1000;
 constexpr std::uint32_t kSecondsPerMinute = 60;
 
-auto SubstituteParams(std::string text,
-                      const std::map<std::string, std::string>& params) -> std::string {
+auto SubstituteParams(std::string text, const std::map<std::string, std::string>& params)
+    -> std::string {
     for (const auto& [key, value] : params) {
         const std::string token = "{{" + key + "}}";
         std::string::size_type pos = 0;

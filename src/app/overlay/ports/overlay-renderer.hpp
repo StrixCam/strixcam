@@ -13,8 +13,8 @@ class IOverlayRenderer {
    public:
     virtual ~IOverlayRenderer() = default;
 
-    virtual auto Render(const RenderScene& scene, std::uint32_t out_width,
-                        std::uint32_t out_height) -> RgbaImage = 0;
+    virtual auto Render(const RenderScene& scene, std::uint32_t out_width, std::uint32_t out_height)
+        -> RgbaImage = 0;
 };
 
 }  // namespace sst::overlay

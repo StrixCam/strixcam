@@ -60,23 +60,22 @@ target_link_libraries(sst_cam_firmware_external_libs INTERFACE
 
 pkg_search_module(OPENCV REQUIRED opencv4)
 
-# JetPack 7.2 / L4T r39.2 ships Ubuntu 24.04 (noble) stock OpenCV 4.6.0 —
-# uniform across all modules (SONAME .so.406, with matching plain `.so` from
-# libopencv-dev). Pin core/imgproc/imgcodecs to the 4.6 SONAME explicitly so a
-# future sysroot rebuild that drifts the OpenCV minor can't silently relink.
-# (Was 4.8/.so.408 on the 6.2 NVIDIA targetfs; noble has no 4.8 — this is the
-# CPU-built stock OpenCV, which is fine: the processing path is software-only.)
+# OpenCV in the JetPack sysroot is mixed: the plain `libopencv_core.so` symlink
+# in /usr/lib/aarch64-linux-gnu points at 4.5d, but the imgproc/etc modules
+# only exist as 4.8 (SONAME-versioned, no plain `.so`). Linking the plain
+# symlinks would pull in two ABI-incompatible cores at runtime. Pin both core
+# and imgproc to the matching 4.8 SONAME files explicitly.
 find_library(SST_OPENCV_CORE
-    NAMES libopencv_core.so.406
+    NAMES libopencv_core.so.408
     REQUIRED
 )
 find_library(SST_OPENCV_IMGPROC
-    NAMES libopencv_imgproc.so.406
+    NAMES libopencv_imgproc.so.408
     REQUIRED
 )
-# imgcodecs (cv::imwrite) for the JPEG thumbnail writer — same 4.6 SONAME pin.
+# imgcodecs (cv::imwrite) for the JPEG thumbnail writer — same 4.8 SONAME pin.
 find_library(SST_OPENCV_IMGCODECS
-    NAMES libopencv_imgcodecs.so.406
+    NAMES libopencv_imgcodecs.so.408
     REQUIRED
 )
 

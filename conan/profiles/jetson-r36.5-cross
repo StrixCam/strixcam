@@ -1,0 +1,17 @@
+[settings]
+os=Linux
+arch=armv8
+build_type=Release
+compiler=gcc
+compiler.version=11
+compiler.libcxx=libstdc++11
+compiler.cppstd=gnu20
+
+[conf]
+tools.build:cflags=["-fno-stack-protector"]
+tools.build:cxxflags=["-fno-stack-protector"]
+tools.build:compiler_executables={"c":"aarch64-buildroot-linux-gnu-gcc","cpp":"aarch64-buildroot-linux-gnu-g++"}
+
+[buildenv]
+CC=aarch64-buildroot-linux-gnu-gcc
+CXX=aarch64-buildroot-linux-gnu-g++

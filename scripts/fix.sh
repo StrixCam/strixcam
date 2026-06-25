@@ -67,13 +67,13 @@ echo "fix.sh: clang-format -i on ${#all_files[@]} file(s)…"
 clang-format -i "${all_files[@]}"
 
 if [ "${tidy_ready}" -eq 1 ] && [ "${#tu_files[@]}" -gt 0 ]; then
-  echo "fix.sh: clang-tidy --fix on ${#tu_files[@]} translation unit(s)…"
+  echo "fix.sh: clang-tidy-14 --fix on ${#tu_files[@]} translation unit(s)…"
   # A non-zero exit is EXPECTED when unfixable findings remain (magic-numbers,
   # cognitive-complexity, …) — that's not a script failure. But don't swallow it
   # silently: a tool error (stale compile_commands, clang crash) looks the same,
   # so surface the exit code and let the dev judge from the output above.
-  if ! clang-tidy -p "${BUILD_DIR}" --fix --fix-errors "${TIDY_EXTRA_ARGS[@]}" "${tu_files[@]}"; then
-    echo "fix.sh: clang-tidy exited non-zero — expected if unfixable findings" \
+  if ! clang-tidy-14 -p "${BUILD_DIR}" --fix --fix-errors "${TIDY_EXTRA_ARGS[@]}" "${tu_files[@]}"; then
+    echo "fix.sh: clang-tidy-14 exited non-zero — expected if unfixable findings" \
          "remain; if you see TOOL errors above, the fix pass may be incomplete." >&2
   fi
 elif [ "${tidy_ready}" -eq 0 ]; then

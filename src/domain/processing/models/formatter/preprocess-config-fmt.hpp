@@ -10,7 +10,7 @@ struct fmt::formatter<sst::processing::PreprocessConfig> {
     static constexpr auto parse(fmt::format_parse_context& ctx) { return ctx.begin(); }
 
     template <typename FormatContext>
-    auto format(const sst::processing::PreprocessConfig& cfg, FormatContext& ctx) const {
+    auto format(const sst::processing::PreprocessConfig& c, FormatContext& ctx) const {
         return fmt::format_to(ctx.out(),
                               "PreprocessConfig{{\n"
                               "  ai_width={},\n"
@@ -18,7 +18,7 @@ struct fmt::formatter<sst::processing::PreprocessConfig> {
                               "  ai_color_mode={},\n"
                               "  binary_threshold={}\n"
                               "}}",
-                              cfg.ai_width, cfg.ai_height, cfg.ai_color_mode,
-                              static_cast<unsigned>(cfg.binary_threshold));
+                              c.ai_width, c.ai_height, c.ai_color_mode,
+                              static_cast<unsigned>(c.binary_threshold));
     }
 };

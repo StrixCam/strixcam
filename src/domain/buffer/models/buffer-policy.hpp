@@ -1,10 +1,8 @@
 #pragma once
 
-#include <cstdint>
-
 namespace sst::buffer {
 
-enum class BufferPolicy : std::uint8_t {
+enum class BufferPolicy {
     LatestOnly,
     DropOldest,
 };

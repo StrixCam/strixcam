@@ -12,18 +12,17 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/${presetName}",
       "environment": {
-        "PATH": "$env{HOME}/.local/bin:$penv{PATH}",
+        "PATH": "/l4t/aarch64--glibc--stable-2022.08-1/bin:$env{HOME}/.local/bin:$penv{PATH}",
         "CROSS_SYSROOT": "/l4t/targetfs",
-        "CROSS_TRIPLE": "aarch64-linux-gnu",
-        "CROSS_GCC_SUFFIX": "-13"
+        "BOOTLIN_TOOLCHAIN_BIN": "/l4t/aarch64--glibc--stable-2022.08-1/bin"
       },
       "cacheVariables": {
         "CMAKE_PROJECT_TOP_LEVEL_INCLUDES": "${sourceDir}/cmake/conan_provider.cmake",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "CONAN_INSTALL_ARGS": "--build=missing",
         "CONAN_BUILD_PROFILE": "${sourceDir}/conan/profiles/cross",
-        "CONAN_HOST_PROFILE": "${sourceDir}/conan/profiles/jetpack-7.2-cross",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/jetpack-7.2.cmake"
+        "CONAN_HOST_PROFILE": "${sourceDir}/conan/profiles/jetson-r36.5-cross",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/cmake/toolchains/jetson-r36.5.cmake"
       }
     },
     {

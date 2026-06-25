@@ -69,10 +69,7 @@ TEST(GstreamerAdapter, CaptureSingleFrameAndLog) {
 
     spdlog::info("Frame capture loop ended.");
 
-    if (!frame) {
-        FAIL() << "Failed to capture frame from GStreamer";
-        return;
-    }
+    ASSERT_TRUE(frame.has_value()) << "Failed to capture frame from GStreamer";
 
     const auto ts_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(frame->captured_at.time_since_epoch())

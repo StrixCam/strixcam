@@ -21,8 +21,8 @@ inline constexpr std::uint32_t kChunkAckTotalChunks = 0;
 // response characteristic. Lives in the app/control layer (not the bluez
 // adapter) so a future app-layer ChunkAck builder doesn't import an adapter
 // header.
-inline auto BuildInboundAck(const std::string& correlation_id,
-                            std::uint32_t chunk_index) -> sst_cam::ChunkAck {
+inline auto BuildInboundAck(const std::string& correlation_id, std::uint32_t chunk_index)
+    -> sst_cam::ChunkAck {
     sst_cam::ChunkAck ack;
     ack.set_correlation_id(correlation_id);
     ack.set_chunk_index(chunk_index);

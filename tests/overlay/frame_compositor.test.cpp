@@ -100,10 +100,7 @@ TEST(FrameCompositorTest, OpaqueOverlayReplacesPixels) {
     const auto overlay = MakeRgba(kSize, kOverlayRgba);
 
     auto out = CompositeOverlay(src.frame, overlay);
-    if (!out) {
-        FAIL() << "CompositeOverlay returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(out.has_value());
     ASSERT_FALSE(out->planes.empty());
     // Every pixel becomes the overlay color in BGR order (B=50, G=100, R=200).
     ExpectAllPixelsBgr(out->planes[0].data, static_cast<std::size_t>(kSize.width) * kSize.height,
@@ -120,10 +117,7 @@ TEST(FrameCompositorTest, FullyTransparentOverlayLeavesFrameUnchanged) {
                                               .alpha = 0});
 
     auto out = CompositeOverlay(src.frame, overlay);
-    if (!out) {
-        FAIL() << "CompositeOverlay returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(out.has_value());
     ExpectAllPixelsBgr(out->planes[0].data, static_cast<std::size_t>(kSize.width) * kSize.height,
                        kSrcBgr);
 }
@@ -138,10 +132,7 @@ TEST(FrameCompositorTest, HalfAlphaBlendsHalfway) {
         MakeRgba(kSize, Rgba{.red = 200, .green = 200, .blue = 200, .alpha = kHalfAlpha});
 
     auto out = CompositeOverlay(src.frame, overlay);
-    if (!out) {
-        FAIL() << "CompositeOverlay returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(out.has_value());
     ExpectAllPixelsBgr(out->planes[0].data, static_cast<std::size_t>(kSize.width) * kSize.height,
                        Bgr{.blue = kBlendedValue, .green = kBlendedValue, .red = kBlendedValue},
                        kBlendTolerance);
@@ -175,10 +166,7 @@ TEST(FrameCompositorTest, MismatchedAspectIsLetterboxedAndCentered) {
         MakeRgba(kOverlaySize, Rgba{.red = 255, .green = 255, .blue = 255, .alpha = kOpaque});
 
     auto out = CompositeOverlay(src.frame, overlay);
-    if (!out) {
-        FAIL() << "CompositeOverlay returned nullopt";
-        return;
-    }
+    ASSERT_TRUE(out.has_value());
     const auto* plane = out->planes[0].data;
     const auto blue_at = [&](std::uint32_t col, std::uint32_t row) {
         return plane[(static_cast<std::size_t>(row) * kFrameSize.width + col) * kBgrBytesPerPixel];
