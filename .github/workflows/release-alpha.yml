@@ -53,6 +53,12 @@ on:
     branches: [development]
   push:
     branches: [development]
+    # Docs-only pushes don't change the binary — skip the alpha resolve/build so a
+    # docs/markdown merge doesn't spin up the cross-build. A mixed push (code AND
+    # docs) still runs (paths-ignore only skips when EVERY changed path matches).
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
     inputs:
       version:
