@@ -55,6 +55,15 @@ on:
     branches: ["release/**"]
   push:
     branches: ["release/**"]
+    # Docs-only pushes don't change the binary — skip the beta cross-build + tag so
+    # a docs/markdown merge doesn't cut a throwaway vX.Y.Z-beta.N. Beta derives its
+    # version from the branch name (every push bumps), so unlike alpha it cannot
+    # skip via conventional-commit type — this paths filter is the guard. A mixed
+    # push (code AND docs) still builds (paths-ignore skips only when EVERY changed
+    # path matches).
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch:
 
 # Serialize betas on the same release branch; cancel a superseded push/PR run.
