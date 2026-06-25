@@ -16,7 +16,10 @@ TEST(LatestOnlySlotTest, PushPopRoundTrip) {
     EXPECT_TRUE(buf.Push(42));
 
     auto out = buf.TryPop();
-    ASSERT_TRUE(out.has_value());
+    if (!out) {
+        FAIL() << "TryPop returned nullopt";
+        return;
+    }
     EXPECT_EQ(*out, 42);
     EXPECT_FALSE(buf.TryPop().has_value());
 }
@@ -28,7 +31,10 @@ TEST(LatestOnlySlotTest, NewerPushOverwritesOlder) {
     EXPECT_FALSE(buf.Push(3));
 
     auto out = buf.TryPop();
-    ASSERT_TRUE(out.has_value());
+    if (!out) {
+        FAIL() << "TryPop returned nullopt";
+        return;
+    }
     EXPECT_EQ(*out, 3);
 
     const auto stats = buf.Stats();
@@ -92,7 +98,10 @@ TEST(LatestOnlySlotTest, MoveOnlyPayload) {
     // 7 is a self-evident payload used only to assert move-through.
     buf.Push(std::make_unique<int>(7));  // NOLINT(readability-magic-numbers)
     auto out = buf.TryPop();
-    ASSERT_TRUE(out.has_value());
+    if (!out) {
+        FAIL() << "TryPop returned nullopt";
+        return;
+    }
     ASSERT_TRUE(*out);
     EXPECT_EQ(**out, 7);  // NOLINT(readability-magic-numbers)
 }

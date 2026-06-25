@@ -147,6 +147,18 @@ jobs:
               --title "$TAG" \
               --generate-notes
 
+          # Prepend the install command to the generated notes. The installer is
+          # pulled from the repo AT THIS TAG (single source of truth — not
+          # duplicated as a release asset). Idempotent: skip if already present.
+          cur="$(gh release view "$TAG" --json body -q '.body')"
+          case "$cur" in
+            *deploy/install.sh*) : ;;
+            *)
+              cmd="$(printf '## Install on a JetPack 7.2 Jetson\n\n```bash\ncurl -fsSL https://raw.githubusercontent.com/%s/%s/deploy/install.sh | sudo bash -s -- --version %s\n```\n' "$GITHUB_REPOSITORY" "$TAG" "$TAG")"
+              gh release edit "$TAG" --notes "$(printf '%s\n\n%s' "$cmd" "$cur")"
+              ;;
+          esac
+
       - name: Upload the promoted binary to the stable Release
         uses: softprops/action-gh-release@v2
         with:

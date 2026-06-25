@@ -154,7 +154,16 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
         if (!choice) {
             continue;
         }
-        if (choice->camera_index >= latest.size() || !latest[choice->camera_index].has_value()) {
+        if (choice->camera_index >= latest.size()) {
+            spdlog::warn("PipelineOrchestrator: decision chose camera {} out of range; skipping",
+                         choice->camera_index);
+            continue;
+        }
+        // Bind the slot once so the has_value() check and the dereference below
+        // operate on the same optional (a repeated latest[idx] subscript defeats
+        // the static optional-access analysis).
+        const auto& chosen_slot = latest[choice->camera_index];
+        if (!chosen_slot.has_value()) {
             // Decision named a camera with no frame this tick — skip rather than
             // dereference nothing. (StaticDecision never does this.)
             spdlog::warn("PipelineOrchestrator: decision chose camera {} with no frame; skipping",
@@ -162,7 +171,7 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
             continue;
         }
 
-        const auto& chosen = *latest[choice->camera_index];
+        const auto& chosen = *chosen_slot;
         auto final_frame = postprocessor_->Process(chosen.source_frame, choice->crop);
         if (!final_frame) {
             continue;

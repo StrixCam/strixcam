@@ -14,14 +14,20 @@ TEST(RawCaptureNamingTest, FileNameRoundTrips) {
     EXPECT_EQ(name, "raw__abc-123-def__cam1.nv12");
 
     const auto parsed = naming::ParseFileName(name);
-    ASSERT_TRUE(parsed.has_value());
+    if (!parsed) {
+        FAIL() << "ParseFileName returned nullopt";
+        return;
+    }
     EXPECT_EQ(parsed->capture_group_id, "abc-123-def");
     EXPECT_EQ(parsed->camera_index, 1U);
 }
 
 TEST(RawCaptureNamingTest, ParsesMultiDigitCameraIndex) {
     const auto parsed = naming::ParseFileName("raw__grp__cam12.nv12");
-    ASSERT_TRUE(parsed.has_value());
+    if (!parsed) {
+        FAIL() << "ParseFileName returned nullopt";
+        return;
+    }
     EXPECT_EQ(parsed->capture_group_id, "grp");
     EXPECT_EQ(parsed->camera_index, 12U);
 }
@@ -38,7 +44,10 @@ TEST(RawCaptureNamingTest, RejectsNonRawNames) {
 TEST(RawCaptureNamingTest, GroupIdMayContainSingleUnderscores) {
     const RawCaptureIdentity identity{.capture_group_id = "a_b_c", .camera_index = 0};
     const auto parsed = naming::ParseFileName(naming::FileName(identity));
-    ASSERT_TRUE(parsed.has_value());
+    if (!parsed) {
+        FAIL() << "ParseFileName returned nullopt";
+        return;
+    }
     EXPECT_EQ(parsed->capture_group_id, "a_b_c");
     EXPECT_EQ(parsed->camera_index, 0U);
 }

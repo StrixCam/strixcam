@@ -64,8 +64,8 @@ class FakeWifi final : public control::IWifiManager {
 };
 class FakeDhcp final : public control::IDhcpServer {
    public:
-    auto Start(const std::string& /*group_interface*/, const std::string& /*go_ip*/)
-        -> bool override {
+    auto Start(const std::string& /*group_interface*/,
+               const std::string& /*go_ip*/) -> bool override {
         return true;
     }
     auto Stop() -> void override {}

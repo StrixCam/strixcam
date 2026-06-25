@@ -23,8 +23,8 @@ constexpr int kExecFailedExitCode = 127;
 
 DnsmasqDhcpServer::~DnsmasqDhcpServer() { Stop(); }
 
-auto DnsmasqDhcpServer::Start(const std::string& group_interface, const std::string& go_ip)
-    -> bool {
+auto DnsmasqDhcpServer::Start(const std::string& group_interface,
+                              const std::string& go_ip) -> bool {
     if (pid_ > 0) {
         spdlog::warn("DnsmasqDhcpServer: already running (pid={})", pid_);
         return false;

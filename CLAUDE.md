@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-SST Cam firmware — C++20 embedded runtime for NVIDIA Jetson Orin Nano (JetPack 6.2.2 / L4T 36.5). Dual IMX477 cameras, GStreamer pipeline, AI sports tracking. `_old/` contains deprecated Python prototypes; ignore it.
+SST Cam firmware — C++20 embedded runtime for NVIDIA Jetson Orin Nano (JetPack 7.2 / L4T r39.2 / Ubuntu 24.04). Dual IMX477 cameras, GStreamer pipeline, AI sports tracking. `_old/` contains deprecated Python prototypes; ignore it.
 
 ## Build
 
@@ -12,7 +12,12 @@ The **only supported build method is cross-compilation from the Dev Container.**
 
 1. Install the **Dev Containers** extension (`ms-vscode-remote.remote-containers`).
 2. Open this repo → **"Reopen in Container"** (or `Dev Containers: Reopen in Container`).
-   VSCode builds the image automatically (~37 GB JetPack sysroot extraction, ~20 min first time).
+   VSCode builds the image automatically (~3 GB L4T r39.2 BSP fetch + sysroot assembly, ~10-15 min first time).
+   The image build assembles the sysroot via `apply_binaries`, which chroots into the
+   arm64 rootfs — it needs **qemu-aarch64 binfmt** on the host. Docker Desktop registers
+   this automatically; on a plain Linux Docker host, register it once with
+   `docker run --privileged --rm tonistiigi/binfmt --install arm64` (CI does this via
+   `docker/setup-qemu-action`). Without it the build fails with `Exec format error`.
 3. VSCode opens inside the container — cmake, clangd, and CMake Tools all work.
 4. Configure + build:
 
@@ -55,10 +60,10 @@ Tests must verify behaviour end-to-end at the **module** boundary: feed real inp
 clang-format -i src/**/*.cpp src/**/*.hpp
 
 # Tidy (checks defined in .clang-tidy — bugprone, performance, modernize, readability, google-*)
-# clang-tidy is PINNED to clang-tidy-14 (jammy). The enforced check set + the
-# warning baseline are version-locked; treat a version bump as a deliberate,
+# clang-tidy is noble's v18 (JetPack 7.2 / Ubuntu 24.04). The enforced check set
+# + the warning baseline are version-locked; treat a version bump as a deliberate,
 # re-triaged change. Cross-toolchain flags live in scripts/tidy-args.sh.
-clang-tidy-14 -p build/test src/path/to/file.cpp
+clang-tidy -p build/test src/path/to/file.cpp
 ```
 
 `compile_commands.json` is exported automatically to `build/<preset>/` and symlinked by clangd.
@@ -70,12 +75,13 @@ verify-only — it never writes fixes back to your branch. Correct fixable
 findings **dev-side**, inside the devcontainer, before pushing:
 
 ```bash
-scripts/fix.sh          # clang-format + clang-tidy-14 --fix on STAGED C/C++ only
+scripts/fix.sh          # clang-format + clang-tidy --fix on STAGED C/C++ only
 scripts/fix.sh --all    # the whole src/ + tests/ tree (bulk cleanup)
 ```
 
-`scripts/fix.sh` and the CI `tidy` job both source `scripts/tidy-args.sh`, so
-their cross flags can never drift. `--fix` corrects only checks that ship
+`scripts/fix.sh` and the CI tidy runner (`scripts/ci/tidy-run.sh`, shared
+byte-for-byte by both workflows) both source `scripts/tidy-args.sh`, so their
+cross flags can never drift. `--fix` corrects only checks that ship
 fixits; the noisy blockers (`magic-numbers`, `easily-swappable-parameters`,
 `cognitive-complexity`, `branch-clone`) have no fixit and stay reported for you
 to resolve by hand.
@@ -90,24 +96,24 @@ It runs `scripts/fix.sh` on staged C/C++ files and re-stages what it rewrote.
 
 ## CI/CD & releasing
 
-PR-gated, Conventional-Commit driven. CI runs **inside the devcontainer** (the cross-build env), via `devcontainers/ci`. The pipeline follows the SST branch model `feat/* → development → release/X.Y.Z → main` with a three-rung maturity ladder:
+PR-gated, Conventional-Commit driven. The cross-build runs **inside the repo's devcontainer image**, but that image is built **once per `.devcontainer/**` content and reused** — see "Image reuse" below — not rebuilt per job. The pipeline follows the SST branch model `feat/* → development → release/X.Y.Z → main` with a three-rung maturity ladder:
 
 - **alpha** — the devcontainer cross-build + container `ctest` in isolation (no hardware).
 - **beta** — the aarch64 binary flashed to a **real Jetson** and tested **with the app**.
 - **stable** — shipped: the verified beta binary promoted unchanged.
 
-Tag scheme: `vX.Y.Z[-alpha.N|-beta.N]`. Three **branch-scoped** product workflows + the devcontainer-image publisher. Each product workflow owns one branch tier and folds the PR gate checks inside itself (`pull_request`-gated) — there is **no standalone `ci.yml`**:
+Tag scheme: `vX.Y.Z[-alpha.N|-beta.N]`. Three **branch-scoped** product workflows. Each owns one branch tier and folds the PR gate checks inside itself (`pull_request`-gated) — there is **no standalone `ci.yml`**:
 
 - `.github/workflows/release-alpha.yml` (name `release-alpha`) — **owns `development`**. On **`pull_request` into `development`** it runs the gate checks `ci-scripts` (shellcheck + resolve-version tests), `format` (clang-format `--dry-run --Werror`), `tidy` (clang-tidy), `test` (cross-build the `test` preset + `ctest` under qemu; hardware-bound tests excluded by name — they only pass on-device). On **push to `development`** (a merge) + dispatch it runs the alpha **release** job: `scripts/ci/resolve-version.sh alpha` picks the next `vX.Y.Z-alpha.N` from a Conventional-Commit base bump (`feat:` → minor, `fix:`/`perf:` → patch, `BREAKING`/`type!:` → major, docs/chore-only → **skip**), cross-builds the binary, and publishes a **prerelease** with `sst_cam_firmware-<tag>-aarch64`. The check jobs are `if: github.event_name == 'pull_request'`; the release jobs are `if: github.event_name != 'pull_request'`.
 - `.github/workflows/release-beta.yml` (name `release-beta`) — **owns `release/**`**. Same gate checks (`ci-scripts`/`format`/`tidy`/`test`) on **`pull_request` into `release/**`**. On **push to `release/**`** + dispatch it runs the beta **release** job: base `X.Y.Z` comes from the branch name; `resolve-version.sh beta X.Y.Z` → `vX.Y.Z-beta.N`. Cross-builds, publishes a prerelease binary, and **records the binary's SHA-256 in the Release notes** (the promote step verifies against it).
 - `.github/workflows/release.yml` (name `release`) — **owns `main`**. On **push to `main`** (a `release/X.Y.Z → main` merge) + dispatch it **promotes**: derives `X.Y.Z` from the merged branch, selects the highest `vX.Y.Z-beta.N` tag, tags the stable `vX.Y.Z`, **downloads the beta binary, verifies its SHA-256** against the recorded digest, renames it to `sst_cam_firmware-vX.Y.Z-aarch64` (bytes preserved), and uploads it to the stable Release. **No cross-build runs on `main`** — `main` only promotes.
-- `.github/workflows/devcontainer-image.yml` — on **push to `main`** touching `.devcontainer/**` + dispatch. Publishes the GHCR devcontainer image and surfaces its digest in the run Summary. It commits **nothing** back to `main` (only `packages: write`). CI image-cache consumption stays deferred; when un-deferred it must pin by `@sha256:` digest, never `:latest`.
+**Image reuse (content-hash build-or-pull).** Both `release-alpha.yml` and `release-beta.yml` start with an `image` job that tags the devcontainer by `hashFiles('.devcontainer/**')` (the full image recipe) and pushes it to `ghcr.io/scoutsporttechnology/sst-cam-firmware-devcontainer:<hash>`. If that tag already exists in GHCR it is a **pull** (~8 s manifest-inspect, no build); otherwise it builds + pushes that hash **once**. The sysroot-dependent jobs (`tidy-shard` — the sharded clang-tidy matrix — `test`, and the release cross-build) `needs: image` and `docker pull` + `docker run` it (~2-3 min pull, no per-run rebuild). `format` + `ci-scripts` are **host-only** (apt `clang-format-18` / shellcheck — no image); the `tidy` aggregator is host-only too (it just gates on the shard results + runs the floor guard). A `.devcontainer/**` change is the only thing that triggers a rebuild; every other PR reuses the pinned image. A `changes` job (dorny/paths-filter) gates `tidy-shard`/`test` so a **docs/workflow-only PR skips them** — a job skipped by `if:` counts as success for the required checks, so the wired names stay green without running. SECURITY: consumers pull by **content-hash tag, never `:latest`**; the push needs `packages: write`, so fork PRs (read-only token) skip it and build-only — they can neither poison nor benefit (no `pull_request` publish to a privileged context).
 
-The `tidy` hard gate is intact inside `release-alpha.yml` / `release-beta.yml`: cross-toolchain header flags live in `scripts/tidy-args.sh`, the tree is clean under the full check set, and `.clang-tidy` promotes every diagnostic to an error (`WarningsAsErrors: '*'`); clang-tidy is version-locked to `clang-tidy-14`. The floor-NOLINT guard ships alongside it. Auto-fix fixable findings dev-side with `scripts/fix.sh` before pushing (CI is verify-only). Each build/check job frees ~30GB host disk before building the ~37GB JetPack image.
+The `tidy` hard gate is intact inside `release-alpha.yml` / `release-beta.yml`: cross-toolchain header flags live in `scripts/tidy-args.sh`, the tree is clean under the full check set, and `.clang-tidy` promotes every diagnostic to an error (`WarningsAsErrors: '*'`); clang-tidy is noble's v18 (treat a version bump as a deliberate, re-triaged change). The floor-NOLINT guard ships alongside it. Auto-fix fixable findings dev-side with `scripts/fix.sh` before pushing (CI is verify-only). **tidy is SHARDED for speed:** clang-tidy cost scales with TU count (~95 TUs, each re-parsing heavy GStreamer/OpenCV headers ≈ ~21 min single-job), so `scripts/ci/tidy-run.sh shard <i> <n>` round-robin-splits the TU list across a `tidy-shard` runner matrix (4 legs) — **full-tree coverage is preserved every PR** (no diff-scoping, so "green = clean tree" still holds), only the wall-time shrinks ~Nx. A thin aggregator job named `tidy` (the byte-identical wired required check) `needs:` the shards and fails iff any shard failed (`if: always()` so a failed shard can't skip-propagate to a green "skipped"); it also hosts the floor-NOLINT guard. The selection/sharding logic has its own host-side self-test (`scripts/ci/test-tidy-run.sh`) run in `ci-scripts`. Retune the shard count by editing the matrix `shard:` list alone — `${{ strategy.job-total }}` derives the total from that list and passes it to `tidy-run.sh`, so the index and total cannot drift.
 
 Default `GITHUB_TOKEN` only — no PAT/App. The "Release Tags" ruleset permits creating compliant semver tags. Ruleset + version-reset runbooks live in [docs/ci/](docs/ci/).
 
-**Two non-negotiables:** (1) `main` runs **no failable build/publish job** — it only promotes the already-built, digest-verified beta binary. (2) No CI job pushes a commit back to `main` (`devcontainer-image.yml` surfaces the digest in its Summary, never commits it).
+**Two non-negotiables:** (1) `main` runs **no failable build/publish job** — it only promotes the already-built, digest-verified beta binary. (2) No CI job pushes a commit back to `main`.
 
 ### Branch + commit + tag rules
 - Flow: `feat/* → development → release/X.Y.Z → main`. `development` is the default integration branch; `main` holds only released, promoted code.
@@ -270,4 +276,4 @@ If a new feature needs a new system dep, install it in the sysroot via `.devcont
 
 ## Adding system dependencies to the JetPack sysroot
 
-The JetPack `targetfs` tarball does not include every Ubuntu package — when a new system dep is needed (e.g. `sdbus-c++`, `gst-rtsp-server`), add the matching Ubuntu jammy `arm64` `.deb` URLs to [.devcontainer/sysroot/003_install_extra_pkgs.sh](.devcontainer/sysroot/003_install_extra_pkgs.sh). The Dockerfile runs `003_install_extra_pkgs.sh` *before* `002_fix_sysroot.sh`, so newly extracted libraries are picked up by the symlink-fix and `.so` linker-stub passes automatically.
+The L4T r39.2 BSP sample rootfs does not include every `-dev` package — when a new system dep is needed (e.g. `sdbus-c++`, `gst-rtsp-server`), add the matching Ubuntu **noble** (24.04) `arm64` `.deb` URL to [.devcontainer/sysroot/noble-deb-urls.txt](.devcontainer/sysroot/noble-deb-urls.txt) (resolve the exact version + dep closure with `apt-get install --print-uris` against the assembled rootfs). `003_install_extra_pkgs.sh` extracts that list, and the Dockerfile runs it *before* `002_fix_sysroot.sh`, so newly extracted libraries are picked up by the symlink-fix and `.so` linker-stub passes automatically.

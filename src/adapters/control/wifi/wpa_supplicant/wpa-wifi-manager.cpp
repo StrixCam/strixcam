@@ -53,7 +53,7 @@ auto WpaWifiManager::OpenCtrlSocket() -> bool {
 
     sockaddr_un local{};
     local.sun_family = AF_UNIX;
-    local_path_ = fmt::format("/tmp/wpa_ctrl_{}-{}", ::getpid(), static_cast<int>(std::rand()));
+    local_path_ = fmt::format("/tmp/wpa_ctrl_{}-{}", ::getpid(), std::rand());
     std::strncpy(local.sun_path, local_path_.c_str(), sizeof(local.sun_path) - 1);
     ::unlink(local.sun_path);
     if (::bind(sock_, reinterpret_cast<sockaddr*>(&local), sizeof(local)) < 0) {

@@ -22,9 +22,24 @@ TEST(DropOldestRingTest, FifoOrdering) {
     EXPECT_TRUE(buf.Push(2));
     EXPECT_TRUE(buf.Push(3));
 
-    EXPECT_EQ(*buf.TryPop(), 1);
-    EXPECT_EQ(*buf.TryPop(), 2);
-    EXPECT_EQ(*buf.TryPop(), 3);
+    auto fifo1 = buf.TryPop();
+    if (!fifo1) {
+        FAIL() << "TryPop returned nullopt";
+        return;
+    }
+    EXPECT_EQ(*fifo1, 1);
+    auto fifo2 = buf.TryPop();
+    if (!fifo2) {
+        FAIL() << "TryPop returned nullopt";
+        return;
+    }
+    EXPECT_EQ(*fifo2, 2);
+    auto fifo3 = buf.TryPop();
+    if (!fifo3) {
+        FAIL() << "TryPop returned nullopt";
+        return;
+    }
+    EXPECT_EQ(*fifo3, 3);
     EXPECT_FALSE(buf.TryPop().has_value());
 }
 
@@ -35,8 +50,18 @@ TEST(DropOldestRingTest, OverflowDropsOldestEntry) {
     EXPECT_FALSE(buf.Push(3));  // evicts 1
     EXPECT_FALSE(buf.Push(4));  // evicts 2
 
-    EXPECT_EQ(*buf.TryPop(), 3);
-    EXPECT_EQ(*buf.TryPop(), 4);
+    auto popped3 = buf.TryPop();
+    if (!popped3) {
+        FAIL() << "TryPop returned nullopt";
+        return;
+    }
+    EXPECT_EQ(*popped3, 3);
+    auto popped4 = buf.TryPop();
+    if (!popped4) {
+        FAIL() << "TryPop returned nullopt";
+        return;
+    }
+    EXPECT_EQ(*popped4, 4);
 
     const auto stats = buf.Stats();
     EXPECT_EQ(stats.policy, BufferPolicy::DropOldest);
@@ -82,8 +107,18 @@ TEST(DropOldestRingTest, CloseDrainsThenReturnsNullopt) {
     buf.Push(2);
     buf.Close();
 
-    EXPECT_EQ(*buf.TryPop(), 1);
-    EXPECT_EQ(*buf.TryPop(), 2);
+    auto popped1 = buf.TryPop();
+    if (!popped1) {
+        FAIL() << "TryPop returned nullopt";
+        return;
+    }
+    EXPECT_EQ(*popped1, 1);
+    auto popped2 = buf.TryPop();
+    if (!popped2) {
+        FAIL() << "TryPop returned nullopt";
+        return;
+    }
+    EXPECT_EQ(*popped2, 2);
     EXPECT_FALSE(buf.TryPop().has_value());
     EXPECT_FALSE(buf.Push(3));
 }
