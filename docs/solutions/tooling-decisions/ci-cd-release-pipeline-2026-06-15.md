@@ -65,5 +65,6 @@ gh workflow run release.yml -R ScoutSportTechnology/sst-cam-firmware -f bump=min
 - `docs/bugs/2026-06-16-swappable-params-floor-nolint.md` — open bug surfaced by the hard gate: the FLOOR `bugprone-easily-swappable-parameters` check `// NOLINT`-suppressed on genuinely transposable production signatures.
 - `docs/plans/2026-06-15-001-fix-clang-tidy-hard-gate-plan.md` — the plan that turned `tidy` advisory→hard (U1–U7).
 - `docs/solutions/tooling-decisions/cpp-rewrite-promotion-to-main-2026-06-09.md` — branch consolidation + proto-submodule pinning (same submodule model this pipeline gates).
+- `docs/solutions/workflow-issues/branch-target-resolution-before-pr-merge-2026-06-25.md` — caveat on the `feat → development → release/X.Y.Z → main` flow above: the documented flow is the steady-state ideal; when a `release/*` branch is the *active* line (mid-beta), verify from live repo state (`git ls-remote --heads`/`--tags`) before targeting `development`.
 - Sibling captures: `sst-cam-proto` and `sst-cam-app` have repo-specific versions under `docs/solutions/tooling-decisions/`. proto's covers the cross-cutting GITHUB_TOKEN/ruleset rationale.
 - `CLAUDE.md` → "CI/CD & releasing" section.
