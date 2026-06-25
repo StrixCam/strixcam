@@ -210,11 +210,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: shellcheck resolve-version + deploy scripts
-        run: shellcheck scripts/ci/resolve-version*.sh deploy/install.sh deploy/install-test.sh
+      - name: shellcheck resolve-version + tidy-run + deploy scripts
+        run: shellcheck scripts/ci/resolve-version*.sh scripts/ci/tidy-run.sh scripts/ci/test-tidy-run.sh deploy/install.sh deploy/install-test.sh
 
       - name: resolve-version unit tests
         run: ./scripts/ci/resolve-version-test.sh
+
+      # Selection/sharding self-test for tidy-run.sh (R-SELECT): asserts the
+      # shard split covers every TU exactly once and that an unwired TU fails.
+      # Host-side (pure bash + the synthetic trees it builds) — no devcontainer.
+      - name: tidy-run selection self-test
+        run: ./scripts/ci/test-tidy-run.sh
 
       - name: install.sh runtime-dep contract tests
         run: ./deploy/install-test.sh
@@ -248,10 +254,25 @@ jobs:
           echo "$files" | xargs clang-format-18 --dry-run --Werror
 
   # ---------------------------------------------------------------------------
-  # tidy — clang-tidy over a configured preset's compile_commands.json
+  # tidy — clang-tidy over the test preset's compile_commands.json, SHARDED.
+  #
+  # clang-tidy cost scales with TU COUNT: ~95 TUs each re-parse the heavy
+  # GStreamer/OpenCV headers, so a single-job full scan is ~21 min flat. We keep
+  # FULL-TREE coverage (no diff-scope, no coverage hole — "green = clean tree"
+  # stays true) and instead SPLIT the TU list across a runner matrix:
+  # `tidy-shard` lints round-robin slices in parallel (scripts/ci/tidy-run.sh),
+  # cutting lint wall-time ~Nx, and the `tidy` AGGREGATOR fails iff any shard
+  # failed.
+  #
+  # `tidy` (NOT `tidy-shard`) is the wired REQUIRED STATUS CHECK — a matrix job
+  # reports as `tidy-shard (0)`, `tidy-shard (1)`, … which would NOT satisfy the
+  # branch ruleset. Keep the aggregator's `name: tidy` byte-identical (see
+  # docs/ci/rulesets.md). Retune the shard count by editing the matrix `shard:`
+  # list ALONE — `${{ strategy.job-total }}` derives the total from that list and
+  # passes it to tidy-run.sh, so the index and total cannot drift.
   # ---------------------------------------------------------------------------
-  tidy:
-    name: tidy
+  tidy-shard:
+    name: tidy-shard
     needs: [changes, image]
     if: ${{ github.event_name == 'pull_request' && needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
@@ -260,8 +281,20 @@ jobs:
       packages: read
     # Hard gate: the cross-toolchain flags (scripts/tidy-args.sh) resolve all
     # std/system headers, the tree is clean, and .clang-tidy promotes every
-    # diagnostic to an error via WarningsAsErrors. A new lint violation fails the
-    # PR. clang-tidy is noble clang-tidy v18 (see .clang-tidy).
+    # diagnostic to an error via WarningsAsErrors. A new lint violation in ANY
+    # shard fails the run. clang-tidy is noble clang-tidy v18 (see .clang-tidy).
+    strategy:
+      # One shard's violation must not cancel the others — collect every shard's
+      # findings in a single run instead of stopping at the first failure.
+      fail-fast: false
+      matrix:
+        # The shard TOTAL is derived from this list via ${{ strategy.job-total }}
+        # and passed to tidy-run.sh, so the index and the total can never drift
+        # (a hardcoded total is a silent-coverage-hole hazard). Retune by editing
+        # this list alone. Entries MUST be the contiguous range 0..N-1 — the
+        # round-robin covers bins 0..total-1, and any gap/out-of-range fails
+        # CLOSED (tidy-run.sh rejects an index >= total).
+        shard: [0, 1, 2, 3]
     steps:
       # Assembling the JetPack 7.2 sysroot (~3GB BSP download + extracted r39.2
       # rootfs + ~69 noble debs) is disk-heavy on a stock hosted runner. Reclaim ~30GB
@@ -279,22 +312,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-          # Full history so the floor-NOLINT guard can diff against the PR base.
-          fetch-depth: 0
-
-      # Self-test the guard before trusting it: asserts every bypass class
-      # (bare/wildcard/non-leading-list NOLINT, faked marker) is still caught.
-      # A regex regression here would silently let unsanctioned floor NOLINTs
-      # through the gate below.
-      - name: Floor-NOLINT guard self-test
-        run: scripts/test-check-floor-nolints.sh
-
-      # Cheap, host-side gate — no devcontainer needed. Fails the PR if it adds a
-      # bugprone-*/performance-* NOLINT without a `// floor-ok:` sanction marker
-      # (see .clang-tidy floor policy). Diff-scoped against the PR base, so only
-      # newly introduced suppressions are gated.
-      - name: Floor-NOLINT guard (diff-scoped)
-        run: scripts/check-floor-nolints.sh "${{ github.event.pull_request.base.sha }}"
 
       - name: Restore Conan cache
         uses: actions/cache@v4
@@ -320,37 +337,76 @@ jobs:
 
       # Make the prebuilt devcontainer image available locally (built once by the
       # `image` job; pulled here, or built locally on pull failure — R6), then run
-      # the tidy check inside it — no per-run sysroot rebuild on the fast path. Run
-      # as root so the bind-mounted workspace (owned by the runner uid) is writable
+      # this shard inside it — no per-run sysroot rebuild on the fast path. Run as
+      # root so the bind-mounted workspace (owned by the runner uid) is writable
       # for the build dir; the image's PATH already exposes conan + the gcc-13
-      # cross toolchain.
+      # cross toolchain. tidy-run.sh builds (cmake + sst_proto) then lints only
+      # this shard's slice.
       - name: Ensure devcontainer image
         uses: ./.github/actions/pull-or-build-devcontainer
         with:
           image: ${{ env.IMAGE }}
           tag: ${{ needs.image.outputs.tag }}
 
-      - name: clang-tidy (-p build/test)
+      - name: clang-tidy shard ${{ matrix.shard }} of ${{ strategy.job-total }} (-p build/test)
         env:
           TAG: ${{ needs.image.outputs.tag }}
+          SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ strategy.job-total }}
         run: |
           set -euo pipefail
           docker run --rm --user root \
             -v "$PWD":/workspace -w /workspace \
             -v "$HOME/.conan2":/root/.conan2 -e CONAN_HOME=/root/.conan2 \
-            "${IMAGE}:${TAG}" bash -lc '
-              set -euo pipefail
-              # Configure the test preset to generate compile_commands.json, then
-              # generate the protobuf headers (sst_proto = protoc only, seconds)
-              # so every TU that includes bluetooth.pb.h / wifi.pb.h has them and
-              # clang-tidy does not cascade phantom findings off a broken AST.
-              cmake --preset test
-              cmake --build --preset test --target sst_proto
-              files=$(find src tests \( -name "*.cpp" -o -name "*.cc" \) -not -path "*/_old/*")
-              if [ -z "$files" ]; then echo "No C++ translation units found to tidy"; exit 1; fi
-              # Cross-toolchain flags: scripts/tidy-args.sh (shared with scripts/fix.sh).
-              source scripts/tidy-args.sh
-              echo "$files" | xargs clang-tidy -p build/test "${TIDY_EXTRA_ARGS[@]}"'
+            -e SHARD="${SHARD}" -e TOTAL="${TOTAL}" \
+            "${IMAGE}:${TAG}" bash -lc 'set -euo pipefail; scripts/ci/tidy-run.sh shard "${SHARD}" "${TOTAL}"'
+
+  # ---------------------------------------------------------------------------
+  # tidy — AGGREGATOR + floor-NOLINT guard. This is the wired REQUIRED STATUS
+  # CHECK (name byte-identical; see docs/ci/rulesets.md). Host-side only — no
+  # devcontainer. `if: always()` is load-bearing: a FAILED shard must not
+  # skip-propagate through `needs:` and turn this job into a green "skipped"
+  # (a job skipped by an unmet `needs:` counts as SUCCESS for required checks).
+  # So we run regardless and assert the shard aggregate result ourselves.
+  # ---------------------------------------------------------------------------
+  tidy:
+    name: tidy
+    needs: [changes, tidy-shard]
+    if: ${{ always() && github.event_name == 'pull_request' && needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (with proto submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Full history so the floor-NOLINT guard can diff against the PR base.
+          fetch-depth: 0
+
+      # Self-test the guard before trusting it: asserts every bypass class
+      # (bare/wildcard/non-leading-list NOLINT, faked marker) is still caught.
+      # A regex regression here would silently let unsanctioned floor NOLINTs
+      # through the gate.
+      - name: Floor-NOLINT guard self-test
+        run: scripts/test-check-floor-nolints.sh
+
+      # Cheap, host-side gate — no devcontainer needed. Fails the PR if it adds a
+      # bugprone-*/performance-* NOLINT without a `// floor-ok:` sanction marker
+      # (see .clang-tidy floor policy). Diff-scoped against the PR base, so only
+      # newly introduced suppressions are gated.
+      - name: Floor-NOLINT guard (diff-scoped)
+        run: scripts/check-floor-nolints.sh "${{ github.event.pull_request.base.sha }}"
+
+      # The merge gate: fail unless EVERY shard succeeded. `needs.tidy-shard.result`
+      # is the matrix aggregate — "success" only when all legs passed.
+      - name: Assert all tidy shards passed
+        run: |
+          set -euo pipefail
+          result="${{ needs.tidy-shard.result }}"
+          echo "tidy-shard aggregate result: ${result}"
+          if [ "${result}" != "success" ]; then
+            echo "::error::one or more tidy shards did not pass (${result})"
+            exit 1
+          fi
 
   # ---------------------------------------------------------------------------
   # test — cross-build the test preset and run GTest under qemu (ctest)

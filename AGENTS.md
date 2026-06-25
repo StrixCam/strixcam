@@ -57,12 +57,15 @@ Three **branch-scoped** product workflows. Each owns one branch tier; the PR gat
 checks are folded **inside** the alpha/beta workflows (`pull_request`-gated), so
 there is **no standalone `ci.yml`**. Each starts with an `image` job that builds
 the devcontainer **once per `.devcontainer/**` content** (content-hash tag in
-GHCR) and is pulled by `tidy`/`test`/the cross-build — no per-run rebuild; a
-`changes` job skips `tidy`/`test` on docs/workflow-only PRs:
+GHCR) and is pulled by `tidy-shard`/`test`/the cross-build — no per-run rebuild;
+a `changes` job skips `tidy-shard`/`test` on docs/workflow-only PRs. The `tidy`
+hard gate is **sharded**: a `tidy-shard` runner matrix lints round-robin slices
+of the TU list in parallel (full-tree coverage preserved), and a host-only
+aggregator job named `tidy` — the wired required check — gates on the shards:
 
 | Workflow (name) | Trigger | Does |
 | --------------- | ------- | ---- |
-| `release-alpha.yml` (`release-alpha`) — owns `development` | PR → `development` | `ci-scripts` (shellcheck + resolve-version tests) + `format` (host clang-format) + `tidy` + `test` (the required checks; `tidy`/`test` pull the image) |
+| `release-alpha.yml` (`release-alpha`) — owns `development` | PR → `development` | `ci-scripts` (shellcheck + resolve-version + tidy-run self-tests) + `format` (host clang-format) + `tidy` + `test` (the required checks; `tidy-shard`/`test` pull the image, `tidy` aggregates the shards host-side) |
 | `release-alpha.yml` (`release-alpha`) | push → `development` (+ dispatch) | `resolve-version.sh alpha` → cross-build (pulls image) → atomic `vX.Y.Z-alpha.N` `--prerelease` |
 | `release-beta.yml` (`release-beta`) — owns `release/**` | PR → `release/**` | same `ci-scripts` + `format` + `tidy` + `test` checks |
 | `release-beta.yml` (`release-beta`) | push → `release/**` (+ dispatch) | base = branch `X.Y.Z` → cross-build → atomic `-beta.N` `--prerelease`, records binary SHA-256 in notes |
