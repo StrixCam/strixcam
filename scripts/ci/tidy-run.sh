@@ -27,10 +27,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The canonical TU list: src/ + tests/ .cpp/.cc, excluding the deprecated _old/
-# Python-prototype tree. `sort` makes the round-robin slicing deterministic and
-# stable across runners (finding: shards must be reproducible to be testable).
+# Python-prototype tree. The round-robin split assigns each TU to a shard by its
+# INDEX in this sorted list, so every shard runner MUST compute a byte-identical
+# order — `LC_ALL=C sort` pins byte-collation so the order is locale-independent
+# (a UTF-8 vs C collation skew on one leg would silently move a TU into a
+# different, or no, bin and the gate would go green with a coverage hole).
 _all_tidy_tus() {
-  find src tests \( -name '*.cpp' -o -name '*.cc' \) -not -path '*/_old/*' | sort
+  find src tests \( -name '*.cpp' -o -name '*.cc' \) -not -path '*/_old/*' | LC_ALL=C sort
 }
 
 # select_tidy_files <mode> [index] [n]  -> newline-separated TU list on stdout.

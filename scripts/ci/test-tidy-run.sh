@@ -56,26 +56,39 @@ new_tree() {
   : >"$d/src/a/two.cc"
   : >"$d/src/b/three.cpp"
   : >"$d/tests/four.cpp"
+  : >"$d/src/a/Zeta.cpp"   # uppercase: C-collation sorts it before lowercase,
+                           # a UTF-8 locale does not — exercises the sort pin
   : >"$d/src/a/header.hpp" # not a TU — must be ignored
   : >"$d/src/a/header.h"   # not a TU — must be ignored
   : >"$d/src/_old/legacy.cpp" # deprecated tree — must be excluded
   echo "$d"
 }
 
-# --- full mode: the four real TUs, sorted, no headers, no _old/ ---------------
+# The expected list in the script's own collation (LC_ALL=C) — the round-robin
+# assigns by index in THIS order, so every comparison below must use it too.
 t="$(new_tree)"
-got="$(cd "$t" && select_tidy_files full)"
-want="$(printf '%s\n' src/a/one.cpp src/a/two.cc src/b/three.cpp tests/four.cpp | sort)"
-expect_eq "full -> 4 TUs sorted, headers + _old excluded" "$got" "$want"
+want="$(printf '%s\n' src/a/Zeta.cpp src/a/one.cpp src/a/two.cc src/b/three.cpp tests/four.cpp | LC_ALL=C sort)"
 
-# --- shard union == full, for several shard counts ----------------------------
+# --- full mode: the 5 real TUs, C-sorted, no headers, no _old/ ----------------
+got="$(cd "$t" && select_tidy_files full)"
+expect_eq "full -> 5 TUs C-sorted, headers + _old excluded" "$got" "$want"
+
+# --- ordering is locale-stable: the script pins `LC_ALL=C sort`, so the TU
+# --- order (and thus every shard's bin assignment) is identical regardless of
+# --- the ambient locale. Cross-runner shard agreement (R7) rests on this — a
+# --- regression dropping the pin would let two runners under different locales
+# --- bin a TU differently, opening a silent coverage hole.
+got_utf="$(cd "$t" && LC_ALL=en_US.UTF-8 select_tidy_files full)"
+expect_eq "full order is C-collated regardless of ambient locale" "$got_utf" "$want"
+
+# --- shard union == full, for several shard counts (C-collated union) ---------
 for n in 1 2 3 4 8; do
-  union="$(cd "$t" && for ((i = 0; i < n; i++)); do select_tidy_files shard "$i" "$n"; done | sort)"
+  union="$(cd "$t" && for ((i = 0; i < n; i++)); do select_tidy_files shard "$i" "$n"; done | LC_ALL=C sort)"
   expect_eq "shard union(n=$n) == full" "$union" "$want"
 done
 
 # --- shards pairwise disjoint (no TU double-linted) ---------------------------
-dups="$(cd "$t" && for i in 0 1 2; do select_tidy_files shard "$i" 3; done | sort | uniq -d)"
+dups="$(cd "$t" && for i in 0 1 2; do select_tidy_files shard "$i" 3; done | LC_ALL=C sort | uniq -d)"
 expect_eq "shards disjoint (n=3): no duplicates" "$dups" ""
 
 # --- determinism: same slice twice -> identical -------------------------------
