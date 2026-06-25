@@ -42,6 +42,16 @@ UNIT_PATH="/etc/systemd/system/${SERVICE}.service"
 API="https://api.github.com/repos/${REPO}"
 EXPECTED_L4T_MAJOR=39   # JetPack 7.2
 
+# Runtime shared-library packages the firmware dynamically links that the JetPack
+# 7.2 base flash does NOT already ship. SOURCE OF TRUTH for this list:
+# .devcontainer/sysroot/003_install_extra_pkgs.sh — the packages it ADDS to the
+# build sysroot whose *runtime* is not in the L4T r39.2 sample rootfs. protobuf
+# and opencv runtime ARE in the rootfs (that script says so) → not listed here;
+# sdbus-c++ (BLE control plane) and gst-rtsp-server (app RTSP) are full adds and
+# must be installed on the device or the binary fails to load (exit 127). Keep in
+# sync with that script; deploy/install-test.sh guards against drift.
+RUNTIME_DEPS=(libsdbus-c++1 libgstrtspserver-1.0-0)
+
 VERSION="latest"        # tag selector (default)
 WANT_SHA=""             # --sha256 selector / verifier
 
@@ -177,7 +187,48 @@ ensure_setup() {
   fi
 }
 
+# Install the runtime shared-library packages the binary needs but a base JetPack
+# flash lacks. Idempotent: dpkg-query skips already-installed packages, so the
+# common (everything-present) path costs a few queries and no apt-get. Best-
+# effort — the preflight ldd gate below is the hard guarantee.
+ensure_runtime_deps() {
+  if ! command -v apt-get >/dev/null 2>&1; then
+    log "apt-get not found; skipping runtime-dep install (ensure these are present: ${RUNTIME_DEPS[*]})."
+    return 0
+  fi
+  local pkg missing=()
+  for pkg in "${RUNTIME_DEPS[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+      missing+=("$pkg")
+    fi
+  done
+  if [ "${#missing[@]}" -eq 0 ]; then
+    log "Runtime deps present: ${RUNTIME_DEPS[*]}"
+    return 0
+  fi
+  log "Installing runtime deps: ${missing[*]} ..."
+  apt-get update -qq || log "warning: apt-get update failed; attempting install anyway"
+  apt-get install -y --no-install-recommends "${missing[@]}" \
+    || log "warning: failed to install ${missing[*]} — the preflight check will report any unresolved libs"
+}
+
+# Fail BEFORE touching the running service if the new binary has unresolved
+# DT_NEEDED libraries on this device. Without this, install.sh would stop the
+# service, swap in an unloadable binary (exit 127, crash-loop), then "roll back"
+# to a backup carrying the SAME missing dep — leaving the service down either way.
+check_runtime_libs() {  # <binary>
+  command -v ldd >/dev/null 2>&1 || return 0
+  local missing_libs
+  missing_libs="$(ldd "$1" 2>/dev/null | awk '/not found/ {print $1}' | sort -u)"
+  [ -n "$missing_libs" ] || return 0
+  die "$(printf 'the new binary needs shared libraries that are missing on this device:\n%s\nInstall the packages that provide them, then re-run. Known runtime deps: %s\n(If the missing libs are sdbus-c++ / gst-rtsp-server: apt-get install -y %s)' \
+    "$(printf '%s\n' "$missing_libs" | sed 's/^/  /')" "${RUNTIME_DEPS[*]}" "${RUNTIME_DEPS[*]}")"
+}
+
 [ "$DO_SETUP" = "yes" ] && ensure_setup
+# Runtime deps are about the binary, not host setup — install them even with
+# --no-setup so an unloadable binary is never deployed.
+ensure_runtime_deps
 
 # Temp workspace on the SAME filesystem as INSTALL_PATH so the final mv is atomic.
 mkdir -p "$INSTALL_DIR"
@@ -279,6 +330,9 @@ if [ -f "$INSTALL_PATH" ]; then
     exit 0
   fi
 fi
+
+# --- Preflight: all dynamic deps resolvable BEFORE we touch the service -------
+check_runtime_libs "$new_bin"
 
 # --- Stop the service, swap atomically, keep a backup ------------------------
 service_was_active="no"

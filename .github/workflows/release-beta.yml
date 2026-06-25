@@ -210,11 +210,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: shellcheck resolve-version scripts
-        run: shellcheck scripts/ci/resolve-version*.sh deploy/install.sh
+      - name: shellcheck resolve-version + deploy scripts
+        run: shellcheck scripts/ci/resolve-version*.sh deploy/install.sh deploy/install-test.sh
 
       - name: resolve-version unit tests
         run: ./scripts/ci/resolve-version-test.sh
+
+      - name: install.sh runtime-dep contract tests
+        run: ./deploy/install-test.sh
 
   # ---------------------------------------------------------------------------
   # format — clang-format dry-run (Google style, .clang-format) over src/+tests/
