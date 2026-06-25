@@ -112,7 +112,12 @@ main() {
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     [ -e "$f" ] || continue
-    if grep -Fq -- "/$f\"" "$db" 2>/dev/null; then
+    # Match the FULL absolute path as a quoted JSON value ("<cwd>/<relit>"),
+    # not a bare path suffix: cmake writes compile_commands.json `file` fields
+    # rooted at the build cwd, so anchoring to "$PWD/$f" avoids a suffix-collision
+    # false-positive (a sibling subtree ending in the same relative path wrongly
+    # counted as wired). Bias is fail-CLOSED: a non-match fails the gate.
+    if grep -Fq -- "\"$PWD/$f\"" "$db" 2>/dev/null; then
       final+=("$f")
     else
       missing+=("$f")

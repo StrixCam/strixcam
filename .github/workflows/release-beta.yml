@@ -267,8 +267,9 @@ jobs:
   # `tidy` (NOT `tidy-shard`) is the wired REQUIRED STATUS CHECK — a matrix job
   # reports as `tidy-shard (0)`, `tidy-shard (1)`, … which would NOT satisfy the
   # branch ruleset. Keep the aggregator's `name: tidy` byte-identical (see
-  # docs/ci/rulesets.md). Bump the shard count by editing BOTH the matrix list
-  # and the `4` passed to tidy-run.sh below — they must stay in sync.
+  # docs/ci/rulesets.md). Retune the shard count by editing the matrix `shard:`
+  # list ALONE — `${{ strategy.job-total }}` derives the total from that list and
+  # passes it to tidy-run.sh, so the index and total cannot drift.
   # ---------------------------------------------------------------------------
   tidy-shard:
     name: tidy-shard

@@ -25,6 +25,10 @@ TIDY_RUN="${SCRIPT_DIR}/tidy-run.sh"
 # BASH_SOURCE==$0 so sourcing does NOT build or lint.
 # shellcheck source=./tidy-run.sh disable=SC1091
 source "${TIDY_RUN}"
+# tidy-run.sh sets `-e`; this runner deliberately runs WITHOUT it (set -uo above)
+# so an assertion can call a function expected to fail without aborting. Re-clear
+# `-e` here so the sourced `set -euo pipefail` doesn't silently leak in.
+set +e
 
 pass=0
 fail=0
@@ -73,13 +77,20 @@ want="$(printf '%s\n' src/a/Zeta.cpp src/a/one.cpp src/a/two.cc src/b/three.cpp 
 got="$(cd "$t" && select_tidy_files full)"
 expect_eq "full -> 5 TUs C-sorted, headers + _old excluded" "$got" "$want"
 
-# --- ordering is locale-stable: the script pins `LC_ALL=C sort`, so the TU
-# --- order (and thus every shard's bin assignment) is identical regardless of
-# --- the ambient locale. Cross-runner shard agreement (R7) rests on this — a
-# --- regression dropping the pin would let two runners under different locales
-# --- bin a TU differently, opening a silent coverage hole.
-got_utf="$(cd "$t" && LC_ALL=en_US.UTF-8 select_tidy_files full)"
-expect_eq "full order is C-collated regardless of ambient locale" "$got_utf" "$want"
+# --- ordering is locale-stable. The split assigns by index in the sorted list,
+# so every shard runner must sort identically; tidy-run.sh pins `LC_ALL=C sort`
+# to make the order locale-independent. A *runtime* locale test cannot prove this
+# on a C-locale runner — GNU sort silently falls back to C when the ambient
+# locale is absent, which is exactly the case on CI (ubuntu-latest ships only
+# C/C.UTF-8/POSIX), so such a test would pass even if the pin were removed.
+# Assert the pin is present in the source directly: this is the check that
+# actually fails when a future edit drops it. The C-collated order itself is
+# already asserted by the "full -> 5 TUs C-sorted" case above.
+if grep -Eq 'LC_ALL=C[[:space:]]+sort' "$TIDY_RUN"; then
+  expect_ok "LC_ALL=C sort pin present in tidy-run.sh (locale-stable order)" "true"
+else
+  expect_ok "LC_ALL=C sort pin present in tidy-run.sh (locale-stable order)" "false"
+fi
 
 # --- shard union == full, for several shard counts (C-collated union) ---------
 for n in 1 2 3 4 8; do
@@ -163,6 +174,41 @@ if ( cd "$d" && PATH="$stubdir:$PATH" "$TIDY_RUN" full ) >/dev/null 2>&1; then
   expect_ok "all TUs in compile DB -> pass" "true"
 else
   expect_ok "all TUs in compile DB -> pass" "false"
+fi
+
+# --- main() entry-path exits (the production dispatch, not just the function) -
+# These exercise the paths that run BEFORE the build, so no cmake/clang-tidy stub
+# is needed (selection + arg validation fail/early-exit ahead of the build).
+
+# Degenerate tree: src/+tests/ exist but hold no TUs -> full mode must exit 1
+# (a zero-TU full scan is real breakage, not a benign no-op).
+d="$(mktemp -d)"; mkdir -p "$d/src" "$d/tests"
+if ( cd "$d" && "$TIDY_RUN" full ) >/dev/null 2>&1; then
+  expect_ok "full on empty tree -> exit 1" "false"
+else
+  expect_ok "full on empty tree -> exit 1" "true"
+fi
+
+# Empty shard (total > TU count): a shard that owns no TUs must exit 0 (benign —
+# another shard covers the work), not fail.
+if ( cd "$t" && "$TIDY_RUN" shard 7 8 ) >/dev/null 2>&1; then
+  expect_ok "empty shard (7/8 over 5 TUs) -> exit 0" "true"
+else
+  expect_ok "empty shard (7/8 over 5 TUs) -> exit 0" "false"
+fi
+
+# Bad args reach the real entry point (not just select_tidy_files): main() must
+# propagate the non-zero exit, not swallow it (set -e masks cmdsub failure in an
+# assignment, so main wraps it in `if ! files=$(...)`).
+if ( cd "$t" && "$TIDY_RUN" shard 3 3 ) >/dev/null 2>&1; then
+  expect_ok "main() rejects out-of-range shard (3/3) -> non-zero" "false"
+else
+  expect_ok "main() rejects out-of-range shard (3/3) -> non-zero" "true"
+fi
+if ( cd "$t" && "$TIDY_RUN" ) >/dev/null 2>&1; then
+  expect_ok "main() with no args -> non-zero" "false"
+else
+  expect_ok "main() with no args -> non-zero" "true"
 fi
 
 # -----------------------------------------------------------------------------
