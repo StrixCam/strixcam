@@ -1,0 +1,91 @@
+# Ensure the content-hashed devcontainer image is available LOCALLY as
+# `${image}:${tag}`, then hand back to the caller (which `docker run`s that ref).
+#
+# Fast path: pull the prebuilt image the `image` job published — no per-run
+# sysroot rebuild. Fallback (R6): if the pull fails — a registry/network blip, an
+# ENOSPC, or a fork PR whose `image` job could not push (read-only token) — build
+# the sysroot locally with `devcontainers/ci` and tag it to the same ref so the
+# caller's `docker run` is path-agnostic. CI never hard-blocks on the pull
+# optimization.
+#
+# Also records pull wall-time + free disk before/after (U4 measurement gate) so
+# the first real runs confirm the pull fits a hosted runner post-free-disk-space.
+name: Pull or build devcontainer image
+description: >-
+  Make the content-hashed devcontainer image available locally (pull the
+  prebuilt image, or build+tag it locally on pull failure), with disk/time
+  measurement.
+inputs:
+  image:
+    description: GHCR image repository (no tag), e.g. ghcr.io/org/repo-devcontainer
+    required: true
+  tag:
+    description: Content-hash tag — hashFiles('.devcontainer/**')
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Free disk before pull (measure)
+      shell: bash
+      run: |
+        echo "::group::disk before pull"
+        df -h /
+        echo "::endgroup::"
+
+    - name: Pull prebuilt image (timed)
+      id: pull
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -uo pipefail
+        start=$(date +%s)
+        if docker pull "${IMAGE}:${TAG}"; then
+          echo "pulled=true" >> "$GITHUB_OUTPUT"
+          echo "image pull took $(( $(date +%s) - start ))s"
+        else
+          echo "pulled=false" >> "$GITHUB_OUTPUT"
+          echo "::warning::pull of ${IMAGE}:${TAG} failed after $(( $(date +%s) - start ))s — falling back to a local build"
+        fi
+
+    # ---- fallback build (only when the pull failed) -------------------------
+    # Same recipe the `image` job runs: free disk, qemu for the apply_binaries
+    # arm64 chroot, then `devcontainers/ci` builds the compose image
+    # `sst-cam-firmware`. Tag it to ${IMAGE}:${TAG} so the caller's `docker run`
+    # works identically to the pull path.
+    - name: Free up disk space (fallback build)
+      if: ${{ steps.pull.outputs.pulled == 'false' }}
+      uses: jlumbroso/free-disk-space@main
+      with:
+        tool-cache: true
+        large-packages: true
+        docker-images: false
+        swap-storage: true
+
+    - name: Set up QEMU (fallback build)
+      if: ${{ steps.pull.outputs.pulled == 'false' }}
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: arm64
+
+    - name: Build devcontainer image (fallback)
+      if: ${{ steps.pull.outputs.pulled == 'false' }}
+      uses: devcontainers/ci@v0.3
+      with:
+        push: never
+
+    - name: Tag local build to image ref (fallback)
+      if: ${{ steps.pull.outputs.pulled == 'false' }}
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        TAG: ${{ inputs.tag }}
+      run: docker tag sst-cam-firmware "${IMAGE}:${TAG}"
+
+    - name: Free disk after image ready (measure)
+      shell: bash
+      run: |
+        echo "::group::disk after image ready"
+        df -h /
+        echo "::endgroup::"
