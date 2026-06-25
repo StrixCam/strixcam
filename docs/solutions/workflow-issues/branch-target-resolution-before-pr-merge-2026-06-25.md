@@ -157,3 +157,7 @@ Open PR → release/0.1.0 → merge → v0.1.0-beta.11 cut automatically
 - `CLAUDE.md` → "Branch + commit + tag rules" / "Release lifecycle", and `AGENTS.md`
   → "Branch + commit + tag rules" — the documented default-to-`development` guidance
   that is correct but incomplete when a release branch is open.
+- `docs/solutions/workflow-issues/merge-to-main-is-deliberate-stable-promotion-2026-06-25.md`
+  — the sibling guard on the **outgoing** side: once fixes have landed on the active
+  `release/*`, merging that branch into `main` is a deliberate stable promotion (cuts a
+  release, and with `delete_branch_on_merge` deletes the branch) — confirm intent first.

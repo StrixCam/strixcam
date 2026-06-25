@@ -32,6 +32,27 @@ cmake --build --preset release
 
 Binary lands in `build/<preset>/bin/sst_cam_firmware`.
 
+### Headless build (agents / CI-less local verify)
+
+The build does **not** require the VSCode UI. The **`devcontainer` CLI** drives the
+same container from a plain terminal — an agent (Claude Code) or a script can
+cross-build without opening VSCode. This is the supported way to verify a change
+compiles before pushing when no Jetson is attached:
+
+```bash
+# Bring the container up (reuses the content-hashed image; first run pulls/builds it)
+devcontainer up --workspace-folder .
+
+# Cross-build inside it (release; swap for debug/test as needed)
+devcontainer exec --workspace-folder . bash -lc 'cmake --preset release && cmake --build --preset release'
+```
+
+`compile_commands.json` and the binary land in `build/<preset>/` on the host as
+usual (the workspace is bind-mounted). Clangd/IDE diagnostics on the **host** are
+meaningless — there is no sysroot outside the container, so "file not found" /
+"undeclared identifier" noise is expected; trust the in-container `cmake --build`.
+A clean `cmake --build --preset release` is the real "does it compile" gate.
+
 ## Tests
 
 Tests are off by default. Use the `test` preset (sets `SST_ENABLE_TESTS=ON` and pulls GTest via Conan):
