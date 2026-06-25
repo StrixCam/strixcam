@@ -2,7 +2,9 @@
 
 #include <spdlog/spdlog.h>
 
+#include <chrono>
 #include <cstdint>
+#include <future>
 #include <string>
 #include <utility>
 #include <vector>
@@ -156,6 +158,29 @@ auto BluezBleTransport::BuildAdvertisement() -> void {
     adv_obj_->finishRegistration();
 }
 
+auto BluezBleTransport::CallManagerAsync(sdbus::IProxy& proxy, const char* iface,
+                                         const char* method,
+                                         const sdbus::ObjectPath& object_path) -> void {
+    // callMethodAsync registers the call on the connection and returns
+    // immediately; the reply is delivered by the event-loop thread, which is
+    // also free to dispatch BlueZ's reentrant callbacks into our objects. This
+    // thread only blocks on a std::future (a plain condition variable — it does
+    // not touch the bus), so there is no two-thread contention on the connection.
+    auto future = proxy.callMethodAsync(method)
+                      .onInterface(iface)
+                      .withArguments(object_path, std::map<std::string, sdbus::Variant>{})
+                      .getResultAsFuture<>();
+
+    // Bound the wait so a wedged daemon can't hang Start() forever. 20s sits
+    // under BlueZ's own 25s D-Bus timeout while leaving ample headroom for GATT
+    // enumeration, which now completes in milliseconds.
+    if (future.wait_for(std::chrono::seconds(20)) != std::future_status::ready) {
+        throw sdbus::Error("org.sst.cam.BleTimeout",
+                           std::string{method} + " did not complete within 20s");
+    }
+    future.get();  // rethrows the sdbus::Error on a D-Bus-level failure
+}
+
 auto BluezBleTransport::Start() -> void {
     if (running_) {
         return;
@@ -189,29 +214,36 @@ auto BluezBleTransport::Start() -> void {
             spdlog::warn("BluezBleTransport: could not set adapter Alias: {}", e.what());
         }
 
-        // Start dispatching the connection BEFORE the blocking Register* calls.
-        // BlueZ replies to RegisterApplication only after it has synchronously
-        // called org.freedesktop.DBus.ObjectManager.GetManagedObjects back on our
-        // root object (and read each characteristic's properties). If our event
-        // loop is not already running, that callback is never serviced, so
-        // RegisterApplication blocks until the 25s D-Bus reply timeout
-        // ("org.freedesktop.DBus.Error.Timeout: Connection timed out") and BLE
-        // aborts. Running the async loop first lets the loop thread answer those
-        // BlueZ-side callbacks while this thread waits on the sync replies.
+        // Start dispatching the connection BEFORE the Register* calls so the
+        // event-loop thread can service the callbacks BlueZ makes back into us.
         connection_->enterEventLoopAsync();
         running_ = true;
 
-        auto adv_proxy = sdbus::createProxy(*connection_, kBluezBus, adapter_path_);
-        adv_proxy->callMethod("RegisterAdvertisement")
-            .onInterface(kIfaceLeAdvManager)
-            .withArguments(sdbus::ObjectPath{adv_path_}, std::map<std::string, sdbus::Variant>{});
+        auto bluez = sdbus::createProxy(*connection_, kBluezBus, adapter_path_);
+
+        // RegisterAdvertisement and RegisterApplication MUST be asynchronous.
+        // BlueZ services each by re-entering our own objects on the same bus
+        // before it replies: Properties.GetAll on /com/sst/cam/adv for the
+        // advertisement, and ObjectManager.GetManagedObjects (plus each
+        // characteristic's property reads) on /com/sst/cam/gatt for the
+        // application. An sd_bus connection cannot be driven by two threads at
+        // once, so a *blocking* callMethod() on this thread monopolizes the
+        // connection and locks out enterEventLoopAsync()'s thread — the very
+        // thread that has to answer those reentrant callbacks. BlueZ then waits
+        // for a reply we cannot produce until the blocking call gives up at the
+        // 25s D-Bus timeout ("org.freedesktop.DBus.Error.Timeout: Connection
+        // timed out"), which is exactly what aborted BLE on-device (the
+        // bluetoothd -d log shows it reading our advertisement props only at the
+        // 25s mark, right as the call times out). Going async hands the
+        // connection to the event loop: it answers BlueZ while this thread merely
+        // waits on a std::future. Starting the loop first is NOT enough on its
+        // own — the blocking call still monopolizes the connection.
+        CallManagerAsync(*bluez, kIfaceLeAdvManager, "RegisterAdvertisement",
+                         sdbus::ObjectPath{adv_path_});
         advertisement_registered_ = true;
 
-        auto gatt_proxy = sdbus::createProxy(*connection_, kBluezBus, adapter_path_);
-        gatt_proxy->callMethod("RegisterApplication")
-            .onInterface(kIfaceGattManager)
-            .withArguments(sdbus::ObjectPath{app_root_path_},
-                           std::map<std::string, sdbus::Variant>{});
+        CallManagerAsync(*bluez, kIfaceGattManager, "RegisterApplication",
+                         sdbus::ObjectPath{app_root_path_});
         application_registered_ = true;
 
         spdlog::info("BluezBleTransport: advertising as \"{}\" with service {} on adapter {}",

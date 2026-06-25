@@ -62,6 +62,13 @@ class BluezBleTransport final : public sst::control::IBleTransport {
     // carries no total_chunks (==0), which the app demuxes as an ack rather than
     // a response chunk (mirroring our own inbound-ack disambiguation).
     auto SendInboundAck(const std::string& correlation_id, std::uint32_t chunk_index) -> void;
+    // Invoke a BlueZ manager method (RegisterAdvertisement / RegisterApplication)
+    // ASYNCHRONOUSLY and wait on a std::future. These calls make BlueZ re-enter
+    // our own D-Bus objects before they reply; a blocking call would monopolize
+    // the connection and deadlock the event loop until the 25s D-Bus timeout.
+    // See the comment in Start() for the full rationale.
+    auto CallManagerAsync(sdbus::IProxy& proxy, const char* iface, const char* method,
+                          const sdbus::ObjectPath& object_path) -> void;
 
     std::string advertised_name_;
     std::string adapter_path_;
