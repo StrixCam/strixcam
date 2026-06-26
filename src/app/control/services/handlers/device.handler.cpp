@@ -14,12 +14,13 @@ constexpr std::uint32_t kProtocolVersion = 1;
 
 DeviceHandler::DeviceHandler(sst::config::DeviceData device, ISystemStats& stats,
                              FlagProvider is_recording, FlagProvider is_streaming,
-                             FlagProvider is_raw_capturing)
+                             FlagProvider is_raw_capturing, WifiStateProvider wifi_state)
     : device_(std::move(device)),
       stats_(stats),
       is_recording_(std::move(is_recording)),
       is_streaming_(std::move(is_streaming)),
-      is_raw_capturing_(std::move(is_raw_capturing)) {}
+      is_raw_capturing_(std::move(is_raw_capturing)),
+      wifi_state_(std::move(wifi_state)) {}
 
 auto DeviceHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kGetDeviceInfo, sst_cam::Command::kGetTelemetry};
@@ -61,9 +62,16 @@ auto DeviceHandler::HandleTelemetry() -> sst_cam::CommandResponse {
     telemetry->set_is_streaming(is_streaming_ && is_streaming_());
     telemetry->set_is_raw_capturing(is_raw_capturing_ && is_raw_capturing_());
 
-    // WiFi fields stay WIFI_UNKNOWN until the WiFi Direct module reports state
-    // (U12); the camera does not currently join an infrastructure network.
-    telemetry->set_wifi_state(sst_cam::WifiState::WIFI_UNKNOWN);
+    // Live WiFi state from the P2P-GO manager (not hardcoded), so the app's wifi
+    // indicator matches reality. The camera only ever runs as a WiFi-Direct group
+    // owner (no infrastructure join), so "connected" == the GO group is up.
+    const sst::control::WifiState wifi = wifi_state_ ? wifi_state_() : sst::control::WifiState{};
+    if (wifi.connected) {
+        telemetry->set_wifi_state(sst_cam::WifiState::WIFI_CONNECTED);
+        telemetry->set_wifi_ssid(wifi.ssid);
+    } else {
+        telemetry->set_wifi_state(sst_cam::WifiState::WIFI_DISCONNECTED);
+    }
     telemetry->set_internet_reachable(false);
     return resp;
 }
