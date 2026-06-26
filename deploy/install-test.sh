@@ -218,6 +218,36 @@ else
   bad "config-defaults.hpp not found: $DEFAULTS_HPP"
 fi
 
+# 11d. Self-healing: a device.json carrying the firmware PLACEHOLDER serial
+#      "00000000" (written by the firmware's first-boot default before install.sh
+#      ran) must be REPLACED with a unique serial — otherwise an already-booted
+#      unit stays stuck on sst-cam-0000. A real serial must still be left alone
+#      (covered by 11b's re-run check).
+serial_replaced=""
+if [ -s "${IDENTITY_SANDBOX}/identity.sh" ]; then
+  serial_replaced="$(
+    CONFIG_DIR="${IDENTITY_SANDBOX}/ph"
+    DEVICE_JSON="${CONFIG_DIR}/device.json"
+    # shellcheck disable=SC2034
+    SERVICE_USER="nobody"
+    mkdir -p "$CONFIG_DIR"
+    printf '{"serial_number": "00000000"}\n' > "$DEVICE_JSON"   # firmware default
+    # shellcheck disable=SC2329
+    log()   { :; }
+    # shellcheck disable=SC2329
+    chown() { :; }
+    # shellcheck source=/dev/null
+    . "${IDENTITY_SANDBOX}/identity.sh"
+    ensure_device_identity >/dev/null 2>&1
+    sed -nE 's/.*"serial_number":[[:space:]]*"([^"]+)".*/\1/p' "$DEVICE_JSON" | head -n1
+  )"
+fi
+if [ -n "$serial_replaced" ] && [ "$serial_replaced" != "00000000" ]; then
+  ok
+else
+  bad "placeholder serial '00000000' was not replaced (still '$serial_replaced'); booted units stay sst-cam-0000"
+fi
+
 # 12. Local-binary install path (the local validation loop): install.sh must
 #     accept --binary, install a local file WITHOUT touching GitHub, and still
 #     run the shared aarch64-ELF guard so a host build can't be installed.

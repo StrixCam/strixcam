@@ -73,6 +73,9 @@ CAMERA_OVERLAY="${SST_CAMERA_OVERLAY:-$DEFAULT_CAMERA_OVERLAY}"
 PROVISION_CAMERA="yes"
 EXTLINUX_CONF="/boot/extlinux/extlinux.conf"
 REBOOT_NEEDED="no"
+# Set when ensure_device_identity (re)writes the serial, so the binary-no-op path
+# still restarts the service to re-read the new identity.
+IDENTITY_CHANGED="no"
 
 # Runtime shared-library packages the firmware dynamically links that the JetPack
 # 7.2 base flash does NOT already ship. SOURCE OF TRUTH for this list:
@@ -325,12 +328,25 @@ generate_serial() {
 }
 
 ensure_device_identity() {
-  # Never clobber: an existing device.json (ours from a prior run, the firmware's
-  # default, or an operator edit) is left untouched so a unit's identity is stable.
+  # Self-healing, never-clobber-a-REAL-identity: a device.json carrying a genuine
+  # unique serial is left untouched (stable identity across re-runs / operator
+  # edits). BUT the firmware's first-boot default writes the PLACEHOLDER serial
+  # "00000000" (config-defaults.hpp kDeviceJson) — a unit that booted once before
+  # install.sh ran will have that, and it collides on BLE name sst-cam-0000. Treat
+  # the placeholder (and a missing/empty serial) as unprovisioned and write a
+  # unique one. The placeholder literal is guarded against drift by install-test
+  # (cross-checked vs config-defaults.hpp).
+  local existing=""
   if [ -f "$DEVICE_JSON" ]; then
-    log "Identity: device.json already present — leaving serial unchanged."
+    existing="$(sed -nE 's/.*"serial_number":[[:space:]]*"([^"]*)".*/\1/p' \
+      "$DEVICE_JSON" | head -n1)"
+  fi
+  if [ -n "$existing" ] && [ "$existing" != "00000000" ]; then
+    log "Identity: device.json already provisioned (serial ${existing}) — leaving unchanged."
     return 0
   fi
+  [ -f "$DEVICE_JSON" ] && \
+    log "Identity: device.json has a placeholder/empty serial — provisioning a unique one."
 
   local serial
   serial="$(generate_serial)"
@@ -354,6 +370,7 @@ EOF
   # The dir is chowned to SERVICE_USER in ensure_setup; chown the new file too so
   # the non-root service can read it.
   chown "${SERVICE_USER}:${SERVICE_USER}" "$DEVICE_JSON" 2>/dev/null || true
+  IDENTITY_CHANGED="yes"
   log "Identity: device.json written -> ${DEVICE_JSON}"
 }
 # --- device-identity:end --------------------------------------------------------
@@ -629,6 +646,11 @@ if [ -f "$INSTALL_PATH" ]; then
       log "Service not active; starting ${SERVICE} ..."
       systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
       systemctl start "$SERVICE" || log "warning: start returned non-zero"
+    elif [ "$IDENTITY_CHANGED" = "yes" ]; then
+      # Binary unchanged but the serial was (re)provisioned this run — restart so
+      # the running firmware re-reads device.json and advertises the new BLE name.
+      log "Identity changed; restarting ${SERVICE} to re-read device.json ..."
+      systemctl restart "$SERVICE" || log "warning: restart returned non-zero"
     fi
     log "Service status: $(systemctl is-active "$SERVICE" 2>/dev/null || echo unknown)"
     log "Logs: journalctl -u ${SERVICE} -f"
