@@ -127,5 +127,96 @@ if grep -q 'SST_CAMERA_OVERLAY' "$INSTALL_SH"; then ok; else bad "install.sh mus
 #     (the no-op and success paths both exit 0 early) via the EXIT trap.
 if grep -q 'trap print_pending_actions EXIT' "$INSTALL_SH"; then ok; else bad "install.sh must announce the pending reboot on every exit path"; fi
 
+# 11. Device-identity provisioning: install.sh must give each unit a UNIQUE BLE
+#     name. The firmware renders `sst-cam-NNNN` from device.json's serial_number;
+#     its built-in default is the placeholder "00000000", so every un-provisioned
+#     unit collides on `sst-cam-0000`. install.sh writes device.json with a unique
+#     serial BEFORE first boot, and must NEVER clobber an existing one (mirrors the
+#     firmware's EnsureDefault never-clobber rule → stable identity across re-runs).
+
+# 11a. Static contract: the provisioning function exists and is wired into setup.
+if grep -q 'ensure_device_identity()' "$INSTALL_SH"; then ok; else bad "install.sh must define ensure_device_identity"; fi
+if grep -qE '^[[:space:]]*ensure_device_identity$' "$INSTALL_SH"; then ok; else bad "install.sh must call ensure_device_identity during setup"; fi
+# shellcheck disable=SC2016
+if grep -q 'DEVICE_JSON="${CONFIG_DIR}/device.json"' "$INSTALL_SH"; then ok; else bad "install.sh must target CONFIG_DIR/device.json (the firmware read path)"; fi
+# the new device.json must be chowned to the service user (string-built path ok)
+# shellcheck disable=SC2016
+if grep -qE 'chown "\$\{SERVICE_USER\}:\$\{SERVICE_USER\}" "\$DEVICE_JSON"' "$INSTALL_SH"; then
+  ok
+else
+  bad "install.sh must chown the provisioned device.json to SERVICE_USER"
+fi
+
+# 11b. Behavioural: extract generate_serial + ensure_device_identity from install.sh
+#      and run them against a throwaway CONFIG_DIR (no root / device / network).
+#      Verifies a fresh install writes a NON-placeholder serial and that a re-run
+#      leaves an already-provisioned serial unchanged.
+IDENTITY_SANDBOX="$(mktemp -d)"
+trap 'rm -rf "$IDENTITY_SANDBOX"' EXIT
+# Pull the function definitions out of install.sh so we can exercise the real
+# logic in isolation. Extract the sentinel-bracketed region (a column-0 '}' inside
+# the device.json here-doc makes a brace-based range unsafe).
+sed -n '/# --- device-identity:begin/,/# --- device-identity:end/p' \
+  "$INSTALL_SH" > "${IDENTITY_SANDBOX}/identity.sh"
+
+serial_first=""
+serial_second=""
+if [ -s "${IDENTITY_SANDBOX}/identity.sh" ]; then
+  # Run in a subshell: stub the globals the functions read, point DEVICE_JSON at
+  # the sandbox, no-op the logger and chown, then drive a fresh install + re-run.
+  read -r serial_first serial_second < <(
+    CONFIG_DIR="${IDENTITY_SANDBOX}/config"
+    DEVICE_JSON="${CONFIG_DIR}/device.json"
+    # SERVICE_USER / log / chown are read by the sourced install.sh functions, not
+    # by this harness directly — shellcheck can't see across the `.` so silence it.
+    # shellcheck disable=SC2034
+    SERVICE_USER="nobody"
+    mkdir -p "$CONFIG_DIR"
+    # shellcheck disable=SC2329
+    log()   { :; }
+    # shellcheck disable=SC2329
+    chown() { :; }            # no privileges in the test harness
+    # shellcheck source=/dev/null
+    . "${IDENTITY_SANDBOX}/identity.sh"
+    ensure_device_identity >/dev/null 2>&1
+    s1="$(sed -nE 's/.*"serial_number":[[:space:]]*"([^"]+)".*/\1/p' "$DEVICE_JSON" | head -n1)"
+    ensure_device_identity >/dev/null 2>&1          # re-run: must NOT clobber
+    s2="$(sed -nE 's/.*"serial_number":[[:space:]]*"([^"]+)".*/\1/p' "$DEVICE_JSON" | head -n1)"
+    printf '%s %s\n' "$s1" "$s2"
+  )
+else
+  bad "could not extract generate_serial/ensure_device_identity from install.sh"
+fi
+
+# Fresh install wrote a serial at all.
+if [ -n "$serial_first" ]; then ok; else bad "fresh install did not write a serial_number to device.json"; fi
+# Fresh serial is NOT the firmware placeholder (the whole point of the fix).
+if [ -n "$serial_first" ] && [ "$serial_first" != "00000000" ]; then
+  ok
+else
+  bad "fresh install wrote the placeholder serial '$serial_first' (BLE name would collide on sst-cam-0000)"
+fi
+# Re-running install.sh must NOT change an already-provisioned serial.
+if [ -n "$serial_first" ] && [ "$serial_first" = "$serial_second" ]; then
+  ok
+else
+  bad "re-run changed the serial ('$serial_first' -> '$serial_second'); identity must be stable"
+fi
+
+# 11c. The provisioned serial must match what the firmware default schema declares
+#      as the placeholder, so the test's "non-placeholder" assertion can't drift
+#      from the real default. Read the placeholder straight from config-defaults.hpp.
+DEFAULTS_HPP="${REPO_ROOT}/src/app/config/services/config_loader/config-defaults.hpp"
+if [ -f "$DEFAULTS_HPP" ]; then
+  placeholder="$(sed -nE 's/.*"serial_number":[[:space:]]*"([^"]+)".*/\1/p' "$DEFAULTS_HPP" | head -n1)"
+  if [ -n "$placeholder" ] && [ "$serial_first" != "$placeholder" ]; then
+    ok
+  else
+    bad "provisioned serial '$serial_first' equals the firmware placeholder '$placeholder' from config-defaults.hpp"
+  fi
+else
+  bad "config-defaults.hpp not found: $DEFAULTS_HPP"
+fi
+
 printf '\ndeploy/install-test.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

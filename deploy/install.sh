@@ -41,10 +41,19 @@ BACKUP_PATH="${INSTALL_PATH}.bak"
 UNIT_PATH="/etc/systemd/system/${SERVICE}.service"
 # Config dir the firmware reads on boot. MUST match the compiled-in path in
 # src/main.cpp (kConfigDir). The service runs as the non-root SERVICE_USER and
-# self-writes default JSON here on first boot, so the dir must exist and be owned
-# by that user — it lives under root-owned /etc, which the user cannot create on
-# its own. deploy/install-test.sh guards this path against drift from main.cpp.
+# self-writes default JSON here on first boot for files it does not find, so the
+# dir must exist and be owned by that user — it lives under root-owned /etc, which
+# the user cannot create on its own. install.sh writes device.json itself (see
+# ensure_device_identity) so each unit gets a UNIQUE serial; the firmware writes
+# the remaining defaults (calibration/storage/wifi-direct) on first boot.
+# deploy/install-test.sh guards this path against drift from main.cpp.
 CONFIG_DIR="/etc/sst/cam/config"
+# device.json provisioned by ensure_device_identity() so each unit advertises a
+# UNIQUE BLE name. MUST match the firmware read path: ConfigLoader joins
+# <CONFIG_DIR>/device.<kConfigFormat> (src/main.cpp kConfigFormat="json",
+# src/app/config/services/config_loader/config-loader.cpp MakePath), so the file
+# is device.json. deploy/install-test.sh guards this provisioning step.
+DEVICE_JSON="${CONFIG_DIR}/device.json"
 API="https://api.github.com/repos/${REPO}"
 EXPECTED_L4T_MAJOR=39   # JetPack 7.2
 
@@ -253,6 +262,90 @@ ensure_setup() {
   fi
 }
 
+# --- device-identity:begin (extracted + unit-tested by deploy/install-test.sh) --
+# Provision a UNIQUE device identity before first boot.
+#
+# Why: the firmware computes the BLE advertised name as `sst-cam-NNNN` where NNNN
+# is the low 4 digits of device.json's "serial_number" (DeriveUnitNumber, then
+# MakeAdvertisedName % 10000 in src/domain/control/utils/advertised-name.hpp).
+# The firmware's built-in default serial is the placeholder "00000000"
+# (src/app/config/services/config_loader/config-defaults.hpp) → every un-
+# provisioned unit advertises the IDENTICAL `sst-cam-0000`. Nothing upstream ever
+# replaced it. We replace it here, once, at install time.
+#
+# How: write device.json (the full schema from config-defaults.hpp, ONLY
+# serial_number substituted) before the firmware's first boot. The firmware's
+# EnsureDefault never clobbers an existing file
+# (src/app/config/services/config_loader/config-loader.cpp), so once we write it
+# the firmware leaves our serial intact.
+#
+# Idempotent / never-clobber: if device.json already exists we do NOTHING — a
+# re-run (or a firmware-written/operator-edited file) keeps the unit's identity
+# stable. This mirrors the firmware's own EnsureDefault rule.
+#
+# Stable id source: derive digits from /etc/machine-id (stable per install, so a
+# re-run yields the same id) and fall back to /dev/urandom only when machine-id
+# is unavailable. The 8-digit serial we emit is reduced to the 4-digit BLE suffix
+# by the firmware's % 10000, so any value gives a stable fixed-width name.
+generate_serial() {
+  local digits=""
+  if [ -r /etc/machine-id ]; then
+    # machine-id is 32 hex chars; fold to a decimal value and take 8 digits. The
+    # whole id feeds the fold so distinct machines map to distinct serials (only
+    # the firmware's low-4 % 10000 collapse limits the fleet to 10k uniques —
+    # documented as acceptable for current scope in the requirements doc).
+    local mid hexval
+    mid="$(tr -cd '0-9a-fA-F' < /etc/machine-id)"
+    if [ -n "$mid" ]; then
+      # Convert the (possibly long) hex to decimal via bc-free shell arithmetic
+      # on the low 15 hex nibbles (fits a 64-bit signed value), then zero-pad.
+      hexval=$(( 0x${mid: -15} ))
+      digits="$(printf '%08d' $(( hexval % 100000000 )))"
+    fi
+  fi
+  if [ -z "$digits" ] && [ -r /dev/urandom ]; then
+    # Fallback: 8 decimal digits from urandom.
+    digits="$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')"
+    digits="$(printf '%08d' $(( digits % 100000000 )))"
+  fi
+  [ -n "$digits" ] || digits="$(printf '%08d' $(( ($$ * 2654435761) % 100000000 )))"
+  printf '%s' "$digits"
+}
+
+ensure_device_identity() {
+  # Never clobber: an existing device.json (ours from a prior run, the firmware's
+  # default, or an operator edit) is left untouched so a unit's identity is stable.
+  if [ -f "$DEVICE_JSON" ]; then
+    log "Identity: device.json already present — leaving serial unchanged."
+    return 0
+  fi
+
+  local serial
+  serial="$(generate_serial)"
+
+  log "Identity: provisioning device.json with serial ${serial} (BLE name sst-cam-${serial: -4}) ..."
+  # FULL device.json schema mirrored from
+  # src/app/config/services/config_loader/config-defaults.hpp (kDeviceJson) — only
+  # serial_number is substituted. Keep this in sync with that file; install-test
+  # guards the substitution (non-placeholder serial) but not every field.
+  cat > "$DEVICE_JSON" <<EOF
+{
+  "manufacturer": "Scout Sport Technology",
+  "model": "v1",
+  "name": "sst-cam",
+  "serial_number": "${serial}",
+  "timestamp": "monotonic",
+  "timezone": "UTC",
+  "version": "1.0.0"
+}
+EOF
+  # The dir is chowned to SERVICE_USER in ensure_setup; chown the new file too so
+  # the non-root service can read it.
+  chown "${SERVICE_USER}:${SERVICE_USER}" "$DEVICE_JSON" 2>/dev/null || true
+  log "Identity: device.json written -> ${DEVICE_JSON}"
+}
+# --- device-identity:end --------------------------------------------------------
+
 # Provision the dual-IMX477 device-tree overlay so the sensors are detected.
 # Idempotent: once the FDT line is wired to our merged DTB, every later run is a
 # no-op (and crucially never re-merges onto an already-merged tree). Requires a
@@ -380,7 +473,7 @@ check_runtime_libs() {  # <binary>
 # Print the reboot reminder on EVERY exit path (the no-op and success paths both
 # exit 0 early), so a freshly-provisioned camera overlay is never silently
 # pending. Defined + armed before setup runs so it fires no matter where we exit.
-# shellcheck disable=SC2317  # reached only via the 'trap ... EXIT' armed below
+# shellcheck disable=SC2317,SC2329  # reached only via the 'trap ... EXIT' armed below
 print_pending_actions() {
   if [ "${REBOOT_NEEDED:-no}" = "yes" ]; then
     log ""
@@ -393,6 +486,7 @@ trap print_pending_actions EXIT
 
 if [ "$DO_SETUP" = "yes" ]; then
   ensure_setup
+  ensure_device_identity
   ensure_camera_overlay
 fi
 # Runtime deps are about the binary, not host setup — install them even with
