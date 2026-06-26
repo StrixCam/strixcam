@@ -11,6 +11,36 @@ is printed in every release's notes). A release is either a **beta**
 
 ---
 
+## Local validation loop (no release, no tag)
+
+Before pushing — and minting an alpha/beta tag just to get a binary on the
+device — install a **locally cross-built** binary straight to a Jetson. Tags then
+mark *validated* builds, not test attempts; CI stays the authoritative gate on
+PR/merge.
+
+```bash
+# One command from the host: cross-build (in the devcontainer) → scp → install.
+just deploy-jetson user@jetson.local
+just deploy-jetson jetson.local --no-camera     # extra install.sh flags pass through
+```
+
+Or by hand:
+
+```bash
+just build-release                                   # binary → build/release/bin/sst_cam_firmware
+scp build/release/bin/sst_cam_firmware deploy/install.sh user@jetson:/tmp/
+ssh -t user@jetson "sudo bash /tmp/install.sh --binary /tmp/sst_cam_firmware"
+```
+
+`--binary <path>` skips the GitHub release resolve/download entirely and feeds the
+local file through the **same** path as a real install: the aarch64-ELF guard (an
+accidental x86_64 host build is rejected), the JetPack-platform guard, the atomic
+swap with backup, and rollback-on-failure. `--version` is ignored; `--sha256`, if
+given, is checked against the local file. Requires `ssh`/`scp` on the host and
+key-based access to the device.
+
+---
+
 ## Install / update — one command
 
 On the Jetson (must be on **JetPack 7.2 / L4T r39.2**), pull the installer from the

@@ -218,5 +218,19 @@ else
   bad "config-defaults.hpp not found: $DEFAULTS_HPP"
 fi
 
+# 12. Local-binary install path (the local validation loop): install.sh must
+#     accept --binary, install a local file WITHOUT touching GitHub, and still
+#     run the shared aarch64-ELF guard so a host build can't be installed.
+if grep -q -- '--binary' "$INSTALL_SH"; then ok; else bad "install.sh must expose --binary for the local install loop"; fi
+# shellcheck disable=SC2016
+if grep -q 'if \[ -n "\$LOCAL_BINARY" \]; then' "$INSTALL_SH"; then
+  ok
+else
+  bad "install.sh must branch on LOCAL_BINARY to skip the GitHub download"
+fi
+# The ELF/aarch64 validation must live OUTSIDE the download branch so it guards
+# the --binary path too (rejecting an x86_64 host build).
+if grep -q 'ELF\*aarch64' "$INSTALL_SH"; then ok; else bad "install.sh must keep the aarch64-ELF guard for both install paths"; fi
+
 printf '\ndeploy/install-test.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

@@ -86,6 +86,7 @@ RUNTIME_DEPS=(libsdbus-c++1 libgstrtspserver-1.0-0)
 
 VERSION="latest"        # tag selector (default)
 WANT_SHA=""             # --sha256 selector / verifier
+LOCAL_BINARY=""         # --binary <path>: install a local build, skip GitHub
 
 # --- Logging helpers ---------------------------------------------------------
 log() { printf '[install] %s\n' "$*"; }
@@ -103,6 +104,13 @@ Selects the release to install (default: latest):
   --version vX.Y.Z   Install a specific release tag (e.g. v0.1.0-beta.2).
   --sha256 <hex>     Install the release whose recorded binary digest matches
                      <hex> (also verifies the download against it).
+  --binary <path>    Install a LOCAL binary instead of downloading from GitHub —
+                     the local validation loop (cross-build in the devcontainer,
+                     scp to the Jetson, install here) without minting a release
+                     tag. Skips the release resolve/download; the aarch64-ELF and
+                     JetPack-platform guards, atomic swap, backup, and rollback
+                     all still apply. --version is ignored; --sha256, if given,
+                     is checked against the local file.
   --no-setup         Skip the one-time setup (user/dir/systemd unit) check.
   -h, --help         Show this help.
 
@@ -136,6 +144,10 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || die "--sha256 requires a 64-hex digest argument"
       WANT_SHA="$2"; shift 2 ;;
     --sha256=*) WANT_SHA="${1#*=}"; shift ;;
+    --binary)
+      [ "$#" -ge 2 ] || die "--binary requires a path to a local aarch64 binary"
+      LOCAL_BINARY="$2"; shift 2 ;;
+    --binary=*) LOCAL_BINARY="${1#*=}"; shift ;;
     --no-setup) DO_SETUP="no"; shift ;;
     --no-camera) PROVISION_CAMERA="no"; shift ;;
     --camera-overlay)
@@ -512,6 +524,25 @@ resolve_tag_by_sha() {  # <hex> -> echoes tag_name
     | head -n1
 }
 
+if [ -n "$LOCAL_BINARY" ]; then
+  # --- Local binary path: stage a local build, skip all GitHub interaction ----
+  # This is the local validation loop — install a freshly cross-built binary
+  # without cutting a release/tag. The shared aarch64-ELF + platform guards,
+  # idempotency, atomic swap, backup and rollback below all still run.
+  new_bin="${TMP_DIR}/sst_cam_firmware"
+  [ -f "$LOCAL_BINARY" ] || die "--binary path not found: ${LOCAL_BINARY}"
+  log "Installing LOCAL binary (no GitHub release): ${LOCAL_BINARY}"
+  cp -f "$LOCAL_BINARY" "$new_bin" || die "failed to stage ${LOCAL_BINARY}"
+  [ -s "$new_bin" ] || die "local binary is empty: ${LOCAL_BINARY}"
+  dl_sha="$(sha256sum "$new_bin" | awk '{print $1}')"
+  resolved_tag="local:$(basename "$LOCAL_BINARY")"
+  notes_sha=""   # no release-notes hand-off contract for a local build
+  if [ -n "$WANT_SHA" ] && [ "$dl_sha" != "$WANT_SHA" ]; then
+    die "sha256 mismatch: local binary ${dl_sha} != requested ${WANT_SHA}."
+  fi
+  log "Local binary sha256: ${dl_sha}"
+else
+
 if [ -n "$WANT_SHA" ] && [ "$VERSION" = "latest" ]; then
   VERSION="$(resolve_tag_by_sha "$WANT_SHA")"
   [ -n "$VERSION" ] || die "no release found whose notes record sha256 ${WANT_SHA}"
@@ -562,8 +593,11 @@ if [ -n "$WANT_SHA" ] && [ "$dl_sha" != "$WANT_SHA" ]; then
   die "sha256 mismatch: downloaded ${dl_sha} != requested ${WANT_SHA}."
 fi
 log "Verified sha256: ${dl_sha}"
+fi  # end release-download vs --binary branch
 
 # --- Validate it is an aarch64 ELF (still BEFORE touching the service) -------
+# Runs for BOTH paths: a local host-arch (x86_64) build is correctly rejected
+# here, so --binary can only ever install a real cross-built aarch64 binary.
 file_desc="$(file -b "$new_bin")"
 case "$file_desc" in
   *ELF*aarch64*)

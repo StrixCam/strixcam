@@ -78,6 +78,25 @@ ci-check:
         cmake --build --preset test && \
         QEMU_LD_PREFIX={{qemu_prefix}} ctest --preset test --output-on-failure"
 
+# --- local deploy loop ----------------------------------------------------
+
+# Local validation loop — cross-build the release binary and install it straight
+# to a Jetson over ssh, WITHOUT cutting a release or minting a tag. The build
+# runs in the container; scp/ssh run on the HOST (which holds your ssh keys /
+# ~/.ssh/config), so you need `ssh`/`scp` on the host PATH and key-based access
+# to the device. Validate here; only push (and let CI mint a tag) once it works.
+#
+# Usage: just deploy-jetson user@jetson.local
+#        just deploy-jetson jetson.local --no-camera   # extra install.sh flags pass through
+deploy-jetson HOST *flags: build-release
+    @BIN="build/release/bin/sst_cam_firmware"; \
+     [ -f "$BIN" ] || { echo "binary not found: $BIN (build-release failed?)" >&2; exit 1; }; \
+     command -v scp >/dev/null || { echo "scp not found on host PATH" >&2; exit 1; }; \
+     echo "Copying ${BIN} + install.sh to {{HOST}} ..."; \
+     scp "$BIN" deploy/install.sh "{{HOST}}:/tmp/" || exit 1; \
+     echo "Running install.sh --binary on {{HOST}} (sudo) ..."; \
+     ssh -t "{{HOST}}" "sudo bash /tmp/install.sh --binary /tmp/sst_cam_firmware {{flags}}"
+
 # --- housekeeping ---------------------------------------------------------
 
 # Remove build trees (config + objects; the Conan cache is untouched).
