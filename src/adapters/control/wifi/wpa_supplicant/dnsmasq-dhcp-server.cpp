@@ -25,9 +25,14 @@ DnsmasqDhcpServer::~DnsmasqDhcpServer() { Stop(); }
 
 auto DnsmasqDhcpServer::Start(const std::string& group_interface,
                               const std::string& go_ip) -> bool {
+    // Idempotent: a dnsmasq from a prior StartWifiDirect can still be running when
+    // the app re-requests a preview without a clean StopWifiDirect (abrupt BLE
+    // drop skips session cleanup). Tear the old one down and start fresh instead
+    // of failing with "already running" — that false return surfaced to the app
+    // as "failed to start DHCP" and blocked every preview after the first.
     if (pid_ > 0) {
-        spdlog::warn("DnsmasqDhcpServer: already running (pid={})", pid_);
-        return false;
+        spdlog::info("DnsmasqDhcpServer: restarting (prior pid={})", pid_);
+        Stop();
     }
     if (group_interface.empty()) {
         spdlog::error("DnsmasqDhcpServer: empty group interface");
@@ -50,13 +55,17 @@ auto DnsmasqDhcpServer::Start(const std::string& group_interface,
     }
     if (pid == 0) {
         // Child: exec dnsmasq in the foreground, bound to the group interface.
-        // Size is the count of the adjacent initializer elements (8 argv tokens +
+        // --leasefile-ro: the service runs as non-root sst-cam and cannot write the
+        // default lease file under root-only /var/lib/misc; P2P leases are ephemeral
+        // so read-only leasing (no lease file) is correct, not a workaround.
+        // Size is the count of the adjacent initializer elements (9 argv tokens +
         // the nullptr terminator); a named constant adds no clarity.
         // NOLINTNEXTLINE(readability-magic-numbers)
-        std::array<const char*, 9> argv{
+        std::array<const char*, 10> argv{
             "dnsmasq",      "--keep-in-foreground",  "--bind-interfaces",
             listen.c_str(), "--except-interface=lo", range.c_str(),
-            router.c_str(), "--no-resolv",           nullptr};
+            router.c_str(), "--no-resolv",           "--leasefile-ro",
+            nullptr};
         ::execvp("dnsmasq", const_cast<char* const*>(argv.data()));
         // Only reached if exec fails.
         ::_exit(kExecFailedExitCode);

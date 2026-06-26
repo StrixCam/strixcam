@@ -10,6 +10,23 @@
 
 namespace sst::adapters::control {
 
+// Resolve the WiFi interface name. If [requested] is a concrete name (not empty
+// and not "auto") it is returned as-is. Otherwise the interface is detected at
+// runtime: first the wpa_supplicant control socket present in [ctrl_dir] (the
+// interface the daemon actually manages — the most reliable signal), then a
+// wireless interface under [sysfs_dir] (one exposing phy80211). Falls back to
+// "wlan0" only if nothing is found. Interface names are NOT stable across boards
+// (this Jetson is "wlP1p1s0", not "wlan0"), so hardcoding is wrong.
+auto ResolveWifiInterface(const std::string& requested, const std::string& ctrl_dir,
+                          const std::string& sysfs_dir = "/sys/class/net") -> std::string;
+
+// True if [msg] is an unsolicited wpa_supplicant event rather than a command
+// reply. After ATTACH the ctrl socket interleaves events with replies; every
+// event is prefixed with a "<priority>" tag (e.g. "<3>WPS-AP-AVAILABLE"), which
+// a reply ("OK", "FAIL", or data) never carries. SendCommand skips these so an
+// event is never mistaken for, say, the P2P_GROUP_ADD result.
+auto IsWpaUnsolicitedEvent(const std::string& msg) -> bool;
+
 // wpa_supplicant ctrl_iface adapter. Talks to the running wpa_supplicant daemon
 // over a UNIX datagram socket at <ctrl_dir>/<iface>, sending plain-text commands
 // and reading back OK/FAIL replies and unsolicited events.
@@ -22,7 +39,8 @@ namespace sst::adapters::control {
 // provisioning concern (DhcpServer + deploy steps).
 class WpaWifiManager final : public sst::control::IWifiManager {
    public:
-    explicit WpaWifiManager(std::string iface = "wlan0",
+    // iface defaults to "auto" — resolved at connect time via ResolveWifiInterface.
+    explicit WpaWifiManager(std::string iface = "auto",
                             std::string ctrl_dir = "/run/wpa_supplicant");
     ~WpaWifiManager() override;
 

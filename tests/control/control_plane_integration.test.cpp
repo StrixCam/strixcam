@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "app/control/ports/dhcp-server.hpp"
+#include "app/control/ports/network-configurator.hpp"
 #include "app/control/ports/wifi-manager.hpp"
 #include "app/control/services/dispatcher/command-dispatcher.hpp"
 #include "app/control/services/handlers/overlay.handler.hpp"
@@ -69,6 +70,14 @@ class FakeDhcp final : public control::IDhcpServer {
         return true;
     }
     auto Stop() -> void override {}
+};
+class FakeNetworkConfigurator final : public control::INetworkConfigurator {
+   public:
+    auto AssignGroupOwnerAddress(const std::string& /*iface*/,
+                                 const std::string& /*cidr*/) -> bool override {
+        return true;
+    }
+    auto Clear(const std::string& /*iface*/) -> void override {}
 };
 class FakeRenderer final : public overlay::IOverlayRenderer {
    public:
@@ -166,6 +175,7 @@ TEST(ControlPlaneIntegrationTest, RoutesFullLifecycleToReady) {
     session::SessionManager manager(cleanup);
     FakeWifi wifi;
     FakeDhcp dhcp;
+    FakeNetworkConfigurator netcfg;
     FakeRenderer renderer;
     FakeSink sink;
     FakeStreaming streaming;
@@ -175,7 +185,7 @@ TEST(ControlPlaneIntegrationTest, RoutesFullLifecycleToReady) {
     control::CommandDispatcher dispatcher;
     dispatcher.Register(std::make_shared<control::SessionHandler>(manager));
     dispatcher.Register(std::make_shared<control::WifiDirectHandler>(
-        manager, wifi, dhcp, streaming, sst::control::PreviewPort{kPreviewPort},
+        manager, wifi, netcfg, dhcp, streaming, sst::control::PreviewPort{kPreviewPort},
         sst::control::DownloadPort{kDownloadPort}));
     dispatcher.Register(std::make_shared<control::OverlayHandler>(manager, controller,
                                                                   [] { return std::uint64_t{0}; }));

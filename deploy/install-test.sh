@@ -87,6 +87,20 @@ else
   bad "install.sh must chown the /etc/sst config subtree to SERVICE_USER"
 fi
 
+# 5b. Data-dir provisioning: the firmware writes recordings under /var/lib/sst/cam/*
+#     as the non-root service user; install.sh must create + own the data root, or
+#     fs::space() telemetry reports 0 bytes free on a fresh device.
+data_dir="$(sed -nE 's/^DATA_DIR="([^"]+)".*/\1/p' "$INSTALL_SH" | head -n1)"
+if [ -n "$data_dir" ]; then ok; else bad "DATA_DIR not defined in install.sh"; fi
+# shellcheck disable=SC2016
+if grep -q 'mkdir -p "$DATA_DIR"' "$INSTALL_SH"; then ok; else bad "install.sh must mkdir DATA_DIR"; fi
+# shellcheck disable=SC2016
+if grep -qE 'chown -R "\$\{SERVICE_USER\}:\$\{SERVICE_USER\}" "/var/lib/sst"' "$INSTALL_SH"; then
+  ok
+else
+  bad "install.sh must chown the /var/lib/sst data subtree to SERVICE_USER"
+fi
+
 # 6. Drift guard: install.sh CONFIG_DIR must byte-match the compiled-in path in
 #    src/main.cpp (kConfigDir) — a mismatch silently reintroduces this bug
 #    (firmware reads one path, install.sh provisions another).
@@ -108,6 +122,24 @@ fi
 #    (status=801) and captures zero frames.
 if grep -qE 'video render' "$INSTALL_SH"; then ok; else bad "install.sh must grant SERVICE_USER the render group (GPU/CUDA)"; fi
 
+# 7b. WiFi access: install.sh must add the service user to 'netdev' for the
+#     wpa_supplicant control socket; without it WiFi-Direct fails with EACCES.
+if grep -qE 'video render netdev' "$INSTALL_SH"; then ok; else bad "install.sh must grant SERVICE_USER the netdev group (wpa_supplicant)"; fi
+
+# 7c. WiFi data plane: the systemd unit must grant CAP_NET_ADMIN (assign the GO IP)
+#     and CAP_NET_BIND_SERVICE (dnsmasq DHCP port 67) ambiently; without them the
+#     non-root service cannot bring the P2P data plane up and preview fails.
+if grep -qE 'AmbientCapabilities=.*CAP_NET_ADMIN.*CAP_NET_BIND_SERVICE.*CAP_NET_RAW' "$INSTALL_SH"; then
+  ok
+else
+  bad "embedded_unit must set AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW"
+fi
+if grep -qE 'CapabilityBoundingSet=.*CAP_NET_ADMIN.*CAP_NET_BIND_SERVICE.*CAP_NET_RAW' "$INSTALL_SH"; then
+  ok
+else
+  bad "embedded_unit must set a matching CapabilityBoundingSet (incl. CAP_NET_RAW)"
+fi
+
 # 8. Camera overlay provisioning: an idempotent, fdtoverlay-based merge that wires
 #    the bootloader via an FDT line, merging from a captured pristine base DTB so
 #    switching overlays never stacks one tree onto another.
@@ -126,6 +158,143 @@ if grep -q 'SST_CAMERA_OVERLAY' "$INSTALL_SH"; then ok; else bad "install.sh mus
 # 10. A camera overlay needs a reboot; install.sh must surface that on EVERY exit
 #     (the no-op and success paths both exit 0 early) via the EXIT trap.
 if grep -q 'trap print_pending_actions EXIT' "$INSTALL_SH"; then ok; else bad "install.sh must announce the pending reboot on every exit path"; fi
+
+# 11. Device-identity provisioning: install.sh must give each unit a UNIQUE BLE
+#     name. The firmware renders `sst-cam-NNNN` from device.json's serial_number;
+#     its built-in default is the placeholder "00000000", so every un-provisioned
+#     unit collides on `sst-cam-0000`. install.sh writes device.json with a unique
+#     serial BEFORE first boot, and must NEVER clobber an existing one (mirrors the
+#     firmware's EnsureDefault never-clobber rule → stable identity across re-runs).
+
+# 11a. Static contract: the provisioning function exists and is wired into setup.
+if grep -q 'ensure_device_identity()' "$INSTALL_SH"; then ok; else bad "install.sh must define ensure_device_identity"; fi
+if grep -qE '^[[:space:]]*ensure_device_identity$' "$INSTALL_SH"; then ok; else bad "install.sh must call ensure_device_identity during setup"; fi
+# shellcheck disable=SC2016
+if grep -q 'DEVICE_JSON="${CONFIG_DIR}/device.json"' "$INSTALL_SH"; then ok; else bad "install.sh must target CONFIG_DIR/device.json (the firmware read path)"; fi
+# the new device.json must be chowned to the service user (string-built path ok)
+# shellcheck disable=SC2016
+if grep -qE 'chown "\$\{SERVICE_USER\}:\$\{SERVICE_USER\}" "\$DEVICE_JSON"' "$INSTALL_SH"; then
+  ok
+else
+  bad "install.sh must chown the provisioned device.json to SERVICE_USER"
+fi
+
+# 11b. Behavioural: extract generate_serial + ensure_device_identity from install.sh
+#      and run them against a throwaway CONFIG_DIR (no root / device / network).
+#      Verifies a fresh install writes a NON-placeholder serial and that a re-run
+#      leaves an already-provisioned serial unchanged.
+IDENTITY_SANDBOX="$(mktemp -d)"
+trap 'rm -rf "$IDENTITY_SANDBOX"' EXIT
+# Pull the function definitions out of install.sh so we can exercise the real
+# logic in isolation. Extract the sentinel-bracketed region (a column-0 '}' inside
+# the device.json here-doc makes a brace-based range unsafe).
+sed -n '/# --- device-identity:begin/,/# --- device-identity:end/p' \
+  "$INSTALL_SH" > "${IDENTITY_SANDBOX}/identity.sh"
+
+serial_first=""
+serial_second=""
+if [ -s "${IDENTITY_SANDBOX}/identity.sh" ]; then
+  # Run in a subshell: stub the globals the functions read, point DEVICE_JSON at
+  # the sandbox, no-op the logger and chown, then drive a fresh install + re-run.
+  read -r serial_first serial_second < <(
+    CONFIG_DIR="${IDENTITY_SANDBOX}/config"
+    DEVICE_JSON="${CONFIG_DIR}/device.json"
+    # SERVICE_USER / log / chown are read by the sourced install.sh functions, not
+    # by this harness directly — shellcheck can't see across the `.` so silence it.
+    # shellcheck disable=SC2034
+    SERVICE_USER="nobody"
+    mkdir -p "$CONFIG_DIR"
+    # SC2317: invoked indirectly by the sourced install.sh (across `.`).
+    # shellcheck disable=SC2329,SC2317
+    log()   { :; }
+    # shellcheck disable=SC2329,SC2317
+    chown() { :; }            # no privileges in the test harness
+    # shellcheck source=/dev/null
+    . "${IDENTITY_SANDBOX}/identity.sh"
+    ensure_device_identity >/dev/null 2>&1
+    s1="$(sed -nE 's/.*"serial_number":[[:space:]]*"([^"]+)".*/\1/p' "$DEVICE_JSON" | head -n1)"
+    ensure_device_identity >/dev/null 2>&1          # re-run: must NOT clobber
+    s2="$(sed -nE 's/.*"serial_number":[[:space:]]*"([^"]+)".*/\1/p' "$DEVICE_JSON" | head -n1)"
+    printf '%s %s\n' "$s1" "$s2"
+  )
+else
+  bad "could not extract generate_serial/ensure_device_identity from install.sh"
+fi
+
+# Fresh install wrote a serial at all.
+if [ -n "$serial_first" ]; then ok; else bad "fresh install did not write a serial_number to device.json"; fi
+# Fresh serial is NOT the firmware placeholder (the whole point of the fix).
+if [ -n "$serial_first" ] && [ "$serial_first" != "00000000" ]; then
+  ok
+else
+  bad "fresh install wrote the placeholder serial '$serial_first' (BLE name would collide on sst-cam-0000)"
+fi
+# Re-running install.sh must NOT change an already-provisioned serial.
+if [ -n "$serial_first" ] && [ "$serial_first" = "$serial_second" ]; then
+  ok
+else
+  bad "re-run changed the serial ('$serial_first' -> '$serial_second'); identity must be stable"
+fi
+
+# 11c. The provisioned serial must match what the firmware default schema declares
+#      as the placeholder, so the test's "non-placeholder" assertion can't drift
+#      from the real default. Read the placeholder straight from config-defaults.hpp.
+DEFAULTS_HPP="${REPO_ROOT}/src/app/config/services/config_loader/config-defaults.hpp"
+if [ -f "$DEFAULTS_HPP" ]; then
+  placeholder="$(sed -nE 's/.*"serial_number":[[:space:]]*"([^"]+)".*/\1/p' "$DEFAULTS_HPP" | head -n1)"
+  if [ -n "$placeholder" ] && [ "$serial_first" != "$placeholder" ]; then
+    ok
+  else
+    bad "provisioned serial '$serial_first' equals the firmware placeholder '$placeholder' from config-defaults.hpp"
+  fi
+else
+  bad "config-defaults.hpp not found: $DEFAULTS_HPP"
+fi
+
+# 11d. Self-healing: a device.json carrying the firmware PLACEHOLDER serial
+#      "00000000" (written by the firmware's first-boot default before install.sh
+#      ran) must be REPLACED with a unique serial — otherwise an already-booted
+#      unit stays stuck on sst-cam-0000. A real serial must still be left alone
+#      (covered by 11b's re-run check).
+serial_replaced=""
+if [ -s "${IDENTITY_SANDBOX}/identity.sh" ]; then
+  serial_replaced="$(
+    CONFIG_DIR="${IDENTITY_SANDBOX}/ph"
+    DEVICE_JSON="${CONFIG_DIR}/device.json"
+    # shellcheck disable=SC2034
+    SERVICE_USER="nobody"
+    mkdir -p "$CONFIG_DIR"
+    printf '{"serial_number": "00000000"}\n' > "$DEVICE_JSON"   # firmware default
+    # SC2317: invoked indirectly by the sourced install.sh (across `.`).
+    # shellcheck disable=SC2329,SC2317
+    log()   { :; }
+    # shellcheck disable=SC2329,SC2317
+    chown() { :; }
+    # shellcheck source=/dev/null
+    . "${IDENTITY_SANDBOX}/identity.sh"
+    ensure_device_identity >/dev/null 2>&1
+    sed -nE 's/.*"serial_number":[[:space:]]*"([^"]+)".*/\1/p' "$DEVICE_JSON" | head -n1
+  )"
+fi
+if [ -n "$serial_replaced" ] && [ "$serial_replaced" != "00000000" ]; then
+  ok
+else
+  bad "placeholder serial '00000000' was not replaced (still '$serial_replaced'); booted units stay sst-cam-0000"
+fi
+
+# 12. Local-binary install path (the local validation loop): install.sh must
+#     accept --binary, install a local file WITHOUT touching GitHub, and still
+#     run the shared aarch64-ELF guard so a host build can't be installed.
+if grep -q -- '--binary' "$INSTALL_SH"; then ok; else bad "install.sh must expose --binary for the local install loop"; fi
+# shellcheck disable=SC2016
+if grep -q 'if \[ -n "\$LOCAL_BINARY" \]; then' "$INSTALL_SH"; then
+  ok
+else
+  bad "install.sh must branch on LOCAL_BINARY to skip the GitHub download"
+fi
+# The ELF/aarch64 validation must live OUTSIDE the download branch so it guards
+# the --binary path too (rejecting an x86_64 host build).
+if grep -q 'ELF\*aarch64' "$INSTALL_SH"; then ok; else bad "install.sh must keep the aarch64-ELF guard for both install paths"; fi
 
 printf '\ndeploy/install-test.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

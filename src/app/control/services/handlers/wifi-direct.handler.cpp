@@ -6,12 +6,19 @@
 
 namespace sst::control {
 
+namespace {
+// Subnet prefix for the group-owner address. The /24 matches the dnsmasq lease
+// range (192.168.49.0/24); group_owner_ip carries only the host address.
+constexpr const char* kGoSubnetSuffix = "/24";
+}  // namespace
+
 WifiDirectHandler::WifiDirectHandler(sst::session::ISessionManager& session, IWifiManager& wifi,
-                                     IDhcpServer& dhcp,
+                                     INetworkConfigurator& netcfg, IDhcpServer& dhcp,
                                      sst::streaming::IStreamingService& streaming,
                                      PreviewPort preview_port, DownloadPort download_port)
     : session_(session),
       wifi_(wifi),
+      netcfg_(netcfg),
       dhcp_(dhcp),
       streaming_(streaming),
       preview_port_(preview_port.value),
@@ -37,6 +44,18 @@ auto WifiDirectHandler::HandleStart() -> sst_cam::CommandResponse {
         resp.set_error_message("failed to form WiFi Direct group owner");
         return resp;
     }
+
+    // Assign the group-owner IP to the freshly-created P2P interface BEFORE DHCP
+    // and RTSP — wpa_supplicant forms the group but never assigns an address, so
+    // without this dnsmasq has no subnet and RTSP cannot bind the GO IP.
+    if (!netcfg_.AssignGroupOwnerAddress(group->group_interface,
+                                         group->group_owner_ip + kGoSubnetSuffix)) {
+        wifi_.Stop();
+        resp.set_status(sst_cam::ResponseStatus::ERROR);
+        resp.set_error_message("failed to assign group-owner IP to the WiFi Direct interface");
+        return resp;
+    }
+    group_interface_ = group->group_interface;
 
     if (!dhcp_.Start(group->group_interface, group->group_owner_ip)) {
         // The group is up but DHCP failed — tear the group back down so we don't
@@ -83,6 +102,12 @@ auto WifiDirectHandler::HandleStart() -> sst_cam::CommandResponse {
 
 auto WifiDirectHandler::HandleStop() -> sst_cam::CommandResponse {
     dhcp_.Stop();
+    // Flush the GO address while the group interface still exists (wifi_.Stop()
+    // removes the interface next, which would also drop the address).
+    if (!group_interface_.empty()) {
+        netcfg_.Clear(group_interface_);
+        group_interface_.clear();
+    }
     wifi_.Stop();
     session_.OnWifiStopped();
 

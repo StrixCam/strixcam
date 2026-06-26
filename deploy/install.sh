@@ -41,10 +41,24 @@ BACKUP_PATH="${INSTALL_PATH}.bak"
 UNIT_PATH="/etc/systemd/system/${SERVICE}.service"
 # Config dir the firmware reads on boot. MUST match the compiled-in path in
 # src/main.cpp (kConfigDir). The service runs as the non-root SERVICE_USER and
-# self-writes default JSON here on first boot, so the dir must exist and be owned
-# by that user — it lives under root-owned /etc, which the user cannot create on
-# its own. deploy/install-test.sh guards this path against drift from main.cpp.
+# self-writes default JSON here on first boot for files it does not find, so the
+# dir must exist and be owned by that user — it lives under root-owned /etc, which
+# the user cannot create on its own. install.sh writes device.json itself (see
+# ensure_device_identity) so each unit gets a UNIQUE serial; the firmware writes
+# the remaining defaults (calibration/storage/wifi-direct) on first boot.
+# deploy/install-test.sh guards this path against drift from main.cpp.
 CONFIG_DIR="/etc/sst/cam/config"
+# device.json provisioned by ensure_device_identity() so each unit advertises a
+# UNIQUE BLE name. MUST match the firmware read path: ConfigLoader joins
+# <CONFIG_DIR>/device.<kConfigFormat> (src/main.cpp kConfigFormat="json",
+# src/app/config/services/config_loader/config-loader.cpp MakePath), so the file
+# is device.json. deploy/install-test.sh guards this provisioning step.
+DEVICE_JSON="${CONFIG_DIR}/device.json"
+# Data root for recordings/snapshots/thumbnails. The firmware (config-defaults.hpp
+# kStorageJson, main.cpp kVideoRootFallback) writes under /var/lib/sst/cam/* but
+# runs as the non-root SERVICE_USER and cannot create dirs under root-owned
+# /var/lib. Provision + own the root here; the firmware creates the leaf dirs.
+DATA_DIR="/var/lib/sst/cam"
 API="https://api.github.com/repos/${REPO}"
 EXPECTED_L4T_MAJOR=39   # JetPack 7.2
 
@@ -64,6 +78,9 @@ CAMERA_OVERLAY="${SST_CAMERA_OVERLAY:-$DEFAULT_CAMERA_OVERLAY}"
 PROVISION_CAMERA="yes"
 EXTLINUX_CONF="/boot/extlinux/extlinux.conf"
 REBOOT_NEEDED="no"
+# Set when ensure_device_identity (re)writes the serial, so the binary-no-op path
+# still restarts the service to re-read the new identity.
+IDENTITY_CHANGED="no"
 
 # Runtime shared-library packages the firmware dynamically links that the JetPack
 # 7.2 base flash does NOT already ship. SOURCE OF TRUTH for this list:
@@ -77,6 +94,7 @@ RUNTIME_DEPS=(libsdbus-c++1 libgstrtspserver-1.0-0)
 
 VERSION="latest"        # tag selector (default)
 WANT_SHA=""             # --sha256 selector / verifier
+LOCAL_BINARY=""         # --binary <path>: install a local build, skip GitHub
 
 # --- Logging helpers ---------------------------------------------------------
 log() { printf '[install] %s\n' "$*"; }
@@ -94,6 +112,13 @@ Selects the release to install (default: latest):
   --version vX.Y.Z   Install a specific release tag (e.g. v0.1.0-beta.2).
   --sha256 <hex>     Install the release whose recorded binary digest matches
                      <hex> (also verifies the download against it).
+  --binary <path>    Install a LOCAL binary instead of downloading from GitHub —
+                     the local validation loop (cross-build in the devcontainer,
+                     scp to the Jetson, install here) without minting a release
+                     tag. Skips the release resolve/download; the aarch64-ELF and
+                     JetPack-platform guards, atomic swap, backup, and rollback
+                     all still apply. --version is ignored; --sha256, if given,
+                     is checked against the local file.
   --no-setup         Skip the one-time setup (user/dir/systemd unit) check.
   -h, --help         Show this help.
 
@@ -127,6 +152,10 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || die "--sha256 requires a 64-hex digest argument"
       WANT_SHA="$2"; shift 2 ;;
     --sha256=*) WANT_SHA="${1#*=}"; shift ;;
+    --binary)
+      [ "$#" -ge 2 ] || die "--binary requires a path to a local aarch64 binary"
+      LOCAL_BINARY="$2"; shift 2 ;;
+    --binary=*) LOCAL_BINARY="${1#*=}"; shift ;;
     --no-setup) DO_SETUP="no"; shift ;;
     --no-camera) PROVISION_CAMERA="no"; shift ;;
     --camera-overlay)
@@ -191,6 +220,13 @@ Type=simple
 # device.
 User=sst-cam
 Group=sst-cam
+# WiFi-Direct data plane: the service assigns the group-owner IP to the P2P
+# interface (CAP_NET_ADMIN), and spawns dnsmasq, which binds DHCP port 67
+# (CAP_NET_BIND_SERVICE) and uses raw sockets for DHCP (CAP_NET_RAW). Ambient so
+# the forked ip/dnsmasq children inherit them; bounding set caps the ceiling.
+# Without these the service has no capabilities and WiFi preview fails.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 WorkingDirectory=/opt/sst-cam
 ExecStart=/opt/sst-cam/bin/sst_cam_firmware
 Restart=on-failure
@@ -215,7 +251,12 @@ ensure_setup() {
   #            pipeline's nvvidconv/NvBufSurface runs CUDA in the firmware's own
   #            process; without render the non-root service gets
   #            cudaErrorNotSupported (status=801) and captures zero frames.
-  for _grp in video render; do
+  #   netdev — wpa_supplicant control socket (/run/wpa_supplicant/<iface>, mode
+  #            srwxrwx--- root:netdev, in a dir searchable only by netdev). The
+  #            WiFi-Direct group owner talks to wpa_supplicant over that socket;
+  #            without netdev the service gets EACCES ("Permission denied") and
+  #            WiFi preview fails.
+  for _grp in video render netdev; do
     if getent group "$_grp" >/dev/null 2>&1; then
       usermod -aG "$_grp" "$SERVICE_USER" 2>/dev/null || true
     fi
@@ -238,6 +279,17 @@ ensure_setup() {
   fi
   chown -R "${SERVICE_USER}:${SERVICE_USER}" "/etc/sst"
 
+  # Data dir: the firmware writes recordings/snapshots/thumbnails under
+  # /var/lib/sst/cam/* but, as the non-root SERVICE_USER, cannot create dirs under
+  # root-owned /var/lib. Provision + own the root so the firmware can create the
+  # leaf dirs and fs::space() telemetry reports real free space (not 0).
+  if [ ! -d "$DATA_DIR" ]; then
+    log "Setup: creating ${DATA_DIR} ..."
+    mkdir -p "$DATA_DIR"
+    changed="yes"
+  fi
+  chown -R "${SERVICE_USER}:${SERVICE_USER}" "/var/lib/sst"
+
   if [ ! -f "$UNIT_PATH" ] || ! embedded_unit | cmp -s - "$UNIT_PATH"; then
     log "Setup: installing systemd unit -> ${UNIT_PATH} ..."
     embedded_unit > "$UNIT_PATH"
@@ -252,6 +304,104 @@ ensure_setup() {
     log "Setup already in place."
   fi
 }
+
+# --- device-identity:begin (extracted + unit-tested by deploy/install-test.sh) --
+# Provision a UNIQUE device identity before first boot.
+#
+# Why: the firmware computes the BLE advertised name as `sst-cam-NNNN` where NNNN
+# is the low 4 digits of device.json's "serial_number" (DeriveUnitNumber, then
+# MakeAdvertisedName % 10000 in src/domain/control/utils/advertised-name.hpp).
+# The firmware's built-in default serial is the placeholder "00000000"
+# (src/app/config/services/config_loader/config-defaults.hpp) → every un-
+# provisioned unit advertises the IDENTICAL `sst-cam-0000`. Nothing upstream ever
+# replaced it. We replace it here, once, at install time.
+#
+# How: write device.json (the full schema from config-defaults.hpp, ONLY
+# serial_number substituted) before the firmware's first boot. The firmware's
+# EnsureDefault never clobbers an existing file
+# (src/app/config/services/config_loader/config-loader.cpp), so once we write it
+# the firmware leaves our serial intact.
+#
+# Idempotent / never-clobber: if device.json already exists we do NOTHING — a
+# re-run (or a firmware-written/operator-edited file) keeps the unit's identity
+# stable. This mirrors the firmware's own EnsureDefault rule.
+#
+# Stable id source: derive digits from /etc/machine-id (stable per install, so a
+# re-run yields the same id) and fall back to /dev/urandom only when machine-id
+# is unavailable. The 8-digit serial we emit is reduced to the 4-digit BLE suffix
+# by the firmware's % 10000, so any value gives a stable fixed-width name.
+generate_serial() {
+  local digits=""
+  if [ -r /etc/machine-id ]; then
+    # machine-id is 32 hex chars; fold to a decimal value and take 8 digits. The
+    # whole id feeds the fold so distinct machines map to distinct serials (only
+    # the firmware's low-4 % 10000 collapse limits the fleet to 10k uniques —
+    # documented as acceptable for current scope in the requirements doc).
+    local mid hexval
+    mid="$(tr -cd '0-9a-fA-F' < /etc/machine-id)"
+    if [ -n "$mid" ]; then
+      # Convert the (possibly long) hex to decimal via bc-free shell arithmetic
+      # on the low 15 hex nibbles (fits a 64-bit signed value), then zero-pad.
+      hexval=$(( 0x${mid: -15} ))
+      digits="$(printf '%08d' $(( hexval % 100000000 )))"
+    fi
+  fi
+  if [ -z "$digits" ] && [ -r /dev/urandom ]; then
+    # Fallback: 8 decimal digits from urandom.
+    digits="$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')"
+    digits="$(printf '%08d' $(( digits % 100000000 )))"
+  fi
+  [ -n "$digits" ] || digits="$(printf '%08d' $(( ($$ * 2654435761) % 100000000 )))"
+  printf '%s' "$digits"
+}
+
+ensure_device_identity() {
+  # Self-healing, never-clobber-a-REAL-identity: a device.json carrying a genuine
+  # unique serial is left untouched (stable identity across re-runs / operator
+  # edits). BUT the firmware's first-boot default writes the PLACEHOLDER serial
+  # "00000000" (config-defaults.hpp kDeviceJson) — a unit that booted once before
+  # install.sh ran will have that, and it collides on BLE name sst-cam-0000. Treat
+  # the placeholder (and a missing/empty serial) as unprovisioned and write a
+  # unique one. The placeholder literal is guarded against drift by install-test
+  # (cross-checked vs config-defaults.hpp).
+  local existing=""
+  if [ -f "$DEVICE_JSON" ]; then
+    existing="$(sed -nE 's/.*"serial_number":[[:space:]]*"([^"]*)".*/\1/p' \
+      "$DEVICE_JSON" | head -n1)"
+  fi
+  if [ -n "$existing" ] && [ "$existing" != "00000000" ]; then
+    log "Identity: device.json already provisioned (serial ${existing}) — leaving unchanged."
+    return 0
+  fi
+  [ -f "$DEVICE_JSON" ] && \
+    log "Identity: device.json has a placeholder/empty serial — provisioning a unique one."
+
+  local serial
+  serial="$(generate_serial)"
+
+  log "Identity: provisioning device.json with serial ${serial} (BLE name sst-cam-${serial: -4}) ..."
+  # FULL device.json schema mirrored from
+  # src/app/config/services/config_loader/config-defaults.hpp (kDeviceJson) — only
+  # serial_number is substituted. Keep this in sync with that file; install-test
+  # guards the substitution (non-placeholder serial) but not every field.
+  cat > "$DEVICE_JSON" <<EOF
+{
+  "manufacturer": "Scout Sport Technology",
+  "model": "v1",
+  "name": "sst-cam",
+  "serial_number": "${serial}",
+  "timestamp": "monotonic",
+  "timezone": "UTC",
+  "version": "1.0.0"
+}
+EOF
+  # The dir is chowned to SERVICE_USER in ensure_setup; chown the new file too so
+  # the non-root service can read it.
+  chown "${SERVICE_USER}:${SERVICE_USER}" "$DEVICE_JSON" 2>/dev/null || true
+  IDENTITY_CHANGED="yes"
+  log "Identity: device.json written -> ${DEVICE_JSON}"
+}
+# --- device-identity:end --------------------------------------------------------
 
 # Provision the dual-IMX477 device-tree overlay so the sensors are detected.
 # Idempotent: once the FDT line is wired to our merged DTB, every later run is a
@@ -380,7 +530,7 @@ check_runtime_libs() {  # <binary>
 # Print the reboot reminder on EVERY exit path (the no-op and success paths both
 # exit 0 early), so a freshly-provisioned camera overlay is never silently
 # pending. Defined + armed before setup runs so it fires no matter where we exit.
-# shellcheck disable=SC2317  # reached only via the 'trap ... EXIT' armed below
+# shellcheck disable=SC2317,SC2329  # reached only via the 'trap ... EXIT' armed below
 print_pending_actions() {
   if [ "${REBOOT_NEEDED:-no}" = "yes" ]; then
     log ""
@@ -393,6 +543,7 @@ trap print_pending_actions EXIT
 
 if [ "$DO_SETUP" = "yes" ]; then
   ensure_setup
+  ensure_device_identity
   ensure_camera_overlay
 fi
 # Runtime deps are about the binary, not host setup — install them even with
@@ -417,6 +568,25 @@ resolve_tag_by_sha() {  # <hex> -> echoes tag_name
         '.[] | select((.body // "") | test("sha256:[[:space:]]*" + $s)) | .tag_name' \
     | head -n1
 }
+
+if [ -n "$LOCAL_BINARY" ]; then
+  # --- Local binary path: stage a local build, skip all GitHub interaction ----
+  # This is the local validation loop — install a freshly cross-built binary
+  # without cutting a release/tag. The shared aarch64-ELF + platform guards,
+  # idempotency, atomic swap, backup and rollback below all still run.
+  new_bin="${TMP_DIR}/sst_cam_firmware"
+  [ -f "$LOCAL_BINARY" ] || die "--binary path not found: ${LOCAL_BINARY}"
+  log "Installing LOCAL binary (no GitHub release): ${LOCAL_BINARY}"
+  cp -f "$LOCAL_BINARY" "$new_bin" || die "failed to stage ${LOCAL_BINARY}"
+  [ -s "$new_bin" ] || die "local binary is empty: ${LOCAL_BINARY}"
+  dl_sha="$(sha256sum "$new_bin" | awk '{print $1}')"
+  resolved_tag="local:$(basename "$LOCAL_BINARY")"
+  notes_sha=""   # no release-notes hand-off contract for a local build
+  if [ -n "$WANT_SHA" ] && [ "$dl_sha" != "$WANT_SHA" ]; then
+    die "sha256 mismatch: local binary ${dl_sha} != requested ${WANT_SHA}."
+  fi
+  log "Local binary sha256: ${dl_sha}"
+else
 
 if [ -n "$WANT_SHA" ] && [ "$VERSION" = "latest" ]; then
   VERSION="$(resolve_tag_by_sha "$WANT_SHA")"
@@ -468,8 +638,11 @@ if [ -n "$WANT_SHA" ] && [ "$dl_sha" != "$WANT_SHA" ]; then
   die "sha256 mismatch: downloaded ${dl_sha} != requested ${WANT_SHA}."
 fi
 log "Verified sha256: ${dl_sha}"
+fi  # end release-download vs --binary branch
 
 # --- Validate it is an aarch64 ELF (still BEFORE touching the service) -------
+# Runs for BOTH paths: a local host-arch (x86_64) build is correctly rejected
+# here, so --binary can only ever install a real cross-built aarch64 binary.
 file_desc="$(file -b "$new_bin")"
 case "$file_desc" in
   *ELF*aarch64*)
@@ -501,6 +674,11 @@ if [ -f "$INSTALL_PATH" ]; then
       log "Service not active; starting ${SERVICE} ..."
       systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
       systemctl start "$SERVICE" || log "warning: start returned non-zero"
+    elif [ "$IDENTITY_CHANGED" = "yes" ]; then
+      # Binary unchanged but the serial was (re)provisioned this run — restart so
+      # the running firmware re-reads device.json and advertises the new BLE name.
+      log "Identity changed; restarting ${SERVICE} to re-read device.json ..."
+      systemctl restart "$SERVICE" || log "warning: restart returned non-zero"
     fi
     log "Service status: $(systemctl is-active "$SERVICE" 2>/dev/null || echo unknown)"
     log "Logs: journalctl -u ${SERVICE} -f"

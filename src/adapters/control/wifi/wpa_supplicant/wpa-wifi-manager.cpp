@@ -12,7 +12,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 
 #include "adapters/control/wifi/wpa_supplicant/wpa-p2p-parse.hpp"
@@ -33,7 +36,83 @@ auto StartsWith(const std::string& text, std::string_view prefix) -> bool {
            std::memcmp(text.data(), prefix.data(), prefix.size()) == 0;
 }
 
+// A WiFi-ish interface name (predictable "wlP1p1s0", classic "wlan0", or a P2P
+// virtual iface).
+auto IsWifiName(const std::string& name) -> bool {
+    return StartsWith(name, "wl") || StartsWith(name, "p2p");
+}
+
+// The wpa_supplicant-managed interface == the control socket present in ctrl_dir.
+// This is the most reliable signal: it is exactly the socket we then connect to.
+auto DetectFromCtrlDir(const std::string& ctrl_dir) -> std::optional<std::string> {
+    std::error_code errc;
+    if (!std::filesystem::is_directory(ctrl_dir, errc)) {
+        return std::nullopt;
+    }
+    std::optional<std::string> first;
+    for (const auto& entry : std::filesystem::directory_iterator(ctrl_dir, errc)) {
+        if (errc) {
+            break;
+        }
+        auto name = entry.path().filename().string();
+        if (!entry.is_socket(errc)) {
+            continue;
+        }
+        if (IsWifiName(name)) {
+            return name;  // prefer a wl*/p2p* socket
+        }
+        if (!first) {
+            first = name;
+        }
+    }
+    return first;
+}
+
+// Fallback: a wireless netdev under sysfs (one exposing a phy80211 link).
+auto DetectFromSysfs(const std::string& sysfs_dir) -> std::optional<std::string> {
+    std::error_code errc;
+    if (!std::filesystem::is_directory(sysfs_dir, errc)) {
+        return std::nullopt;
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(sysfs_dir, errc)) {
+        if (errc) {
+            break;
+        }
+        if (std::filesystem::exists(entry.path() / "phy80211", errc)) {
+            return entry.path().filename().string();
+        }
+    }
+    return std::nullopt;
+}
+
 }  // namespace
+
+auto IsWpaUnsolicitedEvent(const std::string& msg) -> bool {
+    return !msg.empty() && msg.front() == '<';
+}
+
+// Public signature with distinct roles consumed positionally by external
+// callers; reordering would break the contract — hence the suppression.
+auto ResolveWifiInterface(
+    const std::string& requested,  // NOLINT(bugprone-easily-swappable-parameters) // floor-ok:
+                                   // fixed (requested, ctrl_dir, sysfs_dir) public signature
+    const std::string& ctrl_dir, const std::string& sysfs_dir) -> std::string {
+    if (!requested.empty() && requested != "auto") {
+        return requested;
+    }
+    if (auto iface = DetectFromCtrlDir(ctrl_dir)) {
+        spdlog::info("WpaWifiManager: detected wifi interface '{}' from {}", *iface, ctrl_dir);
+        return *iface;
+    }
+    if (auto iface = DetectFromSysfs(sysfs_dir)) {
+        spdlog::info("WpaWifiManager: detected wifi interface '{}' from {}", *iface, sysfs_dir);
+        return *iface;
+    }
+    spdlog::warn(
+        "WpaWifiManager: no wifi interface detected under {} or {}; falling back to 'wlan0'",
+        ctrl_dir, sysfs_dir);
+    return "wlan0";
+}
 
 WpaWifiManager::WpaWifiManager(std::string iface, std::string ctrl_dir)
     : iface_(std::move(iface)), ctrl_dir_(std::move(ctrl_dir)) {}
@@ -44,6 +123,10 @@ auto WpaWifiManager::OpenCtrlSocket() -> bool {
     if (sock_ >= 0) {
         return true;
     }
+
+    // Resolve "auto" to the real interface lazily (here, not in the ctor): the
+    // control socket and group permissions are in place by connect time.
+    iface_ = ResolveWifiInterface(iface_, ctrl_dir_);
 
     sock_ = ::socket(AF_UNIX, SOCK_DGRAM, 0);
     if (sock_ < 0) {
@@ -101,13 +184,23 @@ auto WpaWifiManager::SendCommand(std::string_view cmd) -> std::optional<std::str
         return std::nullopt;
     }
 
-    std::array<char, kRecvBufSize> buf{};
-    const auto bytes = ::recv(sock_, buf.data(), buf.size() - 1, 0);
-    if (bytes < 0) {
-        spdlog::error("WpaWifiManager: recv after \"{}\" failed: {}", cmd, std::strerror(errno));
-        return std::nullopt;
+    // Skip unsolicited events ("<priority>..." datagrams that ATTACH turns on)
+    // and return the first real reply. Bounded so a flood can't spin forever.
+    for (int i = 0; i < kMaxEventReads; ++i) {
+        std::array<char, kRecvBufSize> buf{};
+        const auto bytes = ::recv(sock_, buf.data(), buf.size() - 1, 0);
+        if (bytes < 0) {
+            spdlog::error("WpaWifiManager: recv after \"{}\" failed: {}", cmd,
+                          std::strerror(errno));
+            return std::nullopt;
+        }
+        std::string msg(buf.data(), static_cast<std::size_t>(bytes));
+        if (IsWpaUnsolicitedEvent(msg)) {
+            continue;
+        }
+        return msg;
     }
-    return std::string(buf.data(), static_cast<std::size_t>(bytes));
+    return std::nullopt;
 }
 
 auto WpaWifiManager::ReadUntil(std::string_view marker) const -> std::optional<std::string> {
@@ -130,6 +223,15 @@ auto WpaWifiManager::StartP2pGroupOwner() -> std::optional<sst::network::WifiDir
     if (!OpenCtrlSocket()) {
         return std::nullopt;
     }
+
+    // Idempotency: a P2P group left over from a prior session — or from a
+    // firmware restart that left wpa_supplicant's GO up on the radio — makes a
+    // fresh P2P_GROUP_ADD never emit P2P-GROUP-STARTED, so every preview after
+    // the first failed with "failed to form WiFi Direct group owner". Tear down
+    // any existing group first. Best-effort: OK (removed) and FAIL (none present)
+    // are both acceptable. Done BEFORE ATTACH so this reply is not interleaved
+    // with the unsolicited P2P-GROUP-REMOVED event it triggers.
+    SendCommand("P2P_GROUP_REMOVE *");
 
     // Subscribe to unsolicited events so we capture P2P-GROUP-STARTED.
     SendCommand("ATTACH");

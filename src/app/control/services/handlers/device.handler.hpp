@@ -5,6 +5,7 @@
 
 #include "app/control/ports/handler.hpp"
 #include "app/control/ports/system-stats.hpp"
+#include "app/control/ports/wifi-manager.hpp"
 #include "bluetooth.pb.h"
 #include "domain/config/models/device.hpp"
 
@@ -17,9 +18,13 @@ namespace sst::control {
 class DeviceHandler final : public ICommandHandler {
    public:
     using FlagProvider = std::function<bool()>;
+    // Reports the live WiFi state so telemetry reflects the actual P2P-GO link
+    // (not a hardcoded UNKNOWN) — keeps the app's wifi indicator coherent.
+    using WifiStateProvider = std::function<sst::control::WifiState()>;
 
     DeviceHandler(sst::config::DeviceData device, ISystemStats& stats, FlagProvider is_recording,
-                  FlagProvider is_streaming, FlagProvider is_raw_capturing);
+                  FlagProvider is_streaming, FlagProvider is_raw_capturing,
+                  WifiStateProvider wifi_state);
 
     [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
@@ -33,6 +38,7 @@ class DeviceHandler final : public ICommandHandler {
     FlagProvider is_recording_;
     FlagProvider is_streaming_;
     FlagProvider is_raw_capturing_;
+    WifiStateProvider wifi_state_;
 };
 
 }  // namespace sst::control

@@ -7,6 +7,7 @@
 #include <cstdint>
 
 #include "app/control/ports/system-stats.hpp"
+#include "app/control/ports/wifi-manager.hpp"
 #include "app/control/services/handlers/device.handler.hpp"
 #include "bluetooth.pb.h"
 #include "domain/config/models/device.hpp"
@@ -14,6 +15,10 @@
 namespace {
 
 using sst::control::DeviceHandler;
+
+// Default wifi-state provider: disconnected (no P2P group). Individual tests
+// override with a connected state.
+auto NoWifi() -> sst::control::WifiState { return sst::control::WifiState{}; }
 
 // Fixed telemetry values the fake reports; the tests assert these exact numbers
 // flow through to the response.
@@ -67,7 +72,8 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
      DeviceInfoReturnsIdentityAndProtocolVersion) {
     FakeStats stats;
     DeviceHandler handler(
-        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; });
+        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
+        NoWifi);
 
     auto resp = handler.Handle(DeviceInfoCommand());
 
@@ -90,7 +96,8 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
      TelemetryReflectsRecordingStreamingAndRawCapturingFlags) {
     FakeStats stats;
     DeviceHandler handler(
-        MakeDevice(), stats, [] { return true; }, [] { return false; }, [] { return true; });
+        MakeDevice(), stats, [] { return true; }, [] { return false; }, [] { return true; },
+        NoWifi);
 
     auto resp = handler.Handle(TelemetryCommand());
 
@@ -110,12 +117,37 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
 TEST(DeviceHandlerTest, NoTelemetryWithoutACommand) {
     FakeStats stats;
     DeviceHandler handler(
-        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; });
+        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
+        NoWifi);
 
     EXPECT_EQ(stats.reads, 0);  // nothing read until asked
 
     handler.Handle(TelemetryCommand());
     EXPECT_EQ(stats.reads, 1);  // exactly one read per GetTelemetry
+}
+
+// Telemetry reports the LIVE wifi state (not a hardcoded UNKNOWN): a connected
+// P2P-GO maps to WIFI_CONNECTED + ssid; no group maps to WIFI_DISCONNECTED. This
+// keeps the app's wifi indicator coherent with the actual preview link.
+TEST(DeviceHandlerTest, TelemetryReportsLiveWifiState) {
+    FakeStats stats;
+    DeviceHandler connected_handler(
+        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
+        [] {
+            return sst::control::WifiState{.mode = sst::control::WifiMode::kP2pGroupOwner,
+                                           .connected = true,
+                                           .ssid = "DIRECT-sst-cam",
+                                           .ip_address = "192.168.49.1"};
+        });
+    auto connected = connected_handler.Handle(TelemetryCommand());
+    EXPECT_EQ(connected.telemetry().wifi_state(), sst_cam::WifiState::WIFI_CONNECTED);
+    EXPECT_EQ(connected.telemetry().wifi_ssid(), "DIRECT-sst-cam");
+
+    DeviceHandler off_handler(
+        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
+        NoWifi);
+    auto off = off_handler.Handle(TelemetryCommand());
+    EXPECT_EQ(off.telemetry().wifi_state(), sst_cam::WifiState::WIFI_DISCONNECTED);
 }
 
 }  // namespace

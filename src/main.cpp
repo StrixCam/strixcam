@@ -13,6 +13,7 @@
 #include "adapters/control/ble/bluez/bluez-ble-transport.hpp"
 #include "adapters/control/system/proc-system-stats.hpp"
 #include "adapters/control/wifi/wpa_supplicant/dnsmasq-dhcp-server.hpp"
+#include "adapters/control/wifi/wpa_supplicant/ip-network-configurator.hpp"
 #include "adapters/control/wifi/wpa_supplicant/wpa-wifi-manager.hpp"
 #include "adapters/network/http/http-download-server.hpp"
 #include "adapters/overlay/caching/caching-overlay-sink.hpp"
@@ -113,6 +114,16 @@ auto RunFirmware() -> int {
     const std::filesystem::path video_root =
         cfg.storage.video.value_or(sst::paths::kVideoRootFallback);
 
+    // Ensure the storage root exists before anything reads it. Without this,
+    // fs::space(video_root) fails on a fresh device (ENOENT) and telemetry reports
+    // 0 bytes free/total until the first recording would create it.
+    std::error_code video_root_ec;
+    std::filesystem::create_directories(video_root, video_root_ec);
+    if (video_root_ec) {
+        spdlog::warn("could not create storage root {}: {}", video_root.string(),
+                     video_root_ec.message());
+    }
+
     // ── Storage (single continuous MP4) ────────────────────────────────
     sst::adapters::storage::FilesystemDiskGuard disk_guard(video_root, cfg.storage.min_free_bytes);
     sst::storage::RecordingService recording_service(
@@ -126,7 +137,10 @@ auto RunFirmware() -> int {
     });
 
     // ── WiFi Direct + DHCP ─────────────────────────────────────────────
-    sst::adapters::control::WpaWifiManager wifi_manager("wlan0");
+    // "auto": detect the interface at runtime (names vary per board —
+    // wlP1p1s0 on this Jetson, not wlan0). See ResolveWifiInterface.
+    sst::adapters::control::WpaWifiManager wifi_manager;
+    sst::adapters::control::IpNetworkConfigurator network_configurator;
     sst::adapters::control::DnsmasqDhcpServer dhcp_server;
 
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
@@ -179,10 +193,11 @@ auto RunFirmware() -> int {
             return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
         },
         [&streaming_service] { return !streaming_service.ListActivePlatformStreams().empty(); },
-        [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); }));
+        [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
+        [&wifi_manager] { return wifi_manager.State(); }));
     dispatcher.Register(std::make_shared<sst::control::SessionHandler>(session_manager));
     dispatcher.Register(std::make_shared<sst::control::WifiDirectHandler>(
-        session_manager, wifi_manager, dhcp_server, streaming_service,
+        session_manager, wifi_manager, network_configurator, dhcp_server, streaming_service,
         sst::control::PreviewPort{sst::runtime_defaults::kPreviewPort},
         sst::control::DownloadPort{sst::runtime_defaults::kDownloadPort}));
     dispatcher.Register(

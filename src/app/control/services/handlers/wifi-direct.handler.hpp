@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "app/control/ports/dhcp-server.hpp"
 #include "app/control/ports/handler.hpp"
+#include "app/control/ports/network-configurator.hpp"
 #include "app/control/ports/wifi-manager.hpp"
 #include "app/session/ports/session-manager.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
@@ -21,7 +23,8 @@ namespace sst::control {
 // disconnect).
 class WifiDirectHandler final : public ICommandHandler {
    public:
-    WifiDirectHandler(sst::session::ISessionManager& session, IWifiManager& wifi, IDhcpServer& dhcp,
+    WifiDirectHandler(sst::session::ISessionManager& session, IWifiManager& wifi,
+                      INetworkConfigurator& netcfg, IDhcpServer& dhcp,
                       sst::streaming::IStreamingService& streaming, PreviewPort preview_port,
                       DownloadPort download_port);
 
@@ -34,10 +37,14 @@ class WifiDirectHandler final : public ICommandHandler {
 
     sst::session::ISessionManager& session_;
     IWifiManager& wifi_;
+    INetworkConfigurator& netcfg_;
     IDhcpServer& dhcp_;
     sst::streaming::IStreamingService& streaming_;
     std::uint32_t preview_port_;
     std::uint32_t download_port_;
+    // Group interface of the active session, retained so HandleStop can flush its
+    // address before the group is removed.
+    std::string group_interface_;
 };
 
 }  // namespace sst::control

@@ -67,8 +67,8 @@ class BluezBleTransport final : public sst::control::IBleTransport {
     // our own D-Bus objects before they reply; a blocking call would monopolize
     // the connection and deadlock the event loop until the 25s D-Bus timeout.
     // See the comment in Start() for the full rationale.
-    auto CallManagerAsync(sdbus::IProxy& proxy, const char* iface, const char* method,
-                          const sdbus::ObjectPath& object_path) -> void;
+    static auto CallManagerAsync(sdbus::IProxy& proxy, const char* iface, const char* method,
+                                 const sdbus::ObjectPath& object_path) -> void;
 
     std::string advertised_name_;
     std::string adapter_path_;
