@@ -239,7 +239,12 @@ ensure_setup() {
   #            pipeline's nvvidconv/NvBufSurface runs CUDA in the firmware's own
   #            process; without render the non-root service gets
   #            cudaErrorNotSupported (status=801) and captures zero frames.
-  for _grp in video render; do
+  #   netdev — wpa_supplicant control socket (/run/wpa_supplicant/<iface>, mode
+  #            srwxrwx--- root:netdev, in a dir searchable only by netdev). The
+  #            WiFi-Direct group owner talks to wpa_supplicant over that socket;
+  #            without netdev the service gets EACCES ("Permission denied") and
+  #            WiFi preview fails.
+  for _grp in video render netdev; do
     if getent group "$_grp" >/dev/null 2>&1; then
       usermod -aG "$_grp" "$SERVICE_USER" 2>/dev/null || true
     fi

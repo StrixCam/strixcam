@@ -12,7 +12,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <optional>
 #include <string>
+#include <system_error>
 #include <utility>
 
 #include "adapters/control/wifi/wpa_supplicant/wpa-p2p-parse.hpp"
@@ -33,7 +36,75 @@ auto StartsWith(const std::string& text, std::string_view prefix) -> bool {
            std::memcmp(text.data(), prefix.data(), prefix.size()) == 0;
 }
 
+// A WiFi-ish interface name (predictable "wlP1p1s0", classic "wlan0", or a P2P
+// virtual iface).
+auto IsWifiName(const std::string& name) -> bool {
+    return StartsWith(name, "wl") || StartsWith(name, "p2p");
+}
+
+// The wpa_supplicant-managed interface == the control socket present in ctrl_dir.
+// This is the most reliable signal: it is exactly the socket we then connect to.
+auto DetectFromCtrlDir(const std::string& ctrl_dir) -> std::optional<std::string> {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(ctrl_dir, ec)) {
+        return std::nullopt;
+    }
+    std::optional<std::string> first;
+    for (const auto& entry : std::filesystem::directory_iterator(ctrl_dir, ec)) {
+        if (ec) {
+            break;
+        }
+        const auto name = entry.path().filename().string();
+        if (!entry.is_socket(ec)) {
+            continue;
+        }
+        if (IsWifiName(name)) {
+            return name;  // prefer a wl*/p2p* socket
+        }
+        if (!first) {
+            first = name;
+        }
+    }
+    return first;
+}
+
+// Fallback: a wireless netdev under sysfs (one exposing a phy80211 link).
+auto DetectFromSysfs(const std::string& sysfs_dir) -> std::optional<std::string> {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(sysfs_dir, ec)) {
+        return std::nullopt;
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(sysfs_dir, ec)) {
+        if (ec) {
+            break;
+        }
+        if (std::filesystem::exists(entry.path() / "phy80211", ec)) {
+            return entry.path().filename().string();
+        }
+    }
+    return std::nullopt;
+}
+
 }  // namespace
+
+auto ResolveWifiInterface(const std::string& requested, const std::string& ctrl_dir,
+                          const std::string& sysfs_dir) -> std::string {
+    if (!requested.empty() && requested != "auto") {
+        return requested;
+    }
+    if (auto iface = DetectFromCtrlDir(ctrl_dir)) {
+        spdlog::info("WpaWifiManager: detected wifi interface '{}' from {}", *iface, ctrl_dir);
+        return *iface;
+    }
+    if (auto iface = DetectFromSysfs(sysfs_dir)) {
+        spdlog::info("WpaWifiManager: detected wifi interface '{}' from {}", *iface, sysfs_dir);
+        return *iface;
+    }
+    spdlog::warn(
+        "WpaWifiManager: no wifi interface detected under {} or {}; falling back to 'wlan0'",
+        ctrl_dir, sysfs_dir);
+    return "wlan0";
+}
 
 WpaWifiManager::WpaWifiManager(std::string iface, std::string ctrl_dir)
     : iface_(std::move(iface)), ctrl_dir_(std::move(ctrl_dir)) {}
@@ -44,6 +115,10 @@ auto WpaWifiManager::OpenCtrlSocket() -> bool {
     if (sock_ >= 0) {
         return true;
     }
+
+    // Resolve "auto" to the real interface lazily (here, not in the ctor): the
+    // control socket and group permissions are in place by connect time.
+    iface_ = ResolveWifiInterface(iface_, ctrl_dir_);
 
     sock_ = ::socket(AF_UNIX, SOCK_DGRAM, 0);
     if (sock_ < 0) {

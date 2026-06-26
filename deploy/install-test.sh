@@ -108,6 +108,10 @@ fi
 #    (status=801) and captures zero frames.
 if grep -qE 'video render' "$INSTALL_SH"; then ok; else bad "install.sh must grant SERVICE_USER the render group (GPU/CUDA)"; fi
 
+# 7b. WiFi access: install.sh must add the service user to 'netdev' for the
+#     wpa_supplicant control socket; without it WiFi-Direct fails with EACCES.
+if grep -qE 'video render netdev' "$INSTALL_SH"; then ok; else bad "install.sh must grant SERVICE_USER the netdev group (wpa_supplicant)"; fi
+
 # 8. Camera overlay provisioning: an idempotent, fdtoverlay-based merge that wires
 #    the bootloader via an FDT line, merging from a captured pristine base DTB so
 #    switching overlays never stacks one tree onto another.
