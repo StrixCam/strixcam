@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "app/control/ports/dhcp-server.hpp"
+#include "app/control/ports/network-configurator.hpp"
 #include "app/control/ports/wifi-manager.hpp"
 #include "app/control/services/handlers/wifi-direct.handler.hpp"
 #include "app/session/ports/session-cleanup.hpp"
@@ -63,6 +64,28 @@ class FakeDhcp final : public sst::control::IDhcpServer {
     int stops{0};
     std::string started_iface;
     std::string started_ip;
+};
+
+// Records the GO-IP assignment + clear; `ok` forces an assignment failure.
+class FakeNetworkConfigurator final : public sst::control::INetworkConfigurator {
+   public:
+    auto AssignGroupOwnerAddress(const std::string& iface,
+                                 const std::string& cidr) -> bool override {
+        ++assigns;
+        assigned_iface = iface;
+        assigned_cidr = cidr;
+        return ok;
+    }
+    auto Clear(const std::string& iface) -> void override {
+        ++clears;
+        cleared_iface = iface;
+    }
+    bool ok{true};
+    int assigns{0};
+    int clears{0};
+    std::string assigned_iface;
+    std::string assigned_cidr;
+    std::string cleared_iface;
 };
 
 class FakeCleanup final : public sst::session::ISessionCleanup {
@@ -125,8 +148,9 @@ TEST(WifiDirectHandlerTest, StartReportsGeneratedCredentials) {
     manager.OnConnect();
     FakeWifi wifi;
     FakeDhcp dhcp;
+    FakeNetworkConfigurator netcfg;
     FakeStreaming streaming;
-    WifiDirectHandler handler(manager, wifi, dhcp, streaming,
+    WifiDirectHandler handler(manager, wifi, netcfg, dhcp, streaming,
                               sst::control::PreviewPort{kPreviewPort},
                               sst::control::DownloadPort{kDownloadPort});
 
@@ -140,6 +164,11 @@ TEST(WifiDirectHandlerTest, StartReportsGeneratedCredentials) {
     EXPECT_EQ(group.preview_port(), kPreviewPort);
     EXPECT_EQ(group.download_port(), kDownloadPort);
     EXPECT_EQ(group.role(), "GO");
+
+    // GO IP assigned to the group interface (with /24) before DHCP/RTSP.
+    EXPECT_EQ(netcfg.assigns, 1);
+    EXPECT_EQ(netcfg.assigned_iface, "p2p-wlan0-0");
+    EXPECT_EQ(netcfg.assigned_cidr, "192.168.49.1/24");
 
     EXPECT_EQ(dhcp.started_iface, "p2p-wlan0-0");
     EXPECT_EQ(dhcp.started_ip, "192.168.49.1");
@@ -159,8 +188,9 @@ TEST(WifiDirectHandlerTest, GroupFailureErrors) {
     FakeWifi wifi;
     wifi.ok = false;
     FakeDhcp dhcp;
+    FakeNetworkConfigurator netcfg;
     FakeStreaming streaming;
-    WifiDirectHandler handler(manager, wifi, dhcp, streaming,
+    WifiDirectHandler handler(manager, wifi, netcfg, dhcp, streaming,
                               sst::control::PreviewPort{kPreviewPort},
                               sst::control::DownloadPort{kDownloadPort});
 
@@ -168,6 +198,29 @@ TEST(WifiDirectHandlerTest, GroupFailureErrors) {
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
     EXPECT_EQ(dhcp.starts, 0);
     EXPECT_EQ(streaming.app_starts, 0);  // no preview when the group never formed
+}
+
+// IP-assignment failure -> ERROR, group rolled back, and crucially DHCP/RTSP are
+// never reached (proving assignment runs before them).
+TEST(WifiDirectHandlerTest, IpAssignFailureRollsBackBeforeDhcp) {
+    FakeCleanup cleanup;
+    sst::session::SessionManager manager(cleanup);
+    manager.OnConnect();
+    FakeWifi wifi;
+    FakeDhcp dhcp;
+    FakeNetworkConfigurator netcfg;
+    netcfg.ok = false;  // GO-IP assignment fails
+    FakeStreaming streaming;
+    WifiDirectHandler handler(manager, wifi, netcfg, dhcp, streaming,
+                              sst::control::PreviewPort{kPreviewPort},
+                              sst::control::DownloadPort{kDownloadPort});
+
+    auto resp = handler.Handle(StartCmd());
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
+    EXPECT_EQ(netcfg.assigns, 1);
+    EXPECT_EQ(wifi.stops, 1);            // group rolled back
+    EXPECT_EQ(dhcp.starts, 0);           // never reached
+    EXPECT_EQ(streaming.app_starts, 0);  // never reached
 }
 
 // If the session SM rejects WifiReady (e.g. no central connected), the handler
@@ -179,8 +232,9 @@ TEST(WifiDirectHandlerTest, StartRollsBackWhenSessionRejects) {
     // NOTE: no manager.OnConnect() — phase is Idle, so OnWifiReady() returns false.
     FakeWifi wifi;
     FakeDhcp dhcp;
+    FakeNetworkConfigurator netcfg;
     FakeStreaming streaming;
-    WifiDirectHandler handler(manager, wifi, dhcp, streaming,
+    WifiDirectHandler handler(manager, wifi, netcfg, dhcp, streaming,
                               sst::control::PreviewPort{kPreviewPort},
                               sst::control::DownloadPort{kDownloadPort});
 
@@ -202,8 +256,9 @@ TEST(WifiDirectHandlerTest, StopTearsDownGroupAndDhcp) {
     manager.OnConnect();
     FakeWifi wifi;
     FakeDhcp dhcp;
+    FakeNetworkConfigurator netcfg;
     FakeStreaming streaming;
-    WifiDirectHandler handler(manager, wifi, dhcp, streaming,
+    WifiDirectHandler handler(manager, wifi, netcfg, dhcp, streaming,
                               sst::control::PreviewPort{kPreviewPort},
                               sst::control::DownloadPort{kDownloadPort});
     handler.Handle(StartCmd());
@@ -211,6 +266,7 @@ TEST(WifiDirectHandlerTest, StopTearsDownGroupAndDhcp) {
     auto resp = handler.Handle(StopCmd());
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
     EXPECT_EQ(dhcp.stops, 1);
+    EXPECT_EQ(netcfg.clears, 1);  // GO address flushed on teardown
     EXPECT_EQ(wifi.stops, 1);
     EXPECT_EQ(manager.Phase(), sst::session::SessionPhase::kConnected);
 }
@@ -223,9 +279,10 @@ TEST(WifiDirectHandlerTest, PreviewFailureIsDegradedNotFatal) {
     manager.OnConnect();
     FakeWifi wifi;
     FakeDhcp dhcp;
+    FakeNetworkConfigurator netcfg;
     FakeStreaming streaming;
     streaming.app_start_ok = false;  // RTSP preview fails to start
-    WifiDirectHandler handler(manager, wifi, dhcp, streaming,
+    WifiDirectHandler handler(manager, wifi, netcfg, dhcp, streaming,
                               sst::control::PreviewPort{kPreviewPort},
                               sst::control::DownloadPort{kDownloadPort});
 

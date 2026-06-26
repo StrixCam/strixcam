@@ -126,6 +126,20 @@ if grep -qE 'video render' "$INSTALL_SH"; then ok; else bad "install.sh must gra
 #     wpa_supplicant control socket; without it WiFi-Direct fails with EACCES.
 if grep -qE 'video render netdev' "$INSTALL_SH"; then ok; else bad "install.sh must grant SERVICE_USER the netdev group (wpa_supplicant)"; fi
 
+# 7c. WiFi data plane: the systemd unit must grant CAP_NET_ADMIN (assign the GO IP)
+#     and CAP_NET_BIND_SERVICE (dnsmasq DHCP port 67) ambiently; without them the
+#     non-root service cannot bring the P2P data plane up and preview fails.
+if grep -qE 'AmbientCapabilities=.*CAP_NET_ADMIN.*CAP_NET_BIND_SERVICE' "$INSTALL_SH"; then
+  ok
+else
+  bad "embedded_unit must set AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE"
+fi
+if grep -qE 'CapabilityBoundingSet=.*CAP_NET_ADMIN.*CAP_NET_BIND_SERVICE' "$INSTALL_SH"; then
+  ok
+else
+  bad "embedded_unit must set a matching CapabilityBoundingSet"
+fi
+
 # 8. Camera overlay provisioning: an idempotent, fdtoverlay-based merge that wires
 #    the bootloader via an FDT line, merging from a captured pristine base DTB so
 #    switching overlays never stacks one tree onto another.

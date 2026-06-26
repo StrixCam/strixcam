@@ -50,13 +50,17 @@ auto DnsmasqDhcpServer::Start(const std::string& group_interface,
     }
     if (pid == 0) {
         // Child: exec dnsmasq in the foreground, bound to the group interface.
-        // Size is the count of the adjacent initializer elements (8 argv tokens +
+        // --leasefile-ro: the service runs as non-root sst-cam and cannot write the
+        // default lease file under root-only /var/lib/misc; P2P leases are ephemeral
+        // so read-only leasing (no lease file) is correct, not a workaround.
+        // Size is the count of the adjacent initializer elements (9 argv tokens +
         // the nullptr terminator); a named constant adds no clarity.
         // NOLINTNEXTLINE(readability-magic-numbers)
-        std::array<const char*, 9> argv{
+        std::array<const char*, 10> argv{
             "dnsmasq",      "--keep-in-foreground",  "--bind-interfaces",
             listen.c_str(), "--except-interface=lo", range.c_str(),
-            router.c_str(), "--no-resolv",           nullptr};
+            router.c_str(), "--no-resolv",           "--leasefile-ro",
+            nullptr};
         ::execvp("dnsmasq", const_cast<char* const*>(argv.data()));
         // Only reached if exec fails.
         ::_exit(kExecFailedExitCode);

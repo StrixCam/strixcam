@@ -13,6 +13,7 @@
 #include "adapters/control/ble/bluez/bluez-ble-transport.hpp"
 #include "adapters/control/system/proc-system-stats.hpp"
 #include "adapters/control/wifi/wpa_supplicant/dnsmasq-dhcp-server.hpp"
+#include "adapters/control/wifi/wpa_supplicant/ip-network-configurator.hpp"
 #include "adapters/control/wifi/wpa_supplicant/wpa-wifi-manager.hpp"
 #include "adapters/network/http/http-download-server.hpp"
 #include "adapters/overlay/caching/caching-overlay-sink.hpp"
@@ -139,6 +140,7 @@ auto RunFirmware() -> int {
     // "auto": detect the interface at runtime (names vary per board —
     // wlP1p1s0 on this Jetson, not wlan0). See ResolveWifiInterface.
     sst::adapters::control::WpaWifiManager wifi_manager;
+    sst::adapters::control::IpNetworkConfigurator network_configurator;
     sst::adapters::control::DnsmasqDhcpServer dhcp_server;
 
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
@@ -195,7 +197,7 @@ auto RunFirmware() -> int {
         [&wifi_manager] { return wifi_manager.State(); }));
     dispatcher.Register(std::make_shared<sst::control::SessionHandler>(session_manager));
     dispatcher.Register(std::make_shared<sst::control::WifiDirectHandler>(
-        session_manager, wifi_manager, dhcp_server, streaming_service,
+        session_manager, wifi_manager, network_configurator, dhcp_server, streaming_service,
         sst::control::PreviewPort{sst::runtime_defaults::kPreviewPort},
         sst::control::DownloadPort{sst::runtime_defaults::kDownloadPort}));
     dispatcher.Register(
