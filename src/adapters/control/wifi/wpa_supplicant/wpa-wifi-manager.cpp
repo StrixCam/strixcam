@@ -45,17 +45,17 @@ auto IsWifiName(const std::string& name) -> bool {
 // The wpa_supplicant-managed interface == the control socket present in ctrl_dir.
 // This is the most reliable signal: it is exactly the socket we then connect to.
 auto DetectFromCtrlDir(const std::string& ctrl_dir) -> std::optional<std::string> {
-    std::error_code ec;
-    if (!std::filesystem::is_directory(ctrl_dir, ec)) {
+    std::error_code errc;
+    if (!std::filesystem::is_directory(ctrl_dir, errc)) {
         return std::nullopt;
     }
     std::optional<std::string> first;
-    for (const auto& entry : std::filesystem::directory_iterator(ctrl_dir, ec)) {
-        if (ec) {
+    for (const auto& entry : std::filesystem::directory_iterator(ctrl_dir, errc)) {
+        if (errc) {
             break;
         }
-        const auto name = entry.path().filename().string();
-        if (!entry.is_socket(ec)) {
+        auto name = entry.path().filename().string();
+        if (!entry.is_socket(errc)) {
             continue;
         }
         if (IsWifiName(name)) {
@@ -70,15 +70,15 @@ auto DetectFromCtrlDir(const std::string& ctrl_dir) -> std::optional<std::string
 
 // Fallback: a wireless netdev under sysfs (one exposing a phy80211 link).
 auto DetectFromSysfs(const std::string& sysfs_dir) -> std::optional<std::string> {
-    std::error_code ec;
-    if (!std::filesystem::is_directory(sysfs_dir, ec)) {
+    std::error_code errc;
+    if (!std::filesystem::is_directory(sysfs_dir, errc)) {
         return std::nullopt;
     }
-    for (const auto& entry : std::filesystem::directory_iterator(sysfs_dir, ec)) {
-        if (ec) {
+    for (const auto& entry : std::filesystem::directory_iterator(sysfs_dir, errc)) {
+        if (errc) {
             break;
         }
-        if (std::filesystem::exists(entry.path() / "phy80211", ec)) {
+        if (std::filesystem::exists(entry.path() / "phy80211", errc)) {
             return entry.path().filename().string();
         }
     }
@@ -91,8 +91,12 @@ auto IsWpaUnsolicitedEvent(const std::string& msg) -> bool {
     return !msg.empty() && msg.front() == '<';
 }
 
-auto ResolveWifiInterface(const std::string& requested, const std::string& ctrl_dir,
-                          const std::string& sysfs_dir) -> std::string {
+// Public signature with distinct roles consumed positionally by external
+// callers; reordering would break the contract — hence the suppression.
+auto ResolveWifiInterface(
+    const std::string& requested,  // NOLINT(bugprone-easily-swappable-parameters) // floor-ok:
+                                   // fixed (requested, ctrl_dir, sysfs_dir) public signature
+    const std::string& ctrl_dir, const std::string& sysfs_dir) -> std::string {
     if (!requested.empty() && requested != "auto") {
         return requested;
     }

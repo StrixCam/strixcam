@@ -17,6 +17,8 @@ namespace sst::adapters::control {
 
 namespace {
 
+constexpr auto kCallTimeout = std::chrono::seconds{20};
+
 constexpr const char* kBluezBus = "org.bluez";
 constexpr const char* kIfaceGattManager = "org.bluez.GattManager1";
 constexpr const char* kIfaceLeAdvManager = "org.bluez.LEAdvertisingManager1";
@@ -174,7 +176,7 @@ auto BluezBleTransport::CallManagerAsync(sdbus::IProxy& proxy, const char* iface
     // Bound the wait so a wedged daemon can't hang Start() forever. 20s sits
     // under BlueZ's own 25s D-Bus timeout while leaving ample headroom for GATT
     // enumeration, which now completes in milliseconds.
-    if (future.wait_for(std::chrono::seconds(20)) != std::future_status::ready) {
+    if (future.wait_for(kCallTimeout) != std::future_status::ready) {
         throw sdbus::Error("org.sst.cam.BleTimeout",
                            std::string{method} + " did not complete within 20s");
     }

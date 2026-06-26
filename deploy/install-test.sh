@@ -204,9 +204,10 @@ if [ -s "${IDENTITY_SANDBOX}/identity.sh" ]; then
     # shellcheck disable=SC2034
     SERVICE_USER="nobody"
     mkdir -p "$CONFIG_DIR"
-    # shellcheck disable=SC2329
+    # SC2317: invoked indirectly by the sourced install.sh (across `.`).
+    # shellcheck disable=SC2329,SC2317
     log()   { :; }
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2329,SC2317
     chown() { :; }            # no privileges in the test harness
     # shellcheck source=/dev/null
     . "${IDENTITY_SANDBOX}/identity.sh"
@@ -264,9 +265,10 @@ if [ -s "${IDENTITY_SANDBOX}/identity.sh" ]; then
     SERVICE_USER="nobody"
     mkdir -p "$CONFIG_DIR"
     printf '{"serial_number": "00000000"}\n' > "$DEVICE_JSON"   # firmware default
-    # shellcheck disable=SC2329
+    # SC2317: invoked indirectly by the sourced install.sh (across `.`).
+    # shellcheck disable=SC2329,SC2317
     log()   { :; }
-    # shellcheck disable=SC2329
+    # shellcheck disable=SC2329,SC2317
     chown() { :; }
     # shellcheck source=/dev/null
     . "${IDENTITY_SANDBOX}/identity.sh"

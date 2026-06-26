@@ -24,13 +24,13 @@ namespace fs = std::filesystem;
 // Create a real AF_UNIX socket file at [path] so directory_iterator::is_socket()
 // recognises it (a regular file would not). Returns the open fd (caller closes).
 auto MakeSocketFile(const fs::path& path) -> int {
-    const int fd = ::socket(AF_UNIX, SOCK_DGRAM, 0);
-    EXPECT_GE(fd, 0);
+    const int sock_fd = ::socket(AF_UNIX, SOCK_DGRAM, 0);
+    EXPECT_GE(sock_fd, 0);
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
     std::strncpy(addr.sun_path, path.c_str(), sizeof(addr.sun_path) - 1);
-    EXPECT_EQ(::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
-    return fd;
+    EXPECT_EQ(::bind(sock_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
+    return sock_fd;
 }
 
 // A unique temp dir for one test, removed on destruction.
@@ -59,19 +59,19 @@ TEST(ResolveWifiInterfaceTest, ReturnsExplicitNameUnchanged) {
 
 TEST(ResolveWifiInterfaceTest, DetectsWifiSocketInCtrlDir) {
     TempDir ctrl;
-    const int fd = MakeSocketFile(ctrl.path() / "wlP1p1s0");
+    const int sock_fd = MakeSocketFile(ctrl.path() / "wlP1p1s0");
     EXPECT_EQ(ResolveWifiInterface("auto", ctrl.path().string(), "/nonexistent"), "wlP1p1s0");
-    ::close(fd);
+    ::close(sock_fd);
 }
 
 TEST(ResolveWifiInterfaceTest, PrefersWifiSocketOverOtherSockets) {
     TempDir ctrl;
-    const int a = MakeSocketFile(ctrl.path() / "p2p-dev-wlP1p1s0");
-    const int b = MakeSocketFile(ctrl.path() / "wlP1p1s0");
+    const int sock_a = MakeSocketFile(ctrl.path() / "p2p-dev-wlP1p1s0");
+    const int sock_b = MakeSocketFile(ctrl.path() / "wlP1p1s0");
     const auto got = ResolveWifiInterface("auto", ctrl.path().string(), "/nonexistent");
     EXPECT_TRUE(got == "wlP1p1s0" || got == "p2p-dev-wlP1p1s0");  // both are wifi-ish
-    ::close(a);
-    ::close(b);
+    ::close(sock_a);
+    ::close(sock_b);
 }
 
 TEST(ResolveWifiInterfaceTest, FallsBackToSysfsWhenNoCtrlSocket) {
