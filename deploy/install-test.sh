@@ -129,15 +129,15 @@ if grep -qE 'video render netdev' "$INSTALL_SH"; then ok; else bad "install.sh m
 # 7c. WiFi data plane: the systemd unit must grant CAP_NET_ADMIN (assign the GO IP)
 #     and CAP_NET_BIND_SERVICE (dnsmasq DHCP port 67) ambiently; without them the
 #     non-root service cannot bring the P2P data plane up and preview fails.
-if grep -qE 'AmbientCapabilities=.*CAP_NET_ADMIN.*CAP_NET_BIND_SERVICE' "$INSTALL_SH"; then
+if grep -qE 'AmbientCapabilities=.*CAP_NET_ADMIN.*CAP_NET_BIND_SERVICE.*CAP_NET_RAW' "$INSTALL_SH"; then
   ok
 else
-  bad "embedded_unit must set AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE"
+  bad "embedded_unit must set AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW"
 fi
-if grep -qE 'CapabilityBoundingSet=.*CAP_NET_ADMIN.*CAP_NET_BIND_SERVICE' "$INSTALL_SH"; then
+if grep -qE 'CapabilityBoundingSet=.*CAP_NET_ADMIN.*CAP_NET_BIND_SERVICE.*CAP_NET_RAW' "$INSTALL_SH"; then
   ok
 else
-  bad "embedded_unit must set a matching CapabilityBoundingSet"
+  bad "embedded_unit must set a matching CapabilityBoundingSet (incl. CAP_NET_RAW)"
 fi
 
 # 8. Camera overlay provisioning: an idempotent, fdtoverlay-based merge that wires

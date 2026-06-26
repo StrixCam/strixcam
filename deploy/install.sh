@@ -221,11 +221,12 @@ Type=simple
 User=sst-cam
 Group=sst-cam
 # WiFi-Direct data plane: the service assigns the group-owner IP to the P2P
-# interface (CAP_NET_ADMIN) and spawns dnsmasq on DHCP port 67 (CAP_NET_BIND_SERVICE).
-# Ambient so the forked ip/dnsmasq children inherit them; bounding set caps the
-# ceiling. Without these the service runs with no capabilities and WiFi preview fails.
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+# interface (CAP_NET_ADMIN), and spawns dnsmasq, which binds DHCP port 67
+# (CAP_NET_BIND_SERVICE) and uses raw sockets for DHCP (CAP_NET_RAW). Ambient so
+# the forked ip/dnsmasq children inherit them; bounding set caps the ceiling.
+# Without these the service has no capabilities and WiFi preview fails.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
 WorkingDirectory=/opt/sst-cam
 ExecStart=/opt/sst-cam/bin/sst_cam_firmware
 Restart=on-failure
