@@ -127,5 +127,19 @@ if grep -q 'SST_CAMERA_OVERLAY' "$INSTALL_SH"; then ok; else bad "install.sh mus
 #     (the no-op and success paths both exit 0 early) via the EXIT trap.
 if grep -q 'trap print_pending_actions EXIT' "$INSTALL_SH"; then ok; else bad "install.sh must announce the pending reboot on every exit path"; fi
 
+# 11. Local-binary install path (the local validation loop): install.sh must
+#     accept --binary, install a local file WITHOUT touching GitHub, and still
+#     run the shared aarch64-ELF guard so a host build can't be installed.
+if grep -q -- '--binary' "$INSTALL_SH"; then ok; else bad "install.sh must expose --binary for the local install loop"; fi
+# shellcheck disable=SC2016
+if grep -q 'if \[ -n "\$LOCAL_BINARY" \]; then' "$INSTALL_SH"; then
+  ok
+else
+  bad "install.sh must branch on LOCAL_BINARY to skip the GitHub download"
+fi
+# The ELF/aarch64 validation must live OUTSIDE the download branch so it guards
+# the --binary path too (rejecting an x86_64 host build).
+if grep -q 'ELF\*aarch64' "$INSTALL_SH"; then ok; else bad "install.sh must keep the aarch64-ELF guard for both install paths"; fi
+
 printf '\ndeploy/install-test.sh: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
