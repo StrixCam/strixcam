@@ -20,6 +20,13 @@ namespace sst::adapters::control {
 auto ResolveWifiInterface(const std::string& requested, const std::string& ctrl_dir,
                           const std::string& sysfs_dir = "/sys/class/net") -> std::string;
 
+// True if [msg] is an unsolicited wpa_supplicant event rather than a command
+// reply. After ATTACH the ctrl socket interleaves events with replies; every
+// event is prefixed with a "<priority>" tag (e.g. "<3>WPS-AP-AVAILABLE"), which
+// a reply ("OK", "FAIL", or data) never carries. SendCommand skips these so an
+// event is never mistaken for, say, the P2P_GROUP_ADD result.
+auto IsWpaUnsolicitedEvent(const std::string& msg) -> bool;
+
 // wpa_supplicant ctrl_iface adapter. Talks to the running wpa_supplicant daemon
 // over a UNIX datagram socket at <ctrl_dir>/<iface>, sending plain-text commands
 // and reading back OK/FAIL replies and unsolicited events.

@@ -25,9 +25,14 @@ DnsmasqDhcpServer::~DnsmasqDhcpServer() { Stop(); }
 
 auto DnsmasqDhcpServer::Start(const std::string& group_interface,
                               const std::string& go_ip) -> bool {
+    // Idempotent: a dnsmasq from a prior StartWifiDirect can still be running when
+    // the app re-requests a preview without a clean StopWifiDirect (abrupt BLE
+    // drop skips session cleanup). Tear the old one down and start fresh instead
+    // of failing with "already running" — that false return surfaced to the app
+    // as "failed to start DHCP" and blocked every preview after the first.
     if (pid_ > 0) {
-        spdlog::warn("DnsmasqDhcpServer: already running (pid={})", pid_);
-        return false;
+        spdlog::info("DnsmasqDhcpServer: restarting (prior pid={})", pid_);
+        Stop();
     }
     if (group_interface.empty()) {
         spdlog::error("DnsmasqDhcpServer: empty group interface");

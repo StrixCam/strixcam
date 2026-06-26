@@ -50,14 +50,14 @@ auto RunIp(const std::vector<std::string>& argv) -> bool {
 
 auto IpNetworkConfigurator::AssignGroupOwnerAddress(const std::string& iface,
                                                     const std::string& cidr) -> bool {
-    const auto add_argv = BuildAddrAddArgv(cidr, iface);
+    const auto replace_argv = BuildAddrReplaceArgv(cidr, iface);
     const auto up_argv = BuildLinkUpArgv(iface);
-    if (add_argv.empty() || up_argv.empty()) {
+    if (replace_argv.empty() || up_argv.empty()) {
         spdlog::error("IpNetworkConfigurator: invalid iface '{}' / cidr '{}'", iface, cidr);
         return false;
     }
-    if (!RunIp(add_argv)) {
-        spdlog::error("IpNetworkConfigurator: `ip addr add {} dev {}` failed", cidr, iface);
+    if (!RunIp(replace_argv)) {
+        spdlog::error("IpNetworkConfigurator: `ip addr replace {} dev {}` failed", cidr, iface);
         return false;
     }
     // The wpa-created group iface is usually already up; bringing it up is

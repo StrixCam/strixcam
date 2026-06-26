@@ -87,6 +87,10 @@ auto DetectFromSysfs(const std::string& sysfs_dir) -> std::optional<std::string>
 
 }  // namespace
 
+auto IsWpaUnsolicitedEvent(const std::string& msg) -> bool {
+    return !msg.empty() && msg.front() == '<';
+}
+
 auto ResolveWifiInterface(const std::string& requested, const std::string& ctrl_dir,
                           const std::string& sysfs_dir) -> std::string {
     if (!requested.empty() && requested != "auto") {
@@ -176,13 +180,23 @@ auto WpaWifiManager::SendCommand(std::string_view cmd) -> std::optional<std::str
         return std::nullopt;
     }
 
-    std::array<char, kRecvBufSize> buf{};
-    const auto bytes = ::recv(sock_, buf.data(), buf.size() - 1, 0);
-    if (bytes < 0) {
-        spdlog::error("WpaWifiManager: recv after \"{}\" failed: {}", cmd, std::strerror(errno));
-        return std::nullopt;
+    // Skip unsolicited events ("<priority>..." datagrams that ATTACH turns on)
+    // and return the first real reply. Bounded so a flood can't spin forever.
+    for (int i = 0; i < kMaxEventReads; ++i) {
+        std::array<char, kRecvBufSize> buf{};
+        const auto bytes = ::recv(sock_, buf.data(), buf.size() - 1, 0);
+        if (bytes < 0) {
+            spdlog::error("WpaWifiManager: recv after \"{}\" failed: {}", cmd,
+                          std::strerror(errno));
+            return std::nullopt;
+        }
+        std::string msg(buf.data(), static_cast<std::size_t>(bytes));
+        if (IsWpaUnsolicitedEvent(msg)) {
+            continue;
+        }
+        return msg;
     }
-    return std::string(buf.data(), static_cast<std::size_t>(bytes));
+    return std::nullopt;
 }
 
 auto WpaWifiManager::ReadUntil(std::string_view marker) const -> std::optional<std::string> {
@@ -205,6 +219,15 @@ auto WpaWifiManager::StartP2pGroupOwner() -> std::optional<sst::network::WifiDir
     if (!OpenCtrlSocket()) {
         return std::nullopt;
     }
+
+    // Idempotency: a P2P group left over from a prior session — or from a
+    // firmware restart that left wpa_supplicant's GO up on the radio — makes a
+    // fresh P2P_GROUP_ADD never emit P2P-GROUP-STARTED, so every preview after
+    // the first failed with "failed to form WiFi Direct group owner". Tear down
+    // any existing group first. Best-effort: OK (removed) and FAIL (none present)
+    // are both acceptable. Done BEFORE ATTACH so this reply is not interleaved
+    // with the unsolicited P2P-GROUP-REMOVED event it triggers.
+    SendCommand("P2P_GROUP_REMOVE *");
 
     // Subscribe to unsolicited events so we capture P2P-GROUP-STARTED.
     SendCommand("ATTACH");

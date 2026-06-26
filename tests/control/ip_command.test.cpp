@@ -9,13 +9,15 @@
 
 namespace {
 
-using sst::adapters::control::BuildAddrAddArgv;
+using sst::adapters::control::BuildAddrReplaceArgv;
 using sst::adapters::control::BuildLinkUpArgv;
 using Argv = std::vector<std::string>;
 
-TEST(IpCommandTest, BuildsAddrAddArgv) {
-    EXPECT_EQ(BuildAddrAddArgv("192.168.49.1/24", "p2p-wlP1p1s0-0"),
-              (Argv{"ip", "addr", "add", "192.168.49.1/24", "dev", "p2p-wlP1p1s0-0"}));
+TEST(IpCommandTest, BuildsAddrReplaceArgv) {
+    // `replace` (not `add`) so a lingering GO address from a prior session is a
+    // no-op instead of an "Address already assigned" failure.
+    EXPECT_EQ(BuildAddrReplaceArgv("192.168.49.1/24", "p2p-wlP1p1s0-0"),
+              (Argv{"ip", "addr", "replace", "192.168.49.1/24", "dev", "p2p-wlP1p1s0-0"}));
 }
 
 TEST(IpCommandTest, BuildsLinkUpArgv) {
@@ -24,12 +26,12 @@ TEST(IpCommandTest, BuildsLinkUpArgv) {
 }
 
 TEST(IpCommandTest, AddrAddRejectsEmptyIface) {
-    EXPECT_TRUE(BuildAddrAddArgv("192.168.49.1/24", "").empty());
+    EXPECT_TRUE(BuildAddrReplaceArgv("192.168.49.1/24", "").empty());
 }
 
 TEST(IpCommandTest, AddrAddRejectsCidrWithoutPrefix) {
     // No '/' prefix length — a bare address is not a valid `ip addr add` target.
-    EXPECT_TRUE(BuildAddrAddArgv("192.168.49.1", "p2p-wlP1p1s0-0").empty());
+    EXPECT_TRUE(BuildAddrReplaceArgv("192.168.49.1", "p2p-wlP1p1s0-0").empty());
 }
 
 TEST(IpCommandTest, LinkUpRejectsEmptyIface) { EXPECT_TRUE(BuildLinkUpArgv("").empty()); }

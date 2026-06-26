@@ -13,10 +13,11 @@ namespace sst::adapters::control {
 // Both return an empty vector when an argument is empty or obviously malformed, so
 // the caller fails fast instead of exec'ing a half-formed command.
 
-// `ip addr add <cidr> dev <iface>` — e.g. ("192.168.49.1/24", "p2p-wlP1p1s0-0").
-// `cidr` must contain a '/' prefix length.
-auto BuildAddrAddArgv(const std::string& cidr,
-                      const std::string& iface) -> std::vector<std::string>;
+// `ip addr replace <cidr> dev <iface>` — e.g. ("192.168.49.1/24", "p2p-wlP1p1s0-0").
+// `replace` (not `add`) so a GO address left over from a prior session does not
+// fail the call. `cidr` must contain a '/' prefix length.
+auto BuildAddrReplaceArgv(const std::string& cidr,
+                          const std::string& iface) -> std::vector<std::string>;
 
 // `ip link set <iface> up`.
 auto BuildLinkUpArgv(const std::string& iface) -> std::vector<std::string>;

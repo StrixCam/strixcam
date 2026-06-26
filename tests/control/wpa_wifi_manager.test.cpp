@@ -88,6 +88,23 @@ TEST(ResolveWifiInterfaceTest, FallsBackToWlan0WhenNothingFound) {
     EXPECT_EQ(ResolveWifiInterface("", "/nonexistent", "/nonexistent"), "wlan0");
 }
 
+TEST(IsWpaUnsolicitedEventTest, TaggedEventsAreSkipped) {
+    using sst::adapters::control::IsWpaUnsolicitedEvent;
+    // "<priority>"-prefixed datagrams are unsolicited events, not replies.
+    EXPECT_TRUE(IsWpaUnsolicitedEvent("<3>WPS-AP-AVAILABLE"));
+    EXPECT_TRUE(IsWpaUnsolicitedEvent("<3>P2P-GROUP-STARTED p2p-wlan0-0 GO"));
+    EXPECT_TRUE(IsWpaUnsolicitedEvent("<2>CTRL-EVENT-SCAN-RESULTS"));
+}
+
+TEST(IsWpaUnsolicitedEventTest, RepliesAreNotEvents) {
+    using sst::adapters::control::IsWpaUnsolicitedEvent;
+    // Command replies never carry the "<priority>" prefix.
+    EXPECT_FALSE(IsWpaUnsolicitedEvent("OK\n"));
+    EXPECT_FALSE(IsWpaUnsolicitedEvent("FAIL\n"));
+    EXPECT_FALSE(IsWpaUnsolicitedEvent("p2p-wlan0-0"));
+    EXPECT_FALSE(IsWpaUnsolicitedEvent(""));
+}
+
 TEST(WpaWifiManagerE2E, FormsAutonomousGroupOwner) {
     sst::adapters::control::WpaWifiManager manager("wlan0");
     auto group = manager.StartP2pGroupOwner();
