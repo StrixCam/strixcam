@@ -87,6 +87,20 @@ else
   bad "install.sh must chown the /etc/sst config subtree to SERVICE_USER"
 fi
 
+# 5b. Data-dir provisioning: the firmware writes recordings under /var/lib/sst/cam/*
+#     as the non-root service user; install.sh must create + own the data root, or
+#     fs::space() telemetry reports 0 bytes free on a fresh device.
+data_dir="$(sed -nE 's/^DATA_DIR="([^"]+)".*/\1/p' "$INSTALL_SH" | head -n1)"
+if [ -n "$data_dir" ]; then ok; else bad "DATA_DIR not defined in install.sh"; fi
+# shellcheck disable=SC2016
+if grep -q 'mkdir -p "$DATA_DIR"' "$INSTALL_SH"; then ok; else bad "install.sh must mkdir DATA_DIR"; fi
+# shellcheck disable=SC2016
+if grep -qE 'chown -R "\$\{SERVICE_USER\}:\$\{SERVICE_USER\}" "/var/lib/sst"' "$INSTALL_SH"; then
+  ok
+else
+  bad "install.sh must chown the /var/lib/sst data subtree to SERVICE_USER"
+fi
+
 # 6. Drift guard: install.sh CONFIG_DIR must byte-match the compiled-in path in
 #    src/main.cpp (kConfigDir) — a mismatch silently reintroduces this bug
 #    (firmware reads one path, install.sh provisions another).

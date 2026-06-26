@@ -54,6 +54,11 @@ CONFIG_DIR="/etc/sst/cam/config"
 # src/app/config/services/config_loader/config-loader.cpp MakePath), so the file
 # is device.json. deploy/install-test.sh guards this provisioning step.
 DEVICE_JSON="${CONFIG_DIR}/device.json"
+# Data root for recordings/snapshots/thumbnails. The firmware (config-defaults.hpp
+# kStorageJson, main.cpp kVideoRootFallback) writes under /var/lib/sst/cam/* but
+# runs as the non-root SERVICE_USER and cannot create dirs under root-owned
+# /var/lib. Provision + own the root here; the firmware creates the leaf dirs.
+DATA_DIR="/var/lib/sst/cam"
 API="https://api.github.com/repos/${REPO}"
 EXPECTED_L4T_MAJOR=39   # JetPack 7.2
 
@@ -266,6 +271,17 @@ ensure_setup() {
     changed="yes"
   fi
   chown -R "${SERVICE_USER}:${SERVICE_USER}" "/etc/sst"
+
+  # Data dir: the firmware writes recordings/snapshots/thumbnails under
+  # /var/lib/sst/cam/* but, as the non-root SERVICE_USER, cannot create dirs under
+  # root-owned /var/lib. Provision + own the root so the firmware can create the
+  # leaf dirs and fs::space() telemetry reports real free space (not 0).
+  if [ ! -d "$DATA_DIR" ]; then
+    log "Setup: creating ${DATA_DIR} ..."
+    mkdir -p "$DATA_DIR"
+    changed="yes"
+  fi
+  chown -R "${SERVICE_USER}:${SERVICE_USER}" "/var/lib/sst"
 
   if [ ! -f "$UNIT_PATH" ] || ! embedded_unit | cmp -s - "$UNIT_PATH"; then
     log "Setup: installing systemd unit -> ${UNIT_PATH} ..."
