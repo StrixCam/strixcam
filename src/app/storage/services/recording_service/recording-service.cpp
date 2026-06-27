@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -22,21 +23,21 @@ namespace {
 // file *stem* and the app requests downloads by match id, so the stem has to be
 // the match id. The match id is the directory's own name. Tolerate a path that
 // already names a file (has an extension / no trailing slash) by using it as-is.
-auto MatchIdFromDir(const std::filesystem::path& p) -> std::string {
+auto MatchIdFromDir(const std::filesystem::path& dir) -> std::string {
     // A trailing slash makes filename() empty, so fall back to the parent.
-    return p.has_filename() ? p.filename().string() : p.parent_path().filename().string();
+    return dir.has_filename() ? dir.filename().string() : dir.parent_path().filename().string();
 }
 
 auto ComposeFile(const std::string& dir_or_file, const char* ext) -> std::filesystem::path {
     if (dir_or_file.empty()) {
         return {};
     }
-    const std::filesystem::path p(dir_or_file);
-    if (dir_or_file.back() != '/' && p.has_extension()) {
-        return p;  // already a concrete file
+    std::filesystem::path path(dir_or_file);
+    if (dir_or_file.back() != '/' && path.has_extension()) {
+        return path;  // already a concrete file
     }
-    const std::string id = MatchIdFromDir(p);
-    return p / ((id.empty() ? "recording" : id) + ext);
+    const std::string match_id = MatchIdFromDir(path);
+    return path / ((match_id.empty() ? "recording" : match_id) + ext);
 }
 
 constexpr const char* kVideoExt = ".mp4";
@@ -80,9 +81,31 @@ auto RecordingService::StartRecording(const std::string& video_output_path,
     video_path_ = ComposeFile(video_output_path, kVideoExt);
     thumbnail_path_ = ComposeFile(thumbnail_output_path, kThumbnailExt);
 
-    std::error_code ec;
+    // Refuse to clobber an existing recording for this match. A recorder Start
+    // points filesink at <matchId>.mp4; a STOP→START within the same match
+    // re-composes the SAME path, so without this guard the second take
+    // overwrites (and destroys) the first — the "only the last segment is
+    // saved" data-loss. Mid-match continuation must go through PAUSE/RESUME
+    // (one continuous file), not STOP→START. The threshold tolerates a tiny
+    // stub left by a failed prior Start without blocking a legitimate retry.
+    {
+        std::error_code exists_ec;
+        constexpr std::uintmax_t kMinExistingBytes = std::uintmax_t{64} * 1024;
+        const auto existing = std::filesystem::file_size(video_path_, exists_ec);
+        if (!exists_ec && existing >= kMinExistingBytes) {
+            spdlog::warn(
+                "RecordingService::StartRecording refused: {} already holds {} bytes — "
+                "use PAUSE/RESUME to continue a match, not STOP/START",
+                video_path_.string(), existing);
+            video_path_.clear();
+            thumbnail_path_.clear();
+            return false;
+        }
+    }
+
+    std::error_code mkdir_ec;
     if (!video_path_.parent_path().empty()) {
-        std::filesystem::create_directories(video_path_.parent_path(), ec);
+        std::filesystem::create_directories(video_path_.parent_path(), mkdir_ec);
     }
 
     if (!recorder_->Start(video_path_)) {
