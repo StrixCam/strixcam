@@ -229,6 +229,45 @@ TEST(SessionManagerTest, SessionMemoryClearedOnEnd) {
     fs::remove_all(root);
 }
 
+// #6 stale-overlay fix: a config for a NEW match resets the scoreboard to zero,
+// while a same-match re-push preserves the score the app already pushed.
+TEST(SessionManagerTest, NewMatchConfigResetsScoreSameMatchKeeps) {
+    FakeCleanup cleanup;
+    SessionManager manager(cleanup);
+    const fs::path root = MakeTempRoot();
+    const auto cfg = MakeConfig(root);
+
+    AdvanceToReady(manager, cfg);
+    ASSERT_TRUE(manager.ApplyMatchUpdate([](sst::session::LiveMatch& match) {
+        match.score_a = 3;
+        match.score_b = 2;
+        match.period = 2;
+    }));
+
+    // Same match (same match_uuid) re-push: the live score survives.
+    ASSERT_TRUE(manager.ApplySessionConfig(cfg));
+    EXPECT_EQ(manager.Snapshot().match.score_a, 3U);
+    EXPECT_EQ(manager.Snapshot().match.score_b, 2U);
+
+    // A DIFFERENT match: scoreboard resets to zero so it never inherits the
+    // previous match's score.
+    auto next = cfg;
+    next.match_uuid = "match-uuid-2";
+    next.video_output_path = (root / "video/user-uuid/match-uuid-2/match-uuid-2.mp4").string();
+    next.thumbnail_output_path =
+        (root / "thumbnail/user-uuid/match-uuid-2/match-uuid-2.jpg").string();
+    ASSERT_TRUE(manager.ApplySessionConfig(next));
+
+    const auto after = manager.Snapshot();
+    EXPECT_EQ(after.match.score_a, 0U);
+    EXPECT_EQ(after.match.score_b, 0U);
+    EXPECT_EQ(after.match.period, 0U);
+    ASSERT_TRUE(after.config.has_value());
+    EXPECT_EQ(after.config->match_uuid, "match-uuid-2");
+
+    fs::remove_all(root);
+}
+
 // AE2 / R15: from Recording, a disconnect fans out finalize + stop-stream +
 // teardown-WFD (all of them, order-independent) and clears the session.
 TEST(SessionManagerTest, DisconnectWhileRecordingFansOutCleanup) {
