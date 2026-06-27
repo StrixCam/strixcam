@@ -78,3 +78,6 @@ dist/
 *.db-shm
 *.db-wal
 *.db
+# Agent tooling / local devcontainer lock (not part of the firmware)
+.claude/worktrees/
+.devcontainer/devcontainer-lock.json
