@@ -21,7 +21,8 @@ class DownloadServer {
    public:
     using Clock = std::function<std::uint64_t()>;  // unix seconds
 
-    DownloadServer(std::filesystem::path video_root, Clock clock);
+    DownloadServer(std::filesystem::path video_root, std::filesystem::path thumbnail_root,
+                   Clock clock);
 
     [[nodiscard]] auto Enumerate() const -> std::vector<RecordingSummary>;
 
@@ -34,11 +35,19 @@ class DownloadServer {
     // token is unknown or expired.
     auto ValidateToken(const std::string& token) -> std::optional<std::filesystem::path>;
 
+    // Resolve a recording id to its `<id>.jpg` thumbnail under the thumbnail
+    // root. nullopt if no such file exists. Unlike video downloads, thumbnails
+    // are served untokened (small, non-sensitive preview frames over the P2P
+    // link), so the HTTP server resolves by id directly.
+    [[nodiscard]] auto ResolveThumbnailPath(const std::string& recording_id) const
+        -> std::optional<std::filesystem::path>;
+
    private:
     [[nodiscard]] auto ResolveRecordingPath(const std::string& recording_id) const
         -> std::optional<std::filesystem::path>;
 
     std::filesystem::path video_root_;
+    std::filesystem::path thumbnail_root_;
     Clock clock_;
 
     mutable std::mutex mtx_;

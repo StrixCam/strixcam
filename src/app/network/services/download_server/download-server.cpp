@@ -17,6 +17,7 @@ namespace fs = std::filesystem;
 namespace {
 constexpr const char* kMp4Extension = ".mp4";
 constexpr const char* kRawExtension = ".nv12";
+constexpr const char* kThumbnailExtension = ".jpg";
 
 auto LastWriteUnix(const fs::path& path) -> std::uint64_t {
     std::error_code err;
@@ -32,8 +33,10 @@ auto LastWriteUnix(const fs::path& path) -> std::uint64_t {
 }
 }  // namespace
 
-DownloadServer::DownloadServer(fs::path video_root, Clock clock)
-    : video_root_(std::move(video_root)), clock_(std::move(clock)) {}
+DownloadServer::DownloadServer(fs::path video_root, fs::path thumbnail_root, Clock clock)
+    : video_root_(std::move(video_root)),
+      thumbnail_root_(std::move(thumbnail_root)),
+      clock_(std::move(clock)) {}
 
 auto DownloadServer::Enumerate() const -> std::vector<RecordingSummary> {
     std::vector<RecordingSummary> out;
@@ -88,6 +91,23 @@ auto DownloadServer::ResolveRecordingPath(const std::string& recording_id) const
         const fs::path& path = entry->path();
         const auto ext = path.extension();
         if (entry->is_regular_file(err) && (ext == kMp4Extension || ext == kRawExtension) &&
+            path.stem().string() == recording_id) {
+            return path;
+        }
+    }
+    return std::nullopt;
+}
+
+auto DownloadServer::ResolveThumbnailPath(const std::string& recording_id) const
+    -> std::optional<fs::path> {
+    std::error_code err;
+    if (recording_id.empty() || !fs::exists(thumbnail_root_, err)) {
+        return std::nullopt;
+    }
+    for (auto entry = fs::recursive_directory_iterator(thumbnail_root_, err);
+         !err && entry != fs::recursive_directory_iterator(); entry.increment(err)) {
+        const fs::path& path = entry->path();
+        if (entry->is_regular_file(err) && path.extension() == kThumbnailExtension &&
             path.stem().string() == recording_id) {
             return path;
         }

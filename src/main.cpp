@@ -56,6 +56,7 @@ namespace sst::paths {
 constexpr const char* kConfigDir = "/etc/sst/cam/config";
 constexpr const char* kConfigFormat = "json";
 constexpr const char* kVideoRootFallback = "/var/lib/sst/cam/videos";
+constexpr const char* kThumbnailRootFallback = "/var/lib/sst/cam/thumbnails";
 
 }  // namespace sst::paths
 
@@ -112,6 +113,8 @@ auto RunFirmware() -> int {
     auto cfg = config.get();
     const std::filesystem::path video_root =
         cfg.storage.video.value_or(sst::paths::kVideoRootFallback);
+    const std::filesystem::path thumbnail_root =
+        cfg.storage.thumbnails.value_or(sst::paths::kThumbnailRootFallback);
 
     // Ensure the storage root exists before anything reads it. Without this,
     // fs::space(video_root) fails on a fresh device (ENOENT) and telemetry reports
@@ -159,7 +162,7 @@ auto RunFirmware() -> int {
                                 sst::runtime_defaults::kOverlayHeight});
 
     // ── Downloads ──────────────────────────────────────────────────────
-    sst::network::DownloadServer download_server(video_root, NowUnixSeconds);
+    sst::network::DownloadServer download_server(video_root, thumbnail_root, NowUnixSeconds);
     // The HTTP server hands out token-gated byte ranges. Bind on all interfaces
     // (0.0.0.0) rather than the GO IP: that address only exists once a WiFi
     // Direct session is up, and INADDR_ANY still accepts connections on it when
@@ -169,6 +172,9 @@ auto RunFirmware() -> int {
         "0.0.0.0", static_cast<std::uint16_t>(sst::runtime_defaults::kDownloadPort),
         [&download_server](const std::string& token) {
             return download_server.ValidateToken(token);
+        },
+        [&download_server](const std::string& recording_id) {
+            return download_server.ResolveThumbnailPath(recording_id);
         });
 
     // ── System stats (telemetry source) ────────────────────────────────
