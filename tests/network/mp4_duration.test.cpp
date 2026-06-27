@@ -1,6 +1,4 @@
 // Unit tests for the dependency-free mp4 moov/mvhd duration probe.
-#include "app/network/services/download_server/mp4-duration.hpp"
-
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -8,6 +6,8 @@
 #include <fstream>
 #include <string>
 #include <vector>
+
+#include "app/network/services/download_server/mp4-duration.hpp"
 
 namespace fs = std::filesystem;
 using sst::network::ProbeMp4DurationSeconds;
@@ -81,7 +81,7 @@ TEST(Mp4DurationTest, ParsesMvhdDuration) {
 TEST(Mp4DurationTest, FindsMoovAfterMdat) {
     // mp4mux (non-faststart) writes moov AFTER mdat — the probe must skip mdat.
     std::vector<std::uint8_t> file = FtypBox();
-    std::vector<std::uint8_t> mdat;       // a dummy media-data box
+    std::vector<std::uint8_t> mdat;  // a dummy media-data box
     PutBe32(mdat, 8 + 16);
     PutType(mdat, "mdat");
     mdat.resize(8 + 16, 0xAB);

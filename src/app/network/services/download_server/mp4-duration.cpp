@@ -11,8 +11,8 @@ namespace {
 
 namespace fs = std::filesystem;
 
-constexpr std::size_t kBoxHeaderLen = 8;     // 4-byte size + 4-byte type
-constexpr std::size_t kLargeSizeLen = 8;     // extra 8 bytes when size == 1
+constexpr std::size_t kBoxHeaderLen = 8;  // 4-byte size + 4-byte type
+constexpr std::size_t kLargeSizeLen = 8;  // extra 8 bytes when size == 1
 constexpr std::uint32_t kBitsPerByte = 8U;
 
 auto ReadBe32(const std::uint8_t* p) -> std::uint32_t {
