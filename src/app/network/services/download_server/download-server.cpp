@@ -6,6 +6,7 @@
 #include <system_error>
 #include <utility>
 
+#include "app/network/services/download_server/mp4-duration.hpp"
 #include "domain/common/utils/uuid.hpp"
 #include "domain/storage/services/raw-capture-naming.hpp"
 
@@ -52,6 +53,7 @@ auto DownloadServer::Enumerate() const -> std::vector<RecordingSummary> {
             // Final-match recording: is_raw stays false, raw identity unset.
             summary.recording_id = path.stem().string();
             summary.thumbnail_id = summary.recording_id;
+            summary.duration_s = ProbeMp4DurationSeconds(path);
         } else if (ext == kRawExtension) {
             // Raw dual-camera file: parse identity from the filename so the app
             // can group the cam-0/cam-1 pair by capture_group_id.
