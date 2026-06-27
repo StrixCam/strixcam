@@ -1,5 +1,7 @@
 #include "app/control/services/handlers/match.handler.hpp"
 
+#include <spdlog/spdlog.h>
+
 #include <map>
 #include <string>
 #include <utility>
@@ -138,8 +140,10 @@ auto MatchHandler::HandleBannerEvent(const sst_cam::BannerEventCommand& cmd)
     const std::uint64_t now = now_ms_ ? now_ms_() : 0;
     // Unknown template_id is a no-op (the app may target a template this layout
     // doesn't define) — still a successful, defined response.
-    controller_.ActivateBanner(cmd.template_id(), params, cmd.duration_s(), now);
+    const bool shown = controller_.ActivateBanner(cmd.template_id(), params, cmd.duration_s(), now);
     controller_.Refresh(now);
+    spdlog::info("MatchHandler: banner '{}' duration_s={} activated={}", cmd.template_id(),
+                 cmd.duration_s(), shown);
 
     sst_cam::CommandResponse resp;
     resp.set_status(sst_cam::ResponseStatus::OK);
