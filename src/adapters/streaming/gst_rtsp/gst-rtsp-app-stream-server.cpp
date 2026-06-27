@@ -14,6 +14,10 @@ namespace {
 
 constexpr const char* kAppsrcName = "src";
 
+// Declared appsrc caps are BGR (3 bytes/pixel, single tightly-packed plane). A
+// pushed frame must match w*h*3 exactly or x264enc stalls on the mismatch.
+constexpr std::size_t kBgrBytesPerPixel = 3;
+
 auto FrameByteSize(const sst::capture::Frame& frame) -> std::size_t {
     std::size_t total = 0;
     for (const auto& plane : frame.planes) {
@@ -34,6 +38,7 @@ auto BuildLaunch(const sst::streaming::AppStreamConfig& cfg) -> std::string {
         "( appsrc name={src} is-live=true format=time do-timestamp=true "
         "    caps=\"video/x-raw,format=BGR,width={w},height={h},framerate={fps}/1\" "
         "  ! videoconvert "
+        "  ! queue leaky=downstream max-size-buffers=2 "
         "  ! x264enc speed-preset=ultrafast tune=zerolatency bitrate={brk} key-int-max={gik} "
         "  ! h264parse config-interval=1 "
         "  ! rtph264pay name=pay0 pt=96 config-interval=1 )",
@@ -181,6 +186,23 @@ auto GstRtspAppStreamServer::Push(const sst::capture::Frame& frame) -> void {
 
     const auto total = FrameByteSize(frame);
     if (total == 0) {
+        gst_object_unref(target);
+        return;
+    }
+
+    // Guard the declared BGR caps: a frame that isn't w*h*3 (e.g. a postprocess
+    // format/stride regression, or NV12 leaking through) stalls x264enc and leaves
+    // the client connected with no decoded frames. Drop it and surface the
+    // mismatch once rather than feeding the encoder a malformed buffer.
+    const auto expected = static_cast<std::size_t>(config_.width) *
+                          static_cast<std::size_t>(config_.height) * kBgrBytesPerPixel;
+    if (total != expected) {
+        if (!size_mismatch_logged_.exchange(true)) {
+            spdlog::error(
+                "GstRtspAppStreamServer::Push: frame size {} != expected BGR {}x{}x3={}; dropping "
+                "(check postprocess output format)",
+                total, config_.width, config_.height, expected);
+        }
         gst_object_unref(target);
         return;
     }
