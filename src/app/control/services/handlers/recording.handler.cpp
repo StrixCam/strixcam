@@ -1,12 +1,15 @@
 #include "app/control/services/handlers/recording.handler.hpp"
 
+#include <utility>
+
 #include "domain/session/models/session-phase.hpp"
 
 namespace sst::control {
 
 RecordingHandler::RecordingHandler(sst::session::ISessionManager& session,
-                                   sst::storage::IRecordingService& recording)
-    : session_(session), recording_(recording) {}
+                                   sst::storage::IRecordingService& recording,
+                                   sst::overlay::IOverlayTimelineRecorder& timeline, Clock now_ms)
+    : session_(session), recording_(recording), timeline_(timeline), now_ms_(std::move(now_ms)) {}
 
 auto RecordingHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kRecordingControl};
@@ -45,11 +48,16 @@ auto RecordingHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
                 resp.set_error_message("recording start rejected: session not ready");
                 return resp;
             }
+            // Begin capturing the overlay timeline beside the L1 MP4 (#6 F6b),
+            // anchored at the overlay clock so the burn (F6c) can realign it.
+            timeline_.Start(state.config->video_output_path, now_ms_ ? now_ms_() : 0);
             resp.set_status(sst_cam::ResponseStatus::OK);
             return resp;
         }
         case sst_cam::RECORDING_STOP: {
             const auto result = recording_.Stop();
+            // Flush the overlay timeline next to the L1 MP4 (#6 F6b).
+            timeline_.Stop();
             session_.OnRecordingStop();
             resp.set_status(result.success ? sst_cam::ResponseStatus::OK
                                            : sst_cam::ResponseStatus::ERROR);

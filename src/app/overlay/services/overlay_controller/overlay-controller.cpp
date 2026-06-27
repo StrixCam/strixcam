@@ -7,8 +7,9 @@
 namespace sst::overlay {
 
 OverlayController::OverlayController(IOverlayRenderer& renderer, IOverlaySink& sink,
-                                     common::OutputSize out_size)
-    : renderer_(renderer), sink_(sink), out_size_(out_size) {}
+                                     common::OutputSize out_size,
+                                     IOverlayTimelineRecorder* timeline)
+    : renderer_(renderer), sink_(sink), out_size_(out_size), timeline_(timeline) {}
 
 auto OverlayController::SetLayout(OverlayLayout layout) -> void {
     std::lock_guard lock(mtx_);
@@ -54,6 +55,13 @@ auto OverlayController::Refresh(std::uint64_t now_ms) -> bool {
     }
     last_signature_ = sig;
     pushed_once_ = true;
+
+    // Persist the resolved scene to the recording's overlay timeline (#6 F6b)
+    // before rasterizing. The recorder no-ops outside a recording. Capturing the
+    // scene (not the RGBA) keeps the timeline compact and lets F6c re-rasterize.
+    if (timeline_ != nullptr) {
+        timeline_->OnScene(now_ms, scene);
+    }
 
     RgbaImage frame = renderer_.Render(scene, out_size_.width, out_size_.height);
     sink_.PushFrame(frame);

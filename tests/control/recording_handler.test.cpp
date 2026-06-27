@@ -4,9 +4,12 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <filesystem>
 #include <string>
 
 #include "app/control/services/handlers/recording.handler.hpp"
+#include "app/overlay/ports/overlay-timeline-recorder.hpp"
 #include "app/session/ports/session-cleanup.hpp"
 #include "app/session/services/session_manager/session-manager.hpp"
 #include "app/storage/ports/recording-service.hpp"
@@ -67,6 +70,25 @@ class FakeCleanup final : public sst::session::ISessionCleanup {
     auto TeardownWifiDirect() -> void override {}
 };
 
+// No-op overlay timeline — these tests cover recording lifecycle, not timeline
+// persistence (that has its own test). Just counts start/stop so a test could
+// assert the wiring if needed.
+class FakeTimeline final : public sst::overlay::IOverlayTimelineRecorder {
+   public:
+    auto Start(const std::filesystem::path& /*dir*/, std::uint64_t /*anchor_ms*/) -> void override {
+        ++start_calls;
+    }
+    auto OnScene(std::uint64_t /*at_ms*/,
+                 const sst::overlay::RenderScene& /*scene*/) -> void override {}
+    auto Stop() -> void override { ++stop_calls; }
+
+    int start_calls{0};
+    int stop_calls{0};
+};
+
+// Zero clock — timeline anchor is irrelevant to recording-lifecycle assertions.
+auto ZeroClock() -> std::uint64_t { return 0; }
+
 // Empty output paths keep the test off the filesystem (PrepareOutputDirs is a
 // no-op for empty paths).
 auto EmptyPathConfig() -> SessionConfig {
@@ -98,7 +120,8 @@ TEST(RecordingHandlerTest, StartInReadyPhaseStartsRecorderAndTransitions) {
     FakeCleanup cleanup;
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
-    RecordingHandler handler(session_mgr, recorder);
+    FakeTimeline timeline;
+    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
     AdvanceToReady(session_mgr);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
@@ -113,7 +136,8 @@ TEST(RecordingHandlerTest, StartBeforeReadyRejectedWithoutTouchingRecorder) {
     FakeCleanup cleanup;
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
-    RecordingHandler handler(session_mgr, recorder);
+    FakeTimeline timeline;
+    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
     AdvanceToConfigured(session_mgr);  // config present, but phase != Ready
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
@@ -127,7 +151,8 @@ TEST(RecordingHandlerTest, StartWithNoSessionConfigErrors) {
     FakeCleanup cleanup;
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
-    RecordingHandler handler(session_mgr, recorder);
+    FakeTimeline timeline;
+    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
     ASSERT_TRUE(session_mgr.OnConnect());
     ASSERT_TRUE(session_mgr.OnWifiReady());  // WifiReady, no config yet
 
@@ -143,7 +168,8 @@ TEST(RecordingHandlerTest, StartRolledBackWhenRecorderStartsButSmRejects) {
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     recorder.start_ok = false;
-    RecordingHandler handler(session_mgr, recorder);
+    FakeTimeline timeline;
+    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
     AdvanceToReady(session_mgr);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
@@ -156,7 +182,8 @@ TEST(RecordingHandlerTest, StopStopsRecorderAndReturnsToReady) {
     FakeCleanup cleanup;
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
-    RecordingHandler handler(session_mgr, recorder);
+    FakeTimeline timeline;
+    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
     AdvanceToReady(session_mgr);
     ASSERT_EQ(handler.Handle(Cmd(sst_cam::RECORDING_START)).status(), sst_cam::ResponseStatus::OK);
 
@@ -171,7 +198,8 @@ TEST(RecordingHandlerTest, PauseWhileNotRecordingErrors) {
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     recorder.pause_ok = false;  // recorder reports it isn't recording
-    RecordingHandler handler(session_mgr, recorder);
+    FakeTimeline timeline;
+    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
     AdvanceToReady(session_mgr);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_PAUSE));

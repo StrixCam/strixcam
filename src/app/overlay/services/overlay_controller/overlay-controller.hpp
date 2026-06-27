@@ -7,6 +7,7 @@
 
 #include "app/overlay/ports/overlay-renderer.hpp"
 #include "app/overlay/ports/overlay-sink.hpp"
+#include "app/overlay/ports/overlay-timeline-recorder.hpp"
 #include "app/overlay/services/overlay_scene/overlay-scene.hpp"
 #include "domain/common/models/output-size.hpp"
 #include "domain/overlay/models/overlay-layout.hpp"
@@ -20,7 +21,10 @@ namespace sst::overlay {
 // the pipeline.
 class OverlayController {
    public:
-    OverlayController(IOverlayRenderer& renderer, IOverlaySink& sink, common::OutputSize out_size);
+    // `timeline` (optional, may be null) receives every pushed scene so it can
+    // be persisted during a recording (#6 F6b). Null disables timeline capture.
+    OverlayController(IOverlayRenderer& renderer, IOverlaySink& sink, common::OutputSize out_size,
+                      IOverlayTimelineRecorder* timeline = nullptr);
 
     auto SetLayout(OverlayLayout layout) -> void;
     auto SetBindingData(const BindingData& data) -> void;
@@ -47,6 +51,7 @@ class OverlayController {
     IOverlayRenderer& renderer_;
     IOverlaySink& sink_;
     common::OutputSize out_size_;
+    IOverlayTimelineRecorder* timeline_;
     OverlayScene scene_;
     std::string last_signature_;
     bool pushed_once_{false};

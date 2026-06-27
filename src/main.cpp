@@ -18,6 +18,7 @@
 #include "adapters/network/http/http-download-server.hpp"
 #include "adapters/overlay/caching/caching-overlay-sink.hpp"
 #include "adapters/overlay/cairo/cairo-overlay-renderer.hpp"
+#include "adapters/overlay/timeline/filesystem-overlay-timeline-recorder.hpp"
 #include "adapters/processing/opencv/opencv-postprocessor.hpp"
 #include "adapters/processing/opencv/opencv-preprocessor.hpp"
 #include "adapters/storage/filesystem/filesystem-disk-guard.hpp"
@@ -156,10 +157,14 @@ auto RunFirmware() -> int {
     // each final BGR frame (CPU composite, single path for all output branches).
     sst::adapters::overlay::CairoOverlayRenderer overlay_renderer;
     sst::adapters::overlay::CachingOverlaySink overlay_sink;
+    // Persists the overlay scene timeline beside each L1 recording (#6 F6b) so
+    // the overlay can be burned onto the clean recording on demand (F6c).
+    sst::adapters::overlay::FilesystemOverlayTimelineRecorder overlay_timeline;
     sst::overlay::OverlayController overlay_controller(
         overlay_renderer, overlay_sink,
         sst::common::OutputSize{sst::runtime_defaults::kOverlayWidth,
-                                sst::runtime_defaults::kOverlayHeight});
+                                sst::runtime_defaults::kOverlayHeight},
+        &overlay_timeline);
 
     // ── Downloads ──────────────────────────────────────────────────────
     sst::network::DownloadServer download_server(video_root, thumbnail_root, NowUnixSeconds);
@@ -212,8 +217,8 @@ auto RunFirmware() -> int {
     dispatcher.Register(match_handler);
     dispatcher.Register(
         std::make_shared<sst::control::MatchStateHandler>(session_manager, NowEpochMs));
-    dispatcher.Register(
-        std::make_shared<sst::control::RecordingHandler>(session_manager, recording_service));
+    dispatcher.Register(std::make_shared<sst::control::RecordingHandler>(
+        session_manager, recording_service, overlay_timeline, NowMs));
     dispatcher.Register(std::make_shared<sst::control::StreamingHandler>(streaming_service));
     dispatcher.Register(std::make_shared<sst::control::DownloadHandler>(
         download_server, sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort,
