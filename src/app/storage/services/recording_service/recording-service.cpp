@@ -2,11 +2,36 @@
 
 #include <spdlog/spdlog.h>
 
+#include <filesystem>
+#include <string>
 #include <utility>
 
 #include "domain/storage/models/formatter/_fmt.hpp"  // IWYU pragma: keep
 
 namespace sst::storage {
+
+namespace {
+
+// The session contract hands us a per-match DIRECTORY (e.g.
+// /var/lib/sst/cam/videos/<user>/<match>/), not a file. The recorder's filesink
+// and the thumbnail's cv::imwrite both need a concrete file path — handing them
+// the directory makes the GStreamer pipeline fail to reach PLAYING (and imwrite
+// fail), leaving an empty match dir. Compose the file inside the directory.
+// Tolerate a path that already names a file (has an extension / no trailing /).
+auto ComposeFile(const std::string& dir_or_file, const char* filename) -> std::filesystem::path {
+    if (dir_or_file.empty()) {
+        return {};
+    }
+    const std::filesystem::path p(dir_or_file);
+    const bool looks_like_dir = dir_or_file.back() == '/' || !p.has_extension();
+    return looks_like_dir ? p / filename : p;
+}
+
+// Clean layer-1 recording (raw, no overlay). Overlaid L2 is burned on demand.
+constexpr const char* kCleanRecordingName = "l1.mp4";
+constexpr const char* kThumbnailName = "l1.jpg";
+
+}  // namespace
 
 RecordingService::RecordingService(std::unique_ptr<IContinuousRecorder> recorder,
                                    std::unique_ptr<IThumbnailWriter> thumbnail_writer,
@@ -39,8 +64,16 @@ auto RecordingService::StartRecording(const std::string& video_output_path,
         return false;
     }
 
-    video_path_ = video_output_path;
-    thumbnail_path_ = thumbnail_output_path;
+    // Compose concrete file paths inside the per-match directories the session
+    // hands us; filesink / imwrite cannot write to a bare directory.
+    video_path_ = ComposeFile(video_output_path, kCleanRecordingName);
+    thumbnail_path_ = ComposeFile(thumbnail_output_path, kThumbnailName);
+
+    std::error_code ec;
+    if (!video_path_.parent_path().empty()) {
+        std::filesystem::create_directories(video_path_.parent_path(), ec);
+    }
+
     if (!recorder_->Start(video_path_)) {
         spdlog::error("RecordingService::StartRecording: recorder failed to start ({})",
                       video_path_.string());
