@@ -16,20 +16,31 @@ namespace {
 // /var/lib/sst/cam/videos/<user>/<match>/), not a file. The recorder's filesink
 // and the thumbnail's cv::imwrite both need a concrete file path — handing them
 // the directory makes the GStreamer pipeline fail to reach PLAYING (and imwrite
-// fail), leaving an empty match dir. Compose the file inside the directory.
-// Tolerate a path that already names a file (has an extension / no trailing /).
-auto ComposeFile(const std::string& dir_or_file, const char* filename) -> std::filesystem::path {
+// fail), leaving an empty match dir.
+//
+// The file must be named <matchId>.<ext>: the DownloadServer keys recordings by
+// file *stem* and the app requests downloads by match id, so the stem has to be
+// the match id. The match id is the directory's own name. Tolerate a path that
+// already names a file (has an extension / no trailing slash) by using it as-is.
+auto MatchIdFromDir(const std::filesystem::path& p) -> std::string {
+    // A trailing slash makes filename() empty, so fall back to the parent.
+    return p.has_filename() ? p.filename().string() : p.parent_path().filename().string();
+}
+
+auto ComposeFile(const std::string& dir_or_file, const char* ext) -> std::filesystem::path {
     if (dir_or_file.empty()) {
         return {};
     }
     const std::filesystem::path p(dir_or_file);
-    const bool looks_like_dir = dir_or_file.back() == '/' || !p.has_extension();
-    return looks_like_dir ? p / filename : p;
+    if (dir_or_file.back() != '/' && p.has_extension()) {
+        return p;  // already a concrete file
+    }
+    const std::string id = MatchIdFromDir(p);
+    return p / ((id.empty() ? "recording" : id) + ext);
 }
 
-// Clean layer-1 recording (raw, no overlay). Overlaid L2 is burned on demand.
-constexpr const char* kCleanRecordingName = "l1.mp4";
-constexpr const char* kThumbnailName = "l1.jpg";
+constexpr const char* kVideoExt = ".mp4";
+constexpr const char* kThumbnailExt = ".jpg";
 
 }  // namespace
 
@@ -66,8 +77,8 @@ auto RecordingService::StartRecording(const std::string& video_output_path,
 
     // Compose concrete file paths inside the per-match directories the session
     // hands us; filesink / imwrite cannot write to a bare directory.
-    video_path_ = ComposeFile(video_output_path, kCleanRecordingName);
-    thumbnail_path_ = ComposeFile(thumbnail_output_path, kThumbnailName);
+    video_path_ = ComposeFile(video_output_path, kVideoExt);
+    thumbnail_path_ = ComposeFile(thumbnail_output_path, kThumbnailExt);
 
     std::error_code ec;
     if (!video_path_.parent_path().empty()) {
