@@ -27,7 +27,6 @@
 #include "adapters/storage/raw_capture/filesystem-raw-capture-sink.hpp"
 #include "adapters/streaming/gst_rtmp/gst-rtmp-streamer.hpp"
 #include "adapters/streaming/gst_rtsp/gst-rtsp-app-stream-server.hpp"
-#include "app/buffer/services/fan_out_sink/fan-out-sink.hpp"
 #include "app/config/services/config_loader/config-loader.hpp"
 #include "app/control/services/dispatcher/command-dispatcher.hpp"
 #include "app/control/services/handlers/device.handler.hpp"
@@ -223,11 +222,11 @@ auto RunFirmware() -> int {
     ble_transport.SetOnConnect([&session_manager] { session_manager.OnConnect(); });
     ble_transport.SetOnDisconnect([&session_manager] { session_manager.OnDisconnect(); });
 
-    // ── Pipeline (capture -> preprocess -> buffer -> postprocess -> fan-out) ──
-    // FanOutSink feeds both storage + streaming; the overlay is composited onto
-    // the shared frame within each output branch so both carry identical pixels.
-    sst::buffer::FanOutSink final_frame_sink(
-        std::vector<sst::buffer::IFrameSink*>{&recording_service, &streaming_service});
+    // ── Pipeline (capture -> preprocess -> buffer -> postprocess -> split) ──
+    // The recorder gets the CLEAN post-processed frame; streaming (RTSP + RTMP,
+    // which StreamingService fans out internally) gets the overlaid copy. The
+    // overlay is composited only on the stream branch inside the consumer, so a
+    // recording plays with or without overlays — overlay is burned on demand (#6).
 
     // Two camera chains (sensor-id 0 and 1). Both run; StaticDecision presents
     // camera 0 full-frame (the intelligence seam), camera 1 ages out unchosen
@@ -247,8 +246,8 @@ auto RunFirmware() -> int {
     auto decision = std::make_unique<sst::decision::StaticDecision>();
 
     sst::pipeline::PipelineOrchestrator pipeline(
-        std::move(camera_chains), std::move(postprocessor), std::move(decision), final_frame_sink,
-        sst::pipeline::PipelineConfig{}, &raw_capture_sink, &overlay_sink);
+        std::move(camera_chains), std::move(postprocessor), std::move(decision), recording_service,
+        streaming_service, sst::pipeline::PipelineConfig{}, &raw_capture_sink, &overlay_sink);
     dispatcher.Register(std::make_shared<sst::control::RawCaptureHandler>(raw_capture_sink));
 
     // On-demand thumbnail: snapshot the latest pipeline frame + encode to JPEG
