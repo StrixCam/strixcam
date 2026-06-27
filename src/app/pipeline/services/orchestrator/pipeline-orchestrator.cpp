@@ -26,7 +26,9 @@ PipelineOrchestrator::PipelineOrchestrator(
     sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
     // NOLINTEND(bugprone-easily-swappable-parameters)
     PipelineConfig config, sst::storage::IRawCaptureSink* raw_sink,
-    sst::overlay::IOverlayFrameSource* overlay_source)
+    sst::overlay::IOverlayFrameSource* overlay_source,
+    sst::processing::IFrameCompositor* compositor,
+    sst::streaming::PreviewLayoutState* preview_layout)
     : cameras_(std::move(cameras)),
       postprocessor_(std::move(postprocessor)),
       decision_(std::move(decision)),
@@ -34,7 +36,9 @@ PipelineOrchestrator::PipelineOrchestrator(
       stream_sink_(stream_sink),
       config_(config),
       raw_sink_(raw_sink),
-      overlay_source_(overlay_source) {
+      overlay_source_(overlay_source),
+      compositor_(compositor),
+      preview_layout_(preview_layout) {
     slots_.reserve(cameras_.size());
     for (std::size_t i = 0; i < cameras_.size(); ++i) {
         slots_.push_back(
@@ -188,26 +192,62 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
         // captures these clean pixels before the composite below mutates the frame.
         record_sink_.Push(*final_frame);
 
-        // Composite the current overlay (when present) onto a copy for the
-        // live/broadcast stream only. A fully-transparent overlay blends to a
-        // clean frame; nullopt (no overlay yet, or unsupported format) leaves the
-        // frame untouched.
-        if (overlay_source_ != nullptr) {
-            if (auto overlay = overlay_source_->LatestOverlay()) {
-                if (auto composited = sst::overlay::CompositeOverlay(*final_frame, *overlay)) {
-                    final_frame = std::move(composited);
+        // Build the live/broadcast stream frame. SIDE_BY_SIDE (#6 F6d): composite
+        // cam0 | cam1 CLEAN (no overlay) — a "see both cameras" monitoring view.
+        // Otherwise the SINGLE broadcast view with the overlay baked on.
+        auto stream_frame = BuildStreamFrame(*final_frame, latest, choice->camera_index);
+        {
+            // Retain the latest stream frame for on-demand snapshots so a snapshot
+            // matches what the live stream shows. It owns its pixels, so storing by
+            // value keeps them alive for a later GrabLatest().
+            std::lock_guard lock(latest_frame_mtx_);
+            latest_frame_ = stream_frame;
+        }
+        stream_sink_.Push(stream_frame);
+    }
+}
+
+auto PipelineOrchestrator::BuildStreamFrame(
+    const sst::capture::Frame& clean_chosen,
+    const std::vector<std::optional<sst::processing::FrameBundle>>& latest,
+    std::size_t chosen_index) -> sst::capture::Frame {
+    const bool want_side_by_side =
+        preview_layout_ != nullptr && compositor_ != nullptr && cameras_.size() >= 2 &&
+        preview_layout_->Get() == sst::streaming::PreviewLayout::kSideBySide;
+
+    if (want_side_by_side) {
+        // Composite the chosen camera (left) with the other camera (right), both
+        // CLEAN — no overlay in the monitoring view. Postprocess the other
+        // camera full-frame; if it has no frame this tick or the composite
+        // fails, fall back to the clean chosen frame (still no overlay).
+        const std::size_t other_index = chosen_index == 0 ? 1 : 0;
+        const auto& other_slot = latest[other_index];
+        if (other_slot.has_value()) {
+            const sst::processing::CropRect full_frame{
+                .x = 0,
+                .y = 0,
+                .width = other_slot->source_frame.geometry.width,
+                .height = other_slot->source_frame.geometry.height};
+            if (auto right = postprocessor_->Process(other_slot->source_frame, full_frame)) {
+                if (auto composite = compositor_->CompositeSideBySide(clean_chosen, *right)) {
+                    return std::move(*composite);
                 }
             }
         }
-        {
-            // Retain the latest (overlaid) frame for on-demand snapshots so a
-            // snapshot matches what the live stream shows. It owns its pixels, so
-            // storing by value keeps them alive for a later GrabLatest().
-            std::lock_guard lock(latest_frame_mtx_);
-            latest_frame_ = *final_frame;
-        }
-        stream_sink_.Push(*final_frame);
+        return clean_chosen;
     }
+
+    // SINGLE: composite the current overlay (when present) onto a copy for the
+    // live/broadcast stream. A fully-transparent overlay blends to a clean frame;
+    // nullopt (no overlay yet, or unsupported format) leaves the frame untouched.
+    if (overlay_source_ != nullptr) {
+        if (auto overlay = overlay_source_->LatestOverlay()) {
+            if (auto composited = sst::overlay::CompositeOverlay(clean_chosen, *overlay)) {
+                return std::move(*composited);
+            }
+        }
+    }
+    return clean_chosen;
 }
 
 auto PipelineOrchestrator::GrabLatest() -> std::optional<sst::capture::Frame> {

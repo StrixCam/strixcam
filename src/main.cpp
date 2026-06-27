@@ -23,6 +23,7 @@
 #include "adapters/overlay/timeline/overlay-timeline-loader.hpp"
 #include "adapters/processing/opencv/opencv-postprocessor.hpp"
 #include "adapters/processing/opencv/opencv-preprocessor.hpp"
+#include "adapters/processing/opencv/opencv-side-by-side-compositor.hpp"
 #include "adapters/storage/filesystem/filesystem-disk-guard.hpp"
 #include "adapters/storage/gstreamer/gst-continuous-recorder.hpp"
 #include "adapters/storage/opencv/opencv-jpeg-encoder.hpp"
@@ -38,6 +39,7 @@
 #include "app/control/services/handlers/match-state.handler.hpp"
 #include "app/control/services/handlers/match.handler.hpp"
 #include "app/control/services/handlers/overlay.handler.hpp"
+#include "app/control/services/handlers/preview-layout.handler.hpp"
 #include "app/control/services/handlers/raw-capture.handler.hpp"
 #include "app/control/services/handlers/recording.handler.hpp"
 #include "app/control/services/handlers/session.handler.hpp"
@@ -288,10 +290,23 @@ auto RunFirmware() -> int {
     auto postprocessor = std::make_unique<sst::adapters::processing::OpenCvPostprocessor>();
     auto decision = std::make_unique<sst::decision::StaticDecision>();
 
+    // #6 F6d dual preview: the SetPreviewLayout handler flips this shared state;
+    // the pipeline consumer reads it each tick and composites cam0 | cam1 (clean)
+    // into the preview stream via the side-by-side compositor. The composite
+    // targets the same output canvas as the single stream, so the RTSP encoder
+    // caps never change — connected viewers are not dropped on a layout switch.
+    sst::streaming::PreviewLayoutState preview_layout_state;
+    sst::adapters::processing::OpenCvSideBySideCompositor side_by_side_compositor(
+        sst::runtime_defaults::kOverlayWidth, sst::runtime_defaults::kOverlayHeight);
+
     sst::pipeline::PipelineOrchestrator pipeline(
         std::move(camera_chains), std::move(postprocessor), std::move(decision), recording_service,
-        streaming_service, sst::pipeline::PipelineConfig{}, &raw_capture_sink, &overlay_sink);
+        streaming_service, sst::pipeline::PipelineConfig{}, &raw_capture_sink, &overlay_sink,
+        &side_by_side_compositor, &preview_layout_state);
     dispatcher.Register(std::make_shared<sst::control::RawCaptureHandler>(raw_capture_sink));
+    dispatcher.Register(std::make_shared<sst::control::PreviewLayoutHandler>(
+        preview_layout_state, sst::runtime_defaults::kOverlayWidth,
+        sst::runtime_defaults::kOverlayHeight));
 
     // On-demand thumbnail: snapshot the latest pipeline frame + encode to JPEG
     // in memory. Registered here (after the pipeline exists) but before the BLE

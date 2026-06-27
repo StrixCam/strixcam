@@ -14,11 +14,13 @@
 #include "app/capture/ports/frame-src.hpp"
 #include "app/decision/services/static_decision/static-decision.hpp"
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
+#include "app/processing/ports/frame-compositor.hpp"
 #include "app/processing/ports/postprocessor.hpp"
 #include "app/processing/ports/preprocessor.hpp"
 #include "domain/capture/models/frame.hpp"
 #include "domain/processing/models/crop-rect.hpp"
 #include "domain/processing/models/frame-bundle.hpp"
+#include "domain/streaming/models/preview-layout.hpp"
 
 namespace {
 
@@ -159,6 +161,40 @@ class CountingSink final : public IFrameSink {
     std::uint64_t last_frame_id{0};
     sst::common::PixelFormat last_format{};
     sst::capture::FrameGeometry last_geometry{};
+};
+
+// Records every CompositeSideBySide call and returns a frame stamped with a
+// distinctive geometry, so a test can prove the composite (not the single
+// postprocessed frame) reached the stream sink (#6 F6d).
+constexpr Dims kCompositeDims{2222, 720};
+class FakeCompositor final : public sst::processing::IFrameCompositor {
+   public:
+    auto CompositeSideBySide(const Frame& left,
+                             const Frame& right) -> std::optional<Frame> override {
+        std::lock_guard lock(mtx_);
+        ++calls;
+        last_left_id = left.frame_id;
+        last_right_geometry = right.geometry;
+        Frame out = left;
+        out.format = sst::common::PixelFormat::BGR8;
+        out.geometry = {.width = kCompositeDims.width, .height = kCompositeDims.height};
+        return out;
+    }
+
+    auto Calls() const -> int {
+        std::lock_guard lock(mtx_);
+        return calls;
+    }
+    auto LastRightGeometry() const -> sst::capture::FrameGeometry {
+        std::lock_guard lock(mtx_);
+        return last_right_geometry;
+    }
+
+   private:
+    mutable std::mutex mtx_;
+    int calls{0};
+    std::uint64_t last_left_id{0};
+    sst::capture::FrameGeometry last_right_geometry{};
 };
 
 // ── Construction helpers ─────────────────────────────────────────────
@@ -496,6 +532,58 @@ TEST(PipelineOrchestratorTest, DestructorStopsRunningPipeline) {
     // The test asserts we got here without hangs / data races caught by
     // sanitizers.
     SUCCEED();
+}
+
+// #6 F6d: with SIDE_BY_SIDE selected, the consumer postprocesses BOTH cameras
+// and routes the composite to the stream sink, while the recorder still gets the
+// clean single (cam0) frame.
+TEST(PipelineOrchestratorTest, SideBySideCompositesBothCamerasToStream) {
+    FakeCompositor compositor;
+    sst::streaming::PreviewLayoutState layout;
+    layout.Set(sst::streaming::PreviewLayout::kSideBySide);
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
+
+    ASSERT_TRUE(orchestrator.Start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    orchestrator.Stop();
+
+    EXPECT_GT(compositor.Calls(), 0);
+    // The other camera (cam1, 800x600) was postprocessed and handed to the
+    // compositor as the right input — proves cam1 is no longer aged out.
+    EXPECT_EQ(compositor.LastRightGeometry().width, kOutputDims.width);
+    // The stream sink received the composite geometry, not the single 1280x720.
+    EXPECT_EQ(std::get<3>(sink.Snapshot()).width, kCompositeDims.width);
+    // The recorder still got the clean single (postprocessed cam0) frame.
+    EXPECT_EQ(std::get<3>(record_sink.Snapshot()).width, kOutputDims.width);
+}
+
+// #6 F6d: SINGLE (default) never invokes the compositor; the stream carries the
+// single postprocessed frame even when a compositor is wired.
+TEST(PipelineOrchestratorTest, SingleLayoutSkipsCompositor) {
+    FakeCompositor compositor;
+    sst::streaming::PreviewLayoutState layout;  // defaults to kSingle
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
+
+    ASSERT_TRUE(orchestrator.Start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        200));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    orchestrator.Stop();
+
+    EXPECT_EQ(compositor.Calls(), 0);
+    EXPECT_EQ(std::get<3>(sink.Snapshot()).width, kOutputDims.width);
 }
 
 }  // namespace
