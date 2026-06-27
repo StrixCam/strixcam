@@ -2,11 +2,48 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cstdint>
+#include <filesystem>
+#include <string>
 #include <utility>
 
 #include "domain/storage/models/formatter/_fmt.hpp"  // IWYU pragma: keep
 
 namespace sst::storage {
+
+namespace {
+
+// The session contract hands us a per-match DIRECTORY (e.g.
+// /var/lib/sst/cam/videos/<user>/<match>/), not a file. The recorder's filesink
+// and the thumbnail's cv::imwrite both need a concrete file path — handing them
+// the directory makes the GStreamer pipeline fail to reach PLAYING (and imwrite
+// fail), leaving an empty match dir.
+//
+// The file must be named <matchId>.<ext>: the DownloadServer keys recordings by
+// file *stem* and the app requests downloads by match id, so the stem has to be
+// the match id. The match id is the directory's own name. Tolerate a path that
+// already names a file (has an extension / no trailing slash) by using it as-is.
+auto MatchIdFromDir(const std::filesystem::path& dir) -> std::string {
+    // A trailing slash makes filename() empty, so fall back to the parent.
+    return dir.has_filename() ? dir.filename().string() : dir.parent_path().filename().string();
+}
+
+auto ComposeFile(const std::string& dir_or_file, const char* ext) -> std::filesystem::path {
+    if (dir_or_file.empty()) {
+        return {};
+    }
+    std::filesystem::path path(dir_or_file);
+    if (dir_or_file.back() != '/' && path.has_extension()) {
+        return path;  // already a concrete file
+    }
+    const std::string match_id = MatchIdFromDir(path);
+    return path / ((match_id.empty() ? "recording" : match_id) + ext);
+}
+
+constexpr const char* kVideoExt = ".mp4";
+constexpr const char* kThumbnailExt = ".jpg";
+
+}  // namespace
 
 RecordingService::RecordingService(std::unique_ptr<IContinuousRecorder> recorder,
                                    std::unique_ptr<IThumbnailWriter> thumbnail_writer,
@@ -39,8 +76,38 @@ auto RecordingService::StartRecording(const std::string& video_output_path,
         return false;
     }
 
-    video_path_ = video_output_path;
-    thumbnail_path_ = thumbnail_output_path;
+    // Compose concrete file paths inside the per-match directories the session
+    // hands us; filesink / imwrite cannot write to a bare directory.
+    video_path_ = ComposeFile(video_output_path, kVideoExt);
+    thumbnail_path_ = ComposeFile(thumbnail_output_path, kThumbnailExt);
+
+    // Refuse to clobber an existing recording for this match. A recorder Start
+    // points filesink at <matchId>.mp4; a STOP→START within the same match
+    // re-composes the SAME path, so without this guard the second take
+    // overwrites (and destroys) the first — the "only the last segment is
+    // saved" data-loss. Mid-match continuation must go through PAUSE/RESUME
+    // (one continuous file), not STOP→START. The threshold tolerates a tiny
+    // stub left by a failed prior Start without blocking a legitimate retry.
+    {
+        std::error_code exists_ec;
+        constexpr std::uintmax_t kMinExistingBytes = std::uintmax_t{64} * 1024;
+        const auto existing = std::filesystem::file_size(video_path_, exists_ec);
+        if (!exists_ec && existing >= kMinExistingBytes) {
+            spdlog::warn(
+                "RecordingService::StartRecording refused: {} already holds {} bytes — "
+                "use PAUSE/RESUME to continue a match, not STOP/START",
+                video_path_.string(), existing);
+            video_path_.clear();
+            thumbnail_path_.clear();
+            return false;
+        }
+    }
+
+    std::error_code mkdir_ec;
+    if (!video_path_.parent_path().empty()) {
+        std::filesystem::create_directories(video_path_.parent_path(), mkdir_ec);
+    }
+
     if (!recorder_->Start(video_path_)) {
         spdlog::error("RecordingService::StartRecording: recorder failed to start ({})",
                       video_path_.string());

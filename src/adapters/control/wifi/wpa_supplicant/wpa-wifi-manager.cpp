@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <utility>
 
 #include "adapters/control/wifi/wpa_supplicant/wpa-p2p-parse.hpp"
@@ -194,6 +195,14 @@ auto WpaWifiManager::SendCommand(std::string_view cmd) -> std::optional<std::str
                           std::strerror(errno));
             return std::nullopt;
         }
+        if (bytes == 0) {
+            // A zero-length datagram is not a reply. ReadUntil treats bytes<=0 as
+            // terminal; here we skip the empty datagram and keep scanning for the
+            // real reply within the bounded loop rather than returning "" as if it
+            // were the command's response (which made StartsWith("OK") spuriously
+            // fail, e.g. P2P_GROUP_ADD).
+            continue;
+        }
         std::string msg(buf.data(), static_cast<std::size_t>(bytes));
         if (IsWpaUnsolicitedEvent(msg)) {
             continue;
@@ -237,22 +246,39 @@ auto WpaWifiManager::StartP2pGroupOwner() -> std::optional<sst::network::WifiDir
     SendCommand("ATTACH");
 
     // Form a real autonomous (non-persistent) group owner. wpa_supplicant
-    // generates the SSID + passphrase.
-    auto reply = SendCommand("P2P_GROUP_ADD");
-    if (!reply || !StartsWith(*reply, "OK")) {
-        spdlog::error("WpaWifiManager: P2P_GROUP_ADD failed: {}",
-                      reply ? *reply : std::string{"<no reply>"});
-        return std::nullopt;
+    // generates the SSID + passphrase. The FIRST P2P_GROUP_ADD right after a
+    // BLE connect frequently comes back "<no reply>": its OK is lost among the
+    // unsolicited events ATTACH just turned on (and the P2P_GROUP_REMOVE flush),
+    // so SendCommand exhausts its event-skip budget before the reply — the
+    // "wifi failed on first connect, works on reconnect" symptom. Retry the
+    // whole add+await sequence, cleaning any partial group between tries.
+    constexpr int kGroupAddAttempts = 3;
+    constexpr auto kGroupAddRetryDelay = std::chrono::milliseconds(400);
+    std::optional<ParsedGroup> parsed;
+    for (int attempt = 1; attempt <= kGroupAddAttempts; ++attempt) {
+        auto reply = SendCommand("P2P_GROUP_ADD");
+        if (reply && StartsWith(*reply, "OK")) {
+            if (auto event = ReadUntil("P2P-GROUP-STARTED")) {
+                parsed = ParseGroupStarted(*event);
+                if (parsed) {
+                    break;
+                }
+                spdlog::warn("WpaWifiManager: could not parse P2P-GROUP-STARTED: {}", *event);
+            } else {
+                spdlog::warn("WpaWifiManager: no P2P-GROUP-STARTED (attempt {}/{})", attempt,
+                             kGroupAddAttempts);
+            }
+        } else {
+            spdlog::warn("WpaWifiManager: P2P_GROUP_ADD attempt {}/{} failed: {}", attempt,
+                         kGroupAddAttempts, reply ? *reply : std::string{"<no reply>"});
+        }
+        if (attempt < kGroupAddAttempts) {
+            SendCommand("P2P_GROUP_REMOVE *");  // drop any half-formed group before retrying
+            std::this_thread::sleep_for(kGroupAddRetryDelay);
+        }
     }
-
-    auto event = ReadUntil("P2P-GROUP-STARTED");
-    if (!event) {
-        spdlog::error("WpaWifiManager: no P2P-GROUP-STARTED event received");
-        return std::nullopt;
-    }
-    auto parsed = ParseGroupStarted(*event);
     if (!parsed) {
-        spdlog::error("WpaWifiManager: could not parse P2P-GROUP-STARTED: {}", *event);
+        spdlog::error("WpaWifiManager: P2P_GROUP_ADD failed after {} attempts", kGroupAddAttempts);
         return std::nullopt;
     }
 

@@ -70,13 +70,20 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     // Both raw_sink and overlay_source are optional (may be null). When raw_sink
     // is set, every camera's materialized bundle is forked to it before the move
     // into the slot, so raw dual capture taps the same frames the decision path
-    // consumes. When overlay_source is set and has a current overlay, the
-    // consumer composites it onto each final frame before fan-out, so recording,
-    // RTSP, and RTMP all carry identical overlaid pixels.
+    // consumes. The CLEAN post-processed frame (no overlay) goes to record_sink;
+    // the overlay (when overlay_source has one) is composited only onto the copy
+    // sent to stream_sink. So a recording plays with or without overlays (overlay
+    // is burned on demand, #6) while the live/broadcast stream carries the baked
+    // overlay. Retires the prior "recording + RTSP + RTMP carry identical pixels"
+    // invariant.
     PipelineOrchestrator(std::vector<CameraChain> cameras,
                          std::unique_ptr<sst::processing::IPostprocessor> postprocessor,
                          std::unique_ptr<sst::decision::IDecision> decision,
-                         sst::buffer::IFrameSink& sink, PipelineConfig config = PipelineConfig{},
+                         // NOLINTBEGIN(bugprone-easily-swappable-parameters) // floor-ok: clean L1
+                         // vs overlaid stream are distinct sinks
+                         sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
+                         // NOLINTEND(bugprone-easily-swappable-parameters)
+                         PipelineConfig config = PipelineConfig{},
                          sst::storage::IRawCaptureSink* raw_sink = nullptr,
                          sst::overlay::IOverlayFrameSource* overlay_source = nullptr);
 
@@ -107,7 +114,8 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     std::vector<CameraChain> cameras_;
     std::unique_ptr<sst::processing::IPostprocessor> postprocessor_;
     std::unique_ptr<sst::decision::IDecision> decision_;
-    sst::buffer::IFrameSink& sink_;
+    sst::buffer::IFrameSink& record_sink_;  // CLEAN L1 (no overlay)
+    sst::buffer::IFrameSink& stream_sink_;  // overlaid (live/broadcast: RTSP + RTMP)
     PipelineConfig config_;
     sst::storage::IRawCaptureSink* raw_sink_;
     sst::overlay::IOverlayFrameSource* overlay_source_;

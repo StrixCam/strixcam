@@ -104,6 +104,29 @@ struct Svc {
 constexpr const char* kVideo = "/tmp/sst-rec/user/match/match.mp4";
 constexpr const char* kThumb = "/tmp/sst-rec/thumb/user/match/match.jpg";
 
+// The app/session hands a per-match DIRECTORY (trailing slash), not a file.
+// RecordingService must compose a concrete file inside it before handing it to
+// the recorder (filesink) / thumbnail writer (imwrite) — both fail on a bare
+// directory, which left empty match dirs on-device. The file must be named
+// <matchId>.mp4 (the dir's own name) because the DownloadServer keys recordings
+// by file stem and the app requests downloads by match id. Guards both.
+TEST(ContinuousRecorderTest, DirectoryContractComposesMatchIdNamedFiles) {
+    Svc harness;
+    constexpr const char* kVideoDir = "/tmp/sst-rec/dir/user/match-7f48/";
+    constexpr const char* kThumbDir = "/tmp/sst-rec/dir/thumb/user/match-7f48/";
+
+    ASSERT_TRUE(harness.service->StartRecording(kVideoDir, kThumbDir));
+    EXPECT_EQ(harness.recorder->started_path.string(),
+              "/tmp/sst-rec/dir/user/match-7f48/match-7f48.mp4");
+
+    harness.service->Push(MakeFrame());  // gives Stop a frame to thumbnail
+    const auto result = harness.service->Stop();
+    EXPECT_TRUE(result.success);
+    EXPECT_EQ(result.file_path.string(), "/tmp/sst-rec/dir/user/match-7f48/match-7f48.mp4");
+    EXPECT_EQ(harness.thumb->written_path.string(),
+              "/tmp/sst-rec/dir/thumb/user/match-7f48/match-7f48.jpg");
+}
+
 // AE4 / R21: START -> PAUSE -> RESUME -> STOP yields a single file at the
 // contract path (one recorder Start, one Stop — never multiple segments).
 TEST(ContinuousRecorderTest, StartPauseResumeStopIsSingleFile) {

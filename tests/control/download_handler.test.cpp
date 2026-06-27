@@ -67,7 +67,7 @@ TEST(DownloadHandlerTest, ListReportsRawIdentityUnderJointInvariant) {
 
     constexpr std::uint32_t kDownloadPort = 8080;
     constexpr std::uint64_t kTokenTtlSeconds = 3600;
-    DownloadServer server(root, [] { return std::uint64_t{0}; });
+    DownloadServer server(root, root, [] { return std::uint64_t{0}; });
     DownloadHandler handler(server, "192.168.49.1", kDownloadPort,
                             /*token_ttl_seconds=*/kTokenTtlSeconds);
 

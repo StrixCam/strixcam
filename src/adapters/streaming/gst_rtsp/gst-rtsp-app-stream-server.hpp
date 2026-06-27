@@ -18,17 +18,20 @@ namespace sst::adapters::streaming {
 // frames the device pushes via Push().
 //
 // Pipeline (per RTSP client, instantiated by gst-rtsp-server when the client
-// connects):
+// connects) — software H.264 (the Orin Nano has no NVENC):
 //
-//   appsrc name=src is-live=true format=time
-//     ! videoconvert ! nvvidconv
-//     ! "video/x-raw(memory:NVMM),format=NV12"
-//     ! nvv4l2h264enc bitrate=B insert-sps-pps=true iframeinterval=fps
-//     ! h264parse ! rtph264pay name=pay0 pt=96 config-interval=1
+//   appsrc name=src is-live=true format=time do-timestamp=true
+//     ! videoconvert
+//     ! queue leaky=downstream max-size-buffers=2
+//     ! x264enc speed-preset=ultrafast tune=zerolatency
+//     ! h264parse config-interval=1 ! rtph264pay name=pay0 pt=96 config-interval=1
 //
 // The appsrc is shared across all RTSP sessions via gst-rtsp-server's
 // `shared=true` factory mode — every connected client sees the same encoded
-// stream, which means one NVENC session regardless of viewer count.
+// stream, so the single software encode is paid once regardless of viewer count.
+// The leaky queue decouples the push cadence from the encoder: a slow x264enc
+// drops old frames instead of back-pressuring (and stalling) the appsrc, which
+// otherwise leaves the client connected with no frames flowing.
 //
 // Lifecycle: Start() spins a dedicated GMainLoop thread; Stop() quits it.
 // The underlying appsrc is acquired via `media-configure` — once a client
@@ -70,6 +73,12 @@ class GstRtspAppStreamServer final : public sst::streaming::IAppStreamServer {
     // Bound when an RTSP client connects (via media-configure). nullptr until
     // then — Push() drops frames silently in that window.
     GstAppSrc* appsrc_{nullptr};
+
+    // Warn-once guard: set after the first frame whose byte size doesn't match the
+    // declared BGR caps (w*h*3). Makes a postprocess-format mismatch (which would
+    // otherwise stall x264enc and starve the client of frames) visible in the log
+    // without flooding it every frame.
+    std::atomic<bool> size_mismatch_logged_{false};
 };
 
 }  // namespace sst::adapters::streaming

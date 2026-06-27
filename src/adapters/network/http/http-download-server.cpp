@@ -4,6 +4,9 @@
 
 #include <chrono>
 #include <fstream>
+#include <iterator>
+#include <optional>
+#include <string>
 #include <thread>
 #include <utility>
 
@@ -39,11 +42,36 @@ auto ExtractBearer(const httplib::Request& req) -> std::string {
 }  // namespace
 
 HttpDownloadServer::HttpDownloadServer(std::string bind_address, std::uint16_t port,
-                                       TokenValidator validator)
+                                       TokenValidator validator,
+                                       ThumbnailResolver thumbnail_resolver)
     : bind_address_(std::move(bind_address)),
       port_(port),
       validator_(std::move(validator)),
+      thumbnail_resolver_(std::move(thumbnail_resolver)),
       server_(std::make_unique<httplib::Server>()) {
+    // Thumbnails: untokened GET by recording id. The phone already had to join
+    // the P2P link to reach this; the payload is a small preview frame, not the
+    // recording. Resolves <id> -> <id>.jpg and serves it whole as image/jpeg.
+    server_->Get("/thumbnails/(.*)", [this](const httplib::Request& req, httplib::Response& res) {
+        const std::string recording_id = req.matches.size() > 1 ? req.matches[1].str() : "";
+        std::optional<fs::path> path =
+            recording_id.empty() ? std::nullopt : thumbnail_resolver_(recording_id);
+        if (!path) {
+            res.status = kHttpNotFound;
+            res.set_content("not found", "text/plain");
+            return;
+        }
+        std::ifstream stream(path->string(), std::ios::binary);
+        if (!stream) {
+            res.status = kHttpNotFound;
+            res.set_content("not found", "text/plain");
+            return;
+        }
+        std::string body((std::istreambuf_iterator<char>(stream)),
+                         std::istreambuf_iterator<char>());
+        res.set_content(std::move(body), "image/jpeg");
+    });
+
     server_->Get("/recordings/(.*)", [this](const httplib::Request& req, httplib::Response& res) {
         const std::string token = ExtractBearer(req);
         std::optional<fs::path> path = token.empty() ? std::nullopt : validator_(token);

@@ -24,7 +24,14 @@ class HttpDownloadServer {
     using TokenValidator =
         std::function<std::optional<std::filesystem::path>(const std::string& token)>;
 
-    HttpDownloadServer(std::string bind_address, std::uint16_t port, TokenValidator validator);
+    // Returns the `<id>.jpg` thumbnail path for a recording id, or nullopt (404).
+    // Thumbnails are served untokened — small, non-sensitive preview frames over
+    // the P2P link the phone already had to join.
+    using ThumbnailResolver =
+        std::function<std::optional<std::filesystem::path>(const std::string& recording_id)>;
+
+    HttpDownloadServer(std::string bind_address, std::uint16_t port, TokenValidator validator,
+                       ThumbnailResolver thumbnail_resolver);
     ~HttpDownloadServer();
 
     HttpDownloadServer(const HttpDownloadServer&) = delete;
@@ -46,6 +53,7 @@ class HttpDownloadServer {
     std::uint16_t port_;
     std::uint16_t bound_port_{0};
     TokenValidator validator_;
+    ThumbnailResolver thumbnail_resolver_;
     std::unique_ptr<httplib::Server> server_;
     std::thread thread_;
     bool running_{false};

@@ -20,13 +20,18 @@ constexpr std::size_t kCadenceCamera = 0;
 PipelineOrchestrator::PipelineOrchestrator(
     std::vector<CameraChain> cameras,
     std::unique_ptr<sst::processing::IPostprocessor> postprocessor,
-    std::unique_ptr<sst::decision::IDecision> decision, sst::buffer::IFrameSink& sink,
+    std::unique_ptr<sst::decision::IDecision> decision,
+    // NOLINTBEGIN(bugprone-easily-swappable-parameters) // floor-ok: clean L1 vs overlaid stream
+    // are distinct sinks
+    sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
+    // NOLINTEND(bugprone-easily-swappable-parameters)
     PipelineConfig config, sst::storage::IRawCaptureSink* raw_sink,
     sst::overlay::IOverlayFrameSource* overlay_source)
     : cameras_(std::move(cameras)),
       postprocessor_(std::move(postprocessor)),
       decision_(std::move(decision)),
-      sink_(sink),
+      record_sink_(record_sink),
+      stream_sink_(stream_sink),
       config_(config),
       raw_sink_(raw_sink),
       overlay_source_(overlay_source) {
@@ -176,10 +181,17 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
         if (!final_frame) {
             continue;
         }
-        // Composite the current overlay (when present) onto the final BGR frame
-        // before fan-out, so recording + RTSP + RTMP all carry identical pixels.
-        // A fully-transparent overlay blends to a clean frame; nullopt (no
-        // overlay yet, or unsupported format) leaves the frame untouched.
+        // The recorder gets the CLEAN post-processed frame (no overlay): a clip
+        // can be played with or without overlays, and the overlaid version is
+        // burned on demand from the stored overlay timeline (#6). Push it BEFORE
+        // compositing — IFrameSink::Push copies synchronously, so the recorder
+        // captures these clean pixels before the composite below mutates the frame.
+        record_sink_.Push(*final_frame);
+
+        // Composite the current overlay (when present) onto a copy for the
+        // live/broadcast stream only. A fully-transparent overlay blends to a
+        // clean frame; nullopt (no overlay yet, or unsupported format) leaves the
+        // frame untouched.
         if (overlay_source_ != nullptr) {
             if (auto overlay = overlay_source_->LatestOverlay()) {
                 if (auto composited = sst::overlay::CompositeOverlay(*final_frame, *overlay)) {
@@ -188,13 +200,13 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
             }
         }
         {
-            // Retain the latest final frame for on-demand snapshots. It already
-            // owns its pixels (postprocessor MakeOwnedFrame), so storing it by
-            // value keeps those bytes alive for a later GrabLatest().
+            // Retain the latest (overlaid) frame for on-demand snapshots so a
+            // snapshot matches what the live stream shows. It owns its pixels, so
+            // storing by value keeps them alive for a later GrabLatest().
             std::lock_guard lock(latest_frame_mtx_);
             latest_frame_ = *final_frame;
         }
-        sink_.Push(*final_frame);
+        stream_sink_.Push(*final_frame);
     }
 }
 
