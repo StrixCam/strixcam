@@ -71,9 +71,15 @@ auto GstContinuousRecorder::Start(const std::filesystem::path& output_mp4) -> bo
     // resolves elements at runtime, so a missing plugin fails here (logged), not
     // at container build time. config-interval=-1 makes h264parse repeat
     // SPS/PPS so the MP4 is seekable/decodable from any keyframe.
+    //
+    // The video/x-raw,format=I420 capsfilter forces 4:2:0 chroma BEFORE x264enc.
+    // Without it, BGR/RGB input leads x264enc to encode 4:4:4 (High 4:4:4,
+    // profile_idc 244), which Android and most hardware decoders cannot play
+    // ("unsupported codec"). 4:2:0 is the universally decodable subsampling.
     const std::string desc = fmt::format(
         "appsrc name={src} is-live=true format=time do-timestamp=true ! "
-        "videoconvert ! x264enc name={enc} speed-preset=ultrafast tune=zerolatency "
+        "videoconvert ! video/x-raw,format=I420 ! "
+        "x264enc name={enc} speed-preset=ultrafast tune=zerolatency "
         "bitrate={kbps} key-int-max={gik} ! "
         "h264parse config-interval=-1 ! mp4mux ! filesink location={loc}",
         fmt::arg("src", kAppsrcName), fmt::arg("enc", kEncoderName), fmt::arg("kbps", kBitrateKbps),
