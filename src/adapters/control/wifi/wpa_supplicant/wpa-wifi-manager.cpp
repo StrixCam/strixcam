@@ -194,6 +194,14 @@ auto WpaWifiManager::SendCommand(std::string_view cmd) -> std::optional<std::str
                           std::strerror(errno));
             return std::nullopt;
         }
+        if (bytes == 0) {
+            // A zero-length datagram is not a reply. ReadUntil treats bytes<=0 as
+            // terminal; here we skip the empty datagram and keep scanning for the
+            // real reply within the bounded loop rather than returning "" as if it
+            // were the command's response (which made StartsWith("OK") spuriously
+            // fail, e.g. P2P_GROUP_ADD).
+            continue;
+        }
         std::string msg(buf.data(), static_cast<std::size_t>(bytes));
         if (IsWpaUnsolicitedEvent(msg)) {
             continue;
