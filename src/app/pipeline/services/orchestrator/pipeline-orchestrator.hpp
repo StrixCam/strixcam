@@ -79,7 +79,10 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     PipelineOrchestrator(std::vector<CameraChain> cameras,
                          std::unique_ptr<sst::processing::IPostprocessor> postprocessor,
                          std::unique_ptr<sst::decision::IDecision> decision,
+                         // NOLINTBEGIN(bugprone-easily-swappable-parameters) // floor-ok: clean L1
+                         // vs overlaid stream are distinct sinks
                          sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
+                         // NOLINTEND(bugprone-easily-swappable-parameters)
                          PipelineConfig config = PipelineConfig{},
                          sst::storage::IRawCaptureSink* raw_sink = nullptr,
                          sst::overlay::IOverlayFrameSource* overlay_source = nullptr);

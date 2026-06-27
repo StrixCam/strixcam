@@ -14,17 +14,28 @@ namespace fs = std::filesystem;
 constexpr std::size_t kBoxHeaderLen = 8;  // 4-byte size + 4-byte type
 constexpr std::size_t kLargeSizeLen = 8;  // extra 8 bytes when size == 1
 constexpr std::uint32_t kBitsPerByte = 8U;
+constexpr std::size_t kWordLen = 4;  // a 32-bit big-endian word
 
-auto ReadBe32(const std::uint8_t* p) -> std::uint32_t {
-    return (static_cast<std::uint32_t>(p[0]) << (kBitsPerByte * 3)) |
-           (static_cast<std::uint32_t>(p[1]) << (kBitsPerByte * 2)) |
-           (static_cast<std::uint32_t>(p[2]) << kBitsPerByte) | static_cast<std::uint32_t>(p[3]);
+// Bytes read from the start of an mvhd body — enough to cover the v1 prefix
+// (the longest), so both v0 and v1 fields are in `buf`.
+constexpr std::size_t kMvhdReadLen = 32;
+// Field byte offsets within that buffer (see ParseMvhdDuration).
+constexpr std::size_t kMvhdV1TimescaleOff = 20;
+constexpr std::size_t kMvhdV1DurationOff = 24;
+constexpr std::size_t kMvhdV0TimescaleOff = 12;
+constexpr std::size_t kMvhdV0DurationOff = 16;
+
+auto ReadBe32(const std::uint8_t* bytes) -> std::uint32_t {
+    return (static_cast<std::uint32_t>(bytes[0]) << (kBitsPerByte * 3)) |
+           (static_cast<std::uint32_t>(bytes[1]) << (kBitsPerByte * 2)) |
+           (static_cast<std::uint32_t>(bytes[2]) << kBitsPerByte) |
+           static_cast<std::uint32_t>(bytes[3]);
 }
 
-auto ReadBe64(const std::uint8_t* p) -> std::uint64_t {
-    std::uint64_t hi = ReadBe32(p);
-    std::uint64_t lo = ReadBe32(p + 4);
-    return (hi << (kBitsPerByte * 4)) | lo;
+auto ReadBe64(const std::uint8_t* bytes) -> std::uint64_t {
+    const std::uint64_t high = ReadBe32(bytes);
+    const std::uint64_t low = ReadBe32(bytes + kWordLen);
+    return (high << (kBitsPerByte * kWordLen)) | low;
 }
 
 // Read the mvhd box body (already positioned past its header) and return the
@@ -35,7 +46,7 @@ auto ReadBe64(const std::uint8_t* p) -> std::uint64_t {
 // they are 4 bytes each and duration is 4 bytes. timescale is always 4 bytes and
 // sits right after the two time fields.
 auto ParseMvhdDuration(std::ifstream& file, std::uint64_t body_len) -> std::uint64_t {
-    std::array<std::uint8_t, 32> buf{};
+    std::array<std::uint8_t, kMvhdReadLen> buf{};
     const std::size_t want = buf.size();
     if (body_len < want) {
         return 0;
@@ -49,12 +60,12 @@ auto ParseMvhdDuration(std::ifstream& file, std::uint64_t body_len) -> std::uint
     std::uint64_t duration = 0;
     if (version == 1) {
         // [4 ver+flags][8 ctime][8 mtime][4 timescale][8 duration]
-        timescale = ReadBe32(buf.data() + 20);
-        duration = ReadBe64(buf.data() + 24);
+        timescale = ReadBe32(buf.data() + kMvhdV1TimescaleOff);
+        duration = ReadBe64(buf.data() + kMvhdV1DurationOff);
     } else {
         // [4 ver+flags][4 ctime][4 mtime][4 timescale][4 duration]
-        timescale = ReadBe32(buf.data() + 12);
-        duration = ReadBe32(buf.data() + 16);
+        timescale = ReadBe32(buf.data() + kMvhdV0TimescaleOff);
+        duration = ReadBe32(buf.data() + kMvhdV0DurationOff);
     }
     if (timescale == 0) {
         return 0;

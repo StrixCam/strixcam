@@ -20,9 +20,13 @@ constexpr std::size_t kCadenceCamera = 0;
 PipelineOrchestrator::PipelineOrchestrator(
     std::vector<CameraChain> cameras,
     std::unique_ptr<sst::processing::IPostprocessor> postprocessor,
-    std::unique_ptr<sst::decision::IDecision> decision, sst::buffer::IFrameSink& record_sink,
-    sst::buffer::IFrameSink& stream_sink, PipelineConfig config,
-    sst::storage::IRawCaptureSink* raw_sink, sst::overlay::IOverlayFrameSource* overlay_source)
+    std::unique_ptr<sst::decision::IDecision> decision,
+    // NOLINTBEGIN(bugprone-easily-swappable-parameters) // floor-ok: clean L1 vs overlaid stream
+    // are distinct sinks
+    sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
+    // NOLINTEND(bugprone-easily-swappable-parameters)
+    PipelineConfig config, sst::storage::IRawCaptureSink* raw_sink,
+    sst::overlay::IOverlayFrameSource* overlay_source)
     : cameras_(std::move(cameras)),
       postprocessor_(std::move(postprocessor)),
       decision_(std::move(decision)),

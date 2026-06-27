@@ -38,10 +38,10 @@ auto InterfaceRunning(const std::string& iface) -> bool {
     ifreq ifr{};
     std::strncpy(static_cast<char*>(ifr.ifr_name), iface.c_str(), IFNAMSIZ - 1);
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-vararg)
-    const bool ok = ::ioctl(sock, SIOCGIFFLAGS, &ifr) == 0 && (ifr.ifr_flags & IFF_UP) != 0 &&
-                    (ifr.ifr_flags & IFF_RUNNING) != 0;
+    const bool running = ::ioctl(sock, SIOCGIFFLAGS, &ifr) == 0 && (ifr.ifr_flags & IFF_UP) != 0 &&
+                         (ifr.ifr_flags & IFF_RUNNING) != 0;
     ::close(sock);
-    return ok;
+    return running;
 }
 
 auto WaitInterfaceRunning(const std::string& iface) -> bool {
