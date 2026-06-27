@@ -86,11 +86,12 @@ IDENTITY_CHANGED="no"
 # 7.2 base flash does NOT already ship. SOURCE OF TRUTH for this list:
 # .devcontainer/sysroot/003_install_extra_pkgs.sh — the packages it ADDS to the
 # build sysroot whose *runtime* is not in the L4T r39.2 sample rootfs. protobuf
-# and opencv runtime ARE in the rootfs (that script says so) → not listed here;
-# sdbus-c++ (BLE control plane) and gst-rtsp-server (app RTSP) are full adds and
-# must be installed on the device or the binary fails to load (exit 127). Keep in
-# sync with that script; deploy/install-test.sh guards against drift.
-RUNTIME_DEPS=(libsdbus-c++1 libgstrtspserver-1.0-0)
+# and the opencv core/imgproc/imgcodecs runtime ARE in the rootfs (that script
+# says so) → not listed here; sdbus-c++ (BLE control plane), gst-rtsp-server (app
+# RTSP) and opencv-videoio (the #6 F6c overlay-burn decode/encode, ffmpeg-backed)
+# are full adds and must be installed on the device or the binary fails to load
+# (exit 127). Keep in sync with that script; deploy/install-test.sh guards drift.
+RUNTIME_DEPS=(libsdbus-c++1 libgstrtspserver-1.0-0 libopencv-videoio406t64)
 
 VERSION="latest"        # tag selector (default)
 WANT_SHA=""             # --sha256 selector / verifier
