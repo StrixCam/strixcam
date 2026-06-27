@@ -16,9 +16,11 @@
 #include "adapters/control/wifi/wpa_supplicant/ip-network-configurator.hpp"
 #include "adapters/control/wifi/wpa_supplicant/wpa-wifi-manager.hpp"
 #include "adapters/network/http/http-download-server.hpp"
+#include "adapters/overlay/burn/opencv-overlay-burner.hpp"
 #include "adapters/overlay/caching/caching-overlay-sink.hpp"
 #include "adapters/overlay/cairo/cairo-overlay-renderer.hpp"
 #include "adapters/overlay/timeline/filesystem-overlay-timeline-recorder.hpp"
+#include "adapters/overlay/timeline/overlay-timeline-loader.hpp"
 #include "adapters/processing/opencv/opencv-postprocessor.hpp"
 #include "adapters/processing/opencv/opencv-preprocessor.hpp"
 #include "adapters/storage/filesystem/filesystem-disk-guard.hpp"
@@ -32,6 +34,7 @@
 #include "app/control/services/dispatcher/command-dispatcher.hpp"
 #include "app/control/services/handlers/device.handler.hpp"
 #include "app/control/services/handlers/download.handler.hpp"
+#include "app/control/services/handlers/export-burn.handler.hpp"
 #include "app/control/services/handlers/match-state.handler.hpp"
 #include "app/control/services/handlers/match.handler.hpp"
 #include "app/control/services/handlers/overlay.handler.hpp"
@@ -182,6 +185,28 @@ auto RunFirmware() -> int {
             return download_server.ResolveThumbnailPath(recording_id);
         });
 
+    // ── Overlay export (on-demand burn, #6 F6c) ─────────────────────────
+    // Burns the recorded overlay timeline onto a clean L1 into an L2 living
+    // OUTSIDE the video root (so it never shows up in the recordings list),
+    // tokened for download exactly like a normal recording.
+    sst::adapters::overlay::OpenCvOverlayBurner overlay_burner;
+    sst::exportjob::ExportJobManager export_manager(
+        overlay_burner,
+        [&download_server](const std::string& recording_id) {
+            return download_server.ResolveRecordingPath(recording_id);
+        },
+        [](const std::filesystem::path& l1_path) {
+            const auto timeline_path =
+                l1_path.parent_path() / (l1_path.stem().string() + ".timeline.json");
+            return sst::adapters::overlay::LoadOverlayTimeline(timeline_path)
+                .value_or(sst::overlay::OverlayTimeline{});
+        },
+        [&download_server](const std::filesystem::path& l2_path, const std::string& job_id) {
+            return download_server.MintTokenForFile(
+                l2_path, job_id, sst::runtime_defaults::kDownloadTokenTtlSeconds);
+        },
+        video_root.parent_path() / "exports");
+
     // ── System stats (telemetry source) ────────────────────────────────
     sst::adapters::control::ProcSystemStats system_stats(video_root);
 
@@ -223,6 +248,13 @@ auto RunFirmware() -> int {
     dispatcher.Register(std::make_shared<sst::control::DownloadHandler>(
         download_server, sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort,
         sst::runtime_defaults::kDownloadTokenTtlSeconds));
+    dispatcher.Register(std::make_shared<sst::control::ExportBurnHandler>(
+        export_manager,
+        [&recording_service, &streaming_service] {
+            return recording_service.CurrentState() != sst::storage::RecordingState::kIdle ||
+                   !streaming_service.ListActivePlatformStreams().empty();
+        },
+        sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort));
 
     // ── BLE transport ──────────────────────────────────────────────────
     const std::string advertised_name = sst::control::MakeAdvertisedName(
