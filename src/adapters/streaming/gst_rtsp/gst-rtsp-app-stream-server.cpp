@@ -38,6 +38,11 @@ auto BuildLaunch(const sst::streaming::AppStreamConfig& cfg) -> std::string {
         "( appsrc name={src} is-live=true format=time do-timestamp=true "
         "    caps=\"video/x-raw,format=BGR,width={w},height={h},framerate={fps}/1\" "
         "  ! videoconvert "
+        // Force 4:2:0 (I420). videoconvert otherwise hands x264enc a 4:4:4 frame
+        // (from BGR), which H.264 baseline rejects ("baseline profile doesn't
+        // support 4:4:4") — the encoder then emits nothing and the client gets no
+        // video. I420 is the universally-decodable H.264 chroma the app expects.
+        "  ! video/x-raw,format=I420 "
         "  ! queue leaky=downstream max-size-buffers=2 "
         "  ! x264enc speed-preset=ultrafast tune=zerolatency bitrate={brk} key-int-max={gik} "
         "  ! h264parse config-interval=1 "
