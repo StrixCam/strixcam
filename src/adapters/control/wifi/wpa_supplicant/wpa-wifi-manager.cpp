@@ -30,7 +30,11 @@ constexpr std::size_t kRecvBufSize = 4096;
 constexpr auto kRecvTimeout = std::chrono::seconds{2};
 constexpr const char* kGoIpAddress = "192.168.49.1";
 constexpr const char* kGoRole = "GO";
-constexpr int kMaxEventReads = 20;
+// Budget for skipping unsolicited events while scanning for a command reply or
+// a target event. After ATTACH + P2P_GROUP_REMOVE the socket can carry a burst
+// of events, so this must be comfortably larger than that burst or a real reply
+// (P2P_GROUP_ADD's OK) gets dropped as "<no reply>".
+constexpr int kMaxEventReads = 48;
 
 auto StartsWith(const std::string& text, std::string_view prefix) -> bool {
     return text.size() >= prefix.size() &&
@@ -227,6 +231,22 @@ auto WpaWifiManager::ReadUntil(std::string_view marker) const -> std::optional<s
     return std::nullopt;
 }
 
+auto WpaWifiManager::DrainPendingEvents() const -> void {
+    if (sock_ < 0) {
+        return;
+    }
+    // Non-blocking: discard any queued unsolicited events so the next command's
+    // reply is found within SendCommand's event budget. Bounded so a continuous
+    // event stream can't spin here forever.
+    for (int i = 0; i < kMaxEventReads; ++i) {
+        std::array<char, kRecvBufSize> buf{};
+        const auto bytes = ::recv(sock_, buf.data(), buf.size() - 1, MSG_DONTWAIT);
+        if (bytes <= 0) {
+            break;  // EAGAIN/EWOULDBLOCK (nothing pending) or closed
+        }
+    }
+}
+
 auto WpaWifiManager::StartP2pGroupOwner() -> std::optional<sst::network::WifiDirectGroup> {
     std::lock_guard lock(mtx_);
     if (!OpenCtrlSocket()) {
@@ -251,11 +271,16 @@ auto WpaWifiManager::StartP2pGroupOwner() -> std::optional<sst::network::WifiDir
     // unsolicited events ATTACH just turned on (and the P2P_GROUP_REMOVE flush),
     // so SendCommand exhausts its event-skip budget before the reply — the
     // "wifi failed on first connect, works on reconnect" symptom. Retry the
-    // whole add+await sequence, cleaning any partial group between tries.
-    constexpr int kGroupAddAttempts = 3;
-    constexpr auto kGroupAddRetryDelay = std::chrono::milliseconds(400);
+    // whole add+await sequence, cleaning any partial group between tries. The
+    // radio (NO-CARRIER until the GO comes up) needs ~1-2s to form a group, so
+    // the retry delay is generous rather than spinning.
+    constexpr int kGroupAddAttempts = 5;
+    constexpr auto kGroupAddRetryDelay = std::chrono::seconds(1);
     std::optional<ParsedGroup> parsed;
     for (int attempt = 1; attempt <= kGroupAddAttempts; ++attempt) {
+        // Flush any backlog of unsolicited events first so this attempt's OK
+        // reply isn't skipped past by SendCommand's event budget.
+        DrainPendingEvents();
         auto reply = SendCommand("P2P_GROUP_ADD");
         if (reply && StartsWith(*reply, "OK")) {
             if (auto event = ReadUntil("P2P-GROUP-STARTED")) {

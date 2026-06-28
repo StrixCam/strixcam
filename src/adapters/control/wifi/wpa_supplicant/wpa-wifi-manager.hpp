@@ -60,6 +60,9 @@ class WpaWifiManager final : public sst::control::IWifiManager {
     // Read datagrams until one contains `marker` (up to a bounded number of
     // reads) — used to capture the async P2P-GROUP-STARTED event.
     auto ReadUntil(std::string_view marker) const -> std::optional<std::string>;
+    // Non-blocking flush of any queued unsolicited events, so a following
+    // command's reply is not skipped past by the event budget.
+    auto DrainPendingEvents() const -> void;
 
     std::string iface_;
     std::string ctrl_dir_;
