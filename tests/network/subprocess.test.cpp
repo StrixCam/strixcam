@@ -31,10 +31,10 @@ TEST(SubprocessTest, CaptureReturnsStdout) {
 // bound under test.
 TEST(SubprocessTest, RunTimesOutAndReturnsFailureWithinBound) {
     const auto start = std::chrono::steady_clock::now();
-    const bool ok = RunBounded({"sleep", "30"}, 1s);
+    const bool succeeded = RunBounded({"sleep", "30"}, 1s);
     const auto elapsed = std::chrono::steady_clock::now() - start;
 
-    EXPECT_FALSE(ok);
+    EXPECT_FALSE(succeeded);
     // Returned on the deadline, not after the full 30s sleep (generous ceiling
     // to stay non-flaky on a loaded runner).
     EXPECT_LT(elapsed, 10s);
