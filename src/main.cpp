@@ -18,6 +18,7 @@
 #include "adapters/control/wifi/wpa_supplicant/ip-network-configurator.hpp"
 #include "adapters/control/wifi/wpa_supplicant/wpa-wifi-manager.hpp"
 #include "adapters/network/http/http-download-server.hpp"
+#include "adapters/network/json/json-uplink-store.hpp"
 #include "adapters/overlay/burn/opencv-overlay-burner.hpp"
 #include "adapters/overlay/caching/caching-overlay-sink.hpp"
 #include "adapters/overlay/cairo/cairo-overlay-renderer.hpp"
@@ -167,6 +168,8 @@ auto RunFirmware() -> int {
     sst::adapters::control::NmcliUplinkConfigurator uplink_configurator;
     sst::adapters::control::IpRouteUplinkProbe uplink_probe;
     sst::network::UplinkManager uplink_manager(uplink_configurator);
+    sst::adapters::network::JsonUplinkStore uplink_store(std::string(sst::paths::kConfigDir) +
+                                                         "/uplink.json");
     uplink_manager.Apply(cfg.uplink);  // bring up enabled uplinks on boot
 
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
@@ -326,8 +329,8 @@ auto RunFirmware() -> int {
     dispatcher.Register(std::make_shared<sst::control::PreviewLayoutHandler>(
         preview_layout_state, sst::runtime_defaults::kOverlayWidth,
         sst::runtime_defaults::kOverlayHeight));
-    dispatcher.Register(std::make_shared<sst::control::NetworkHandler>(
-        uplink_manager, std::string(sst::paths::kConfigDir) + "/uplink.json", cfg.uplink));
+    dispatcher.Register(
+        std::make_shared<sst::control::NetworkHandler>(uplink_manager, uplink_store, cfg.uplink));
 
     // On-demand thumbnail: snapshot the latest pipeline frame + encode to JPEG
     // in memory. Registered here (after the pipeline exists) but before the BLE

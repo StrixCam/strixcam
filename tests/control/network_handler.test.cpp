@@ -1,24 +1,30 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <filesystem>
+#include <optional>
 
 #include "app/control/services/handlers/network.handler.hpp"
 #include "app/network/ports/uplink-configurator.hpp"
+#include "app/network/ports/uplink-store.hpp"
 #include "app/network/services/uplink-manager/uplink-manager.hpp"
 #include "bluetooth.pb.h"
 #include "domain/config/models/uplink-config.hpp"
 
 namespace {
 
-namespace fs = std::filesystem;
-
+// Configurator whose ethernet apply outcome is parameterizable, so a test can
+// drive both the success and the apply-failure path.
 class FakeConfigurator final : public sst::network::IUplinkConfigurator {
    public:
+    explicit FakeConfigurator(bool ethernet_apply_ok = true)
+        : ethernet_apply_ok_(ethernet_apply_ok) {}
+
     auto ApplyEthernet(const sst::config::EthernetUplink& /*cfg*/)
         -> sst::network::UplinkResult override {
         ++ethernet_calls;
-        return {.ok = true, .detail = "10.10.1.30/24"};
+        return ethernet_apply_ok_
+                   ? sst::network::UplinkResult{.ok = true, .detail = "10.10.1.30/24"}
+                   : sst::network::UplinkResult{.ok = false, .detail = "nmcli con up failed"};
     }
     auto ApplyWifiSta(const sst::config::WifiStaUplink& /*cfg*/)
         -> sst::network::UplinkResult override {
@@ -31,12 +37,29 @@ class FakeConfigurator final : public sst::network::IUplinkConfigurator {
         return {.ok = false, .detail = "unavailable"};
     }
     int ethernet_calls{0};
+
+   private:
+    bool ethernet_apply_ok_;
+};
+
+// In-memory store: records what (if anything) was persisted, so a test can
+// assert a bad config is NOT persisted as authoritative.
+class FakeStore final : public sst::network::IUplinkStore {
+   public:
+    auto Persist(const sst::config::UplinkData& data) -> bool override {
+        ++persist_calls;
+        last = data;
+        return true;
+    }
+    int persist_calls{0};
+    std::optional<sst::config::UplinkData> last;
 };
 
 TEST(NetworkHandlerTest, HandlesSetAndGet) {
     FakeConfigurator configurator;
     sst::network::UplinkManager manager(configurator);
-    sst::control::NetworkHandler handler(manager, "/tmp/ignored.json", {});
+    FakeStore store;
+    sst::control::NetworkHandler handler(manager, store, {});
 
     const auto cases = handler.HandledCases();
     EXPECT_NE(std::find(cases.begin(), cases.end(), sst_cam::Command::kSetNetworkConfig),
@@ -46,11 +69,10 @@ TEST(NetworkHandlerTest, HandlesSetAndGet) {
 }
 
 TEST(NetworkHandlerTest, SetAppliesPersistsAndEchoesStatus) {
-    const fs::path path = fs::path{::testing::TempDir()} / "uplink-handler-test.json";
-    fs::remove(path);
     FakeConfigurator configurator;
     sst::network::UplinkManager manager(configurator);
-    sst::control::NetworkHandler handler(manager, path.string(), {});
+    FakeStore store;
+    sst::control::NetworkHandler handler(manager, store, {});
 
     sst_cam::Command cmd;
     auto* eth = cmd.mutable_set_network_config()->mutable_config()->mutable_ethernet();
@@ -72,22 +94,44 @@ TEST(NetworkHandlerTest, SetAppliesPersistsAndEchoesStatus) {
     // Live status (probed, not the apply result).
     EXPECT_TRUE(resp.network_config().ethernet_up());
     EXPECT_EQ(resp.network_config().ethernet_address(), "10.10.1.30/24");
-    // Applied + persisted.
+    // Applied + persisted (apply succeeded).
     EXPECT_EQ(configurator.ethernet_calls, 1);
-    EXPECT_TRUE(fs::exists(path));
+    EXPECT_EQ(store.persist_calls, 1);
+}
 
-    fs::remove(path);
+// Apply fails for an ENABLED ethernet interface -> the response must NOT be a
+// plain OK/green, and the bad config must NOT be persisted as authoritative.
+TEST(NetworkHandlerTest, SetWithFailedApplyReportsErrorAndDoesNotPersist) {
+    FakeConfigurator configurator(/*ethernet_apply_ok=*/false);
+    sst::network::UplinkManager manager(configurator);
+    FakeStore store;
+    sst::control::NetworkHandler handler(manager, store, {});
+
+    sst_cam::Command cmd;
+    auto* eth = cmd.mutable_set_network_config()->mutable_config()->mutable_ethernet();
+    eth->set_enabled(true);
+    eth->set_dhcp(false);
+    eth->set_address("10.10.1.30/24");
+    eth->set_gateway("192.168.99.1");  // off-subnet -> con up fails
+
+    const auto resp = handler.Handle(cmd);
+
+    EXPECT_EQ(configurator.ethernet_calls, 1);              // it did attempt the apply
+    EXPECT_NE(resp.status(), sst_cam::ResponseStatus::OK);  // not a false green
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
+    EXPECT_EQ(store.persist_calls, 0);  // bad config not persisted as good
 }
 
 TEST(NetworkHandlerTest, GetReturnsInitialConfigWithoutApplying) {
     FakeConfigurator configurator;
     sst::network::UplinkManager manager(configurator);
+    FakeStore store;
 
     sst::config::UplinkData initial;
     initial.ethernet.enabled = true;
     initial.ethernet.address = "192.168.0.5/24";
 
-    sst::control::NetworkHandler handler(manager, "/tmp/ignored.json", initial);
+    sst::control::NetworkHandler handler(manager, store, initial);
 
     sst_cam::Command cmd;
     cmd.mutable_get_network_config();
