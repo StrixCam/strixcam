@@ -9,7 +9,12 @@ namespace sst::control {
 
 namespace {
 // Bump on any breaking wire-schema change (proto/README.md versioning policy).
-constexpr std::uint32_t kProtocolVersion = 1;
+// v2: added the network-config command surface — commands 42 (SetNetworkConfig)
+// + 43 (GetNetworkConfig) and response slot 26 (NetworkConfigResponse). New
+// capability, not a field addition, so the app gates the Network Settings page
+// on protocol_version >= 2 (an older firmware returns UNSUPPORTED with no
+// positive signal otherwise).
+constexpr std::uint32_t kProtocolVersion = 2;
 }  // namespace
 
 DeviceHandler::DeviceHandler(sst::config::DeviceData device, ISystemStats& stats,
