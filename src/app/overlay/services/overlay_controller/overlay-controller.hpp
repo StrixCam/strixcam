@@ -28,6 +28,12 @@ class OverlayController {
 
     auto SetLayout(OverlayLayout layout) -> void;
     auto SetBindingData(const BindingData& data) -> void;
+
+    // Remove the overlay from the live preview: drop the sink's cached frame so
+    // the pipeline composites nothing. The layout/binding are kept, so the next
+    // Refresh (e.g. at kickoff) re-renders and the board reappears. Used when a
+    // match ends or a new match is configured (no active match -> no overlay).
+    auto Clear() -> void;
     auto ActivateBanner(const std::string& template_id,
                         const std::map<std::string, std::string>& params,
                         std::uint32_t duration_s_override, std::uint64_t now_ms) -> bool;

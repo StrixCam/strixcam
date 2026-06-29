@@ -4,7 +4,9 @@
 
 namespace sst::control {
 
-SessionHandler::SessionHandler(sst::session::ISessionManager& session) : session_(session) {}
+SessionHandler::SessionHandler(sst::session::ISessionManager& session,
+                               sst::overlay::OverlayController& controller)
+    : session_(session), controller_(controller) {}
 
 auto SessionHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kPushSessionConfig};
@@ -32,6 +34,10 @@ auto SessionHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResp
 
     sst_cam::CommandResponse resp;
     if (session_.ApplySessionConfig(config)) {
+        // Configuring a match clears the overlay: a previous match's scoreboard
+        // is removed from the live preview, and the board only reappears at
+        // kickoff (no active match -> no overlay).
+        controller_.Clear();
         resp.set_status(sst_cam::ResponseStatus::OK);
     } else {
         resp.set_status(sst_cam::ResponseStatus::ERROR);

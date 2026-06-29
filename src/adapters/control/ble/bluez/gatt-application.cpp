@@ -134,12 +134,27 @@ auto GattApplication::BuildResponseChar() -> void {
     });
 
     response_obj_->registerMethod("StopNotify").onInterface(kIfaceGattChar).implementedAs([this] {
-        std::lock_guard lock(mtx_);
-        notifying_ = false;
+        std::function<void()> on_unsubscribe;
+        {
+            std::lock_guard lock(mtx_);
+            notifying_ = false;
+            on_unsubscribe = on_unsubscribe_;
+        }
         spdlog::info("GattApplication: StopNotify on response char");
+        // Central unsubscribed — BlueZ fires this on disconnect. Surface it so
+        // the transport resumes advertising. Called outside the lock; the handler
+        // must be non-blocking (it hands off to a worker thread).
+        if (on_unsubscribe) {
+            on_unsubscribe();
+        }
     });
 
     response_obj_->finishRegistration();
+}
+
+auto GattApplication::SetOnUnsubscribe(std::function<void()> handler) -> void {
+    std::lock_guard lock(mtx_);
+    on_unsubscribe_ = std::move(handler);
 }
 
 auto GattApplication::SendNotification(const std::vector<std::uint8_t>& bytes) -> void {

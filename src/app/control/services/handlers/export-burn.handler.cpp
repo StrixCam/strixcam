@@ -59,7 +59,9 @@ auto ExportBurnHandler::HandleExport(const sst_cam::ExportOverlayedCommand& cmd)
         resp.set_error_message("cannot export while a match is live");
         return resp;
     }
-    const std::string job_id = manager_.RequestExport(cmd.recording_id());
+    // Pass the live gate through so the worker re-checks it just before encoding
+    // (the check above is only a point-in-time read).
+    const std::string job_id = manager_.RequestExport(cmd.recording_id(), is_live_);
     resp.set_status(sst_cam::ResponseStatus::OK);
     auto* job = resp.mutable_export_job();
     job->set_job_id(job_id);

@@ -1,6 +1,7 @@
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
 
 #include <fmt/format.h>
+#include <spdlog/spdlog.h>
 
 #include <utility>
 
@@ -19,6 +20,17 @@ auto OverlayController::SetLayout(OverlayLayout layout) -> void {
 auto OverlayController::SetBindingData(const BindingData& data) -> void {
     std::lock_guard lock(mtx_);
     scene_.SetBindingData(data);
+}
+
+auto OverlayController::Clear() -> void {
+    std::lock_guard lock(mtx_);
+    spdlog::info("OverlayController: clearing overlay (push_count={})", push_count_);
+    sink_.Clear();
+    // Force the next Refresh to push even if the resolved scene matches what was
+    // last pushed before clearing — otherwise the signature gate would suppress
+    // the re-render and the board wouldn't come back at kickoff.
+    pushed_once_ = false;
+    last_signature_.clear();
 }
 
 auto OverlayController::ActivateBanner(const std::string& template_id,

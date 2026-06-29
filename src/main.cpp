@@ -147,7 +147,12 @@ auto RunFirmware() -> int {
     // ── WiFi Direct + DHCP ─────────────────────────────────────────────
     // "auto": detect the interface at runtime (names vary per board —
     // wlP1p1s0 on this Jetson, not wlan0). See ResolveWifiInterface.
-    sst::adapters::control::WpaWifiManager wifi_manager;
+    // The `sst-cam-NNNN` name doubles as the P2P SSID postfix, so the WiFi-Direct
+    // SSID (`DIRECT-XY-sst-cam-NNNN`) is recognizably the same camera as BLE.
+    const std::string advertised_name = sst::control::MakeAdvertisedName(
+        sst::control::DeriveUnitNumber(cfg.device.serial_number.value_or("")));
+    sst::adapters::control::WpaWifiManager wifi_manager("auto", "/run/wpa_supplicant",
+                                                        advertised_name);
     sst::adapters::control::IpNetworkConfigurator network_configurator;
     sst::adapters::control::DnsmasqDhcpServer dhcp_server;
 
@@ -232,7 +237,8 @@ auto RunFirmware() -> int {
         [&streaming_service] { return !streaming_service.ListActivePlatformStreams().empty(); },
         [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
         [&wifi_manager] { return wifi_manager.State(); }));
-    dispatcher.Register(std::make_shared<sst::control::SessionHandler>(session_manager));
+    dispatcher.Register(
+        std::make_shared<sst::control::SessionHandler>(session_manager, overlay_controller));
     dispatcher.Register(std::make_shared<sst::control::WifiDirectHandler>(
         session_manager, wifi_manager, network_configurator, dhcp_server, streaming_service,
         sst::control::PreviewPort{sst::runtime_defaults::kPreviewPort},
@@ -259,8 +265,7 @@ auto RunFirmware() -> int {
         sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort));
 
     // ── BLE transport ──────────────────────────────────────────────────
-    const std::string advertised_name = sst::control::MakeAdvertisedName(
-        sst::control::DeriveUnitNumber(cfg.device.serial_number.value_or("")));
+    // advertised_name computed above (shared with the WiFi-Direct SSID postfix).
     sst::adapters::control::BluezBleTransport ble_transport(advertised_name);
     ble_transport.SetOnCommand(
         [&dispatcher](const sst_cam::Command& cmd) { return dispatcher.Dispatch(cmd); });

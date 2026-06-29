@@ -2,6 +2,7 @@
 // and the command/response mapping over a job manager with a fake burner.
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <optional>
@@ -26,7 +27,7 @@ constexpr std::uint32_t kDownloadPort = 8080;
 class FakeBurner final : public sst::overlay::IOverlayBurner {
    public:
     auto Burn(const fs::path& /*l1*/, const sst::overlay::OverlayTimeline& /*timeline*/,
-              const fs::path& /*l2*/) -> bool override {
+              const fs::path& /*l2*/, const std::atomic<bool>& /*cancel*/) -> bool override {
         return true;
     }
 };

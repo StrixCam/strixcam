@@ -490,6 +490,86 @@ ensure_camera_overlay() {
   log "Camera: overlay installed -> ${merged} (reboot required to load it)."
 }
 
+# systemd unit for the dedicated wpa_supplicant that owns the WiFi-Direct radio.
+wpa_p2p_unit() {  # <iface>
+  cat <<UNIT
+[Unit]
+Description=SST Cam dedicated wpa_supplicant for WiFi-Direct ($1)
+After=NetworkManager.service
+Before=sst-cam-firmware.service
+[Service]
+Type=forking
+ExecStartPre=-/usr/bin/pkill -f "wpa_supplicant.*sst-p2p.conf"
+ExecStartPre=-/usr/sbin/ip link set $1 up
+ExecStart=/usr/sbin/wpa_supplicant -B -D nl80211 -i $1 -c /etc/wpa_supplicant/sst-p2p.conf -O /run/wpa_supplicant
+# The ctrl socket is created root:root; the firmware runs as sst-cam (in netdev),
+# so hand the socket to the netdev group it can reach.
+ExecStartPost=/bin/sh -c 'sleep 1; chgrp -R netdev /run/wpa_supplicant && chmod 750 /run/wpa_supplicant'
+Restart=on-failure
+RestartSec=3
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
+# Dedicate the WiFi radio to WiFi-Direct (the camera's GO for the app). The
+# camera's uplink/internet is ethernet or a configured STA on a SEPARATE plane;
+# the WiFi-Direct radio must NOT be touched by NetworkManager, which otherwise
+# auto-joins saved networks and tears the GO down. We mark the interface
+# NM-unmanaged and run our own wpa_supplicant instance whose ctrl socket the
+# firmware drives. Idempotent.
+ensure_wifi_direct_provisioning() {
+  local iface
+  iface="$(iw dev 2>/dev/null | awk '/Interface/ {print $2; exit}')"
+  iface="${iface:-wlP1p1s0}"
+
+  local changed="no"
+
+  # 1. NetworkManager: leave the WiFi-Direct radio alone.
+  local nm_conf="/etc/NetworkManager/conf.d/99-sst-cam-wifi-direct.conf"
+  local nm_want
+  nm_want="$(printf '[keyfile]\nunmanaged-devices=interface-name:%s\n' "$iface")"
+  if [ "$(cat "$nm_conf" 2>/dev/null)" != "$nm_want" ]; then
+    printf '%s\n' "$nm_want" >"$nm_conf"
+    changed="yes"
+  fi
+
+  # 2. Dedicated wpa_supplicant config (P2P; ctrl socket group netdev).
+  local wpa_conf="/etc/wpa_supplicant/sst-p2p.conf"
+  local wpa_want
+  wpa_want="$(printf 'ctrl_interface=DIR=/run/wpa_supplicant GROUP=netdev\nupdate_config=1\ndevice_name=sst-cam\ndevice_type=1-0050F204-1\np2p_go_intent=15\n')"
+  if [ "$(cat "$wpa_conf" 2>/dev/null)" != "$wpa_want" ]; then
+    mkdir -p /etc/wpa_supplicant
+    printf '%s\n' "$wpa_want" >"$wpa_conf"
+    changed="yes"
+  fi
+
+  # 3. systemd unit for the dedicated wpa instance.
+  local unit_path="/etc/systemd/system/sst-cam-wpa-p2p.service"
+  local unit_want
+  unit_want="$(wpa_p2p_unit "$iface")"
+  if [ "$(cat "$unit_path" 2>/dev/null)" != "$unit_want" ]; then
+    printf '%s\n' "$unit_want" >"$unit_path"
+    systemctl daemon-reload
+    changed="yes"
+  fi
+
+  systemctl enable sst-cam-wpa-p2p.service >/dev/null 2>&1 || true
+  # Take the radio off NM now (the conf persists it across reboots) and bring the
+  # dedicated wpa up so the firmware can form its GO this run.
+  if command -v nmcli >/dev/null 2>&1; then
+    nmcli device set "$iface" managed no >/dev/null 2>&1 || true
+  fi
+  systemctl restart NetworkManager >/dev/null 2>&1 || true
+  systemctl restart sst-cam-wpa-p2p.service >/dev/null 2>&1 || true
+
+  if [ "$changed" = "yes" ]; then
+    log "WiFi-Direct: dedicated wpa_supplicant on $iface (NM-unmanaged)"
+  else
+    log "WiFi-Direct: provisioning already in place ($iface)"
+  fi
+}
+
 # Install the runtime shared-library packages the binary needs but a base JetPack
 # flash lacks. Idempotent: dpkg-query skips already-installed packages, so the
 # common (everything-present) path costs a few queries and no apt-get. Best-
@@ -546,6 +626,7 @@ if [ "$DO_SETUP" = "yes" ]; then
   ensure_setup
   ensure_device_identity
   ensure_camera_overlay
+  ensure_wifi_direct_provisioning
 fi
 # Runtime deps are about the binary, not host setup — install them even with
 # --no-setup so an unloadable binary is never deployed.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <opencv2/core.hpp>
 #include <optional>
 
 #include "app/processing/ports/frame-compositor.hpp"
@@ -22,6 +23,11 @@ class OpenCvSideBySideCompositor final : public sst::processing::IFrameComposito
    private:
     std::uint32_t output_width_;
     std::uint32_t output_height_;
+    // Reused output canvas — the compositor runs once per live frame on the
+    // single consumer thread, so a member buffer avoids re-allocating the full
+    // canvas (and the per-column temporaries) every frame. Not thread-safe by
+    // design: only the pipeline consumer loop calls CompositeSideBySide.
+    cv::Mat canvas_;
 };
 
 }  // namespace sst::adapters::processing

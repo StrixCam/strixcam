@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <filesystem>
 
 #include "domain/overlay/models/overlay-timeline.hpp"
@@ -22,10 +23,14 @@ class IOverlayBurner {
 
     // Decode `l1_path`, composite `timeline`, write the overlaid result to
     // `l2_path`. Returns true on success. On failure, `l2_path` must not be left
-    // as a partial/corrupt file (the implementation removes it).
+    // as a partial/corrupt file (the implementation removes it). `cancel` is
+    // polled during the encode; when it becomes true the burn aborts early
+    // (returns false, removes the partial L2) so shutdown isn't blocked on a
+    // long software encode.
     [[nodiscard]] virtual auto Burn(const std::filesystem::path& l1_path,
                                     const OverlayTimeline& timeline,
-                                    const std::filesystem::path& l2_path) -> bool = 0;
+                                    const std::filesystem::path& l2_path,
+                                    const std::atomic<bool>& cancel) -> bool = 0;
 };
 
 }  // namespace sst::overlay

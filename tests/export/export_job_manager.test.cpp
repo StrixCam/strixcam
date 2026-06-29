@@ -26,7 +26,7 @@ constexpr int kPollSleepMs = 5;
 class FakeBurner final : public sst::overlay::IOverlayBurner {
    public:
     auto Burn(const fs::path& l1_path, const sst::overlay::OverlayTimeline& /*timeline*/,
-              const fs::path& l2_path) -> bool override {
+              const fs::path& l2_path, const std::atomic<bool>& /*cancel*/) -> bool override {
         ++calls;
         last_l1 = l1_path;
         last_l2 = l2_path;

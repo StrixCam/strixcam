@@ -42,7 +42,10 @@ class FakeRenderer final : public IOverlayRenderer {
 };
 class FakeSink final : public IOverlaySink {
    public:
-    auto PushFrame(const RgbaImage& /*frame*/) -> void override {}
+    auto PushFrame(const RgbaImage& /*frame*/) -> void override { ++pushes; }
+    auto Clear() -> void override { ++clears; }
+    int pushes{0};
+    int clears{0};
 };
 class FakeCleanup final : public sst::session::ISessionCleanup {
    public:
@@ -92,6 +95,37 @@ auto MatchCtl(sst_cam::MatchControlAction action, std::uint32_t period = 0) -> s
     match_ctl->set_action(action);
     match_ctl->set_period(period);
     return cmd;
+}
+
+// Final whistle clears the overlay: a finished match has no active scoreboard,
+// so the live preview must not keep showing it.
+TEST(MatchHandlerTest, FinalWhistleClearsOverlay) {
+    Fixture fixture;
+    MatchHandler handler(fixture.sm, fixture.controller, [] { return std::uint64_t{0}; });
+
+    handler.Handle(MatchCtl(sst_cam::MATCH_KICKOFF, 1));
+    EXPECT_EQ(fixture.sink.clears, 0);
+    EXPECT_EQ(handler.Handle(MatchCtl(sst_cam::MATCH_FINAL_WHISTLE, 1)).status(),
+              sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(fixture.sink.clears, 1);
+}
+
+// After the final whistle the clock is stopped, so a 1 Hz clock tick must NOT
+// resurrect the overlay. Regression: TickClock keyed its refresh off
+// ApplyMatchUpdate's always-true return, re-pushing the board one tick after the
+// final-whistle clear (overlay flickered back ~1s after ending the match).
+TEST(MatchHandlerTest, TickAfterFinalWhistleDoesNotResurrectOverlay) {
+    Fixture fixture;
+    MatchHandler handler(fixture.sm, fixture.controller, [] { return std::uint64_t{0}; });
+
+    handler.Handle(MatchCtl(sst_cam::MATCH_KICKOFF, 1));
+    handler.Handle(MatchCtl(sst_cam::MATCH_FINAL_WHISTLE, 1));
+    const int pushes_after_whistle = fixture.sink.pushes;
+
+    handler.TickClock();
+    handler.TickClock();
+
+    EXPECT_EQ(fixture.sink.pushes, pushes_after_whistle);  // clock stopped -> no re-push
 }
 
 // ScoreUpdate maps team_id -> home/away and updates live match.

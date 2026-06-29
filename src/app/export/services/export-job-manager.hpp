@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -33,9 +34,10 @@ struct ExportJobView {
 // functions so the manager stays in the app layer (no adapter/network deps) and
 // is fully unit-testable with fakes.
 //
-// The live-session gate (#6: never burn while recording/streaming) is enforced
-// by the caller (ExportBurnHandler) BEFORE RequestExport — the manager assumes
-// it is safe to encode.
+// The live-session gate (#6: never burn while recording/streaming) is checked by
+// the caller (ExportBurnHandler) BEFORE RequestExport and RE-checked on the
+// worker just before encoding (via the optional `is_live` predicate) so a match
+// that starts in the gap still aborts the burn.
 class ExportJobManager {
    public:
     // recording_id -> the clean L1 file, or nullopt if unknown.
@@ -48,6 +50,9 @@ class ExportJobManager {
     // (L2 file, job id) -> a download token, or nullopt on failure.
     using TokenMinter = std::function<std::optional<sst::network::DownloadToken>(
         const std::filesystem::path& l2_path, const std::string& job_id)>;
+    // True while a match is live. Re-checked just before the burn starts so a
+    // recording that begins after the request still aborts the encode.
+    using LiveGate = std::function<bool()>;
 
     ExportJobManager(sst::overlay::IOverlayBurner& burner, PathResolver resolve,
                      TimelineLoader load_timeline, TokenMinter mint,
@@ -59,9 +64,12 @@ class ExportJobManager {
     ExportJobManager(ExportJobManager&&) = delete;
     auto operator=(ExportJobManager&&) -> ExportJobManager& = delete;
 
-    // Queue a burn for `recording_id`; returns the new job id immediately (the
-    // burn runs on a worker thread).
-    auto RequestExport(const std::string& recording_id) -> std::string;
+    // Queue a burn for `recording_id`; returns a job id immediately (the burn
+    // runs on a worker thread). If an unfinished/ready burn for the same
+    // recording already exists it is reused instead of spawning a duplicate.
+    // `is_live`, when set, is re-checked on the worker just before encoding so a
+    // match that goes live after the request aborts the burn.
+    auto RequestExport(const std::string& recording_id, LiveGate is_live = nullptr) -> std::string;
 
     // Current state of `job_id`, or nullopt if there is no such job.
     [[nodiscard]] auto Poll(const std::string& job_id) const -> std::optional<ExportJobView>;
@@ -71,13 +79,22 @@ class ExportJobManager {
         std::string id;
         std::string recording_id;
         std::atomic<ExportState> state{ExportState::kPending};
-        mutable std::mutex mtx;  // guards token/error
+        std::atomic<bool> cancel{false};  // set on shutdown to abort an in-flight burn
+        LiveGate is_live;                 // re-checked before encoding (may be null)
+        mutable std::mutex mtx;           // guards token/error
         std::optional<sst::network::DownloadToken> token;
         std::string error;
         std::thread worker;
     };
 
     void Run(Job& job);
+
+    // Cap retained jobs: drop the oldest finished ones (and their L2 files) so a
+    // long-lived camera doesn't accumulate jobs/threads/exports without bound.
+    // Caller must hold jobs_mtx_.
+    void EvictFinishedLocked();
+
+    static constexpr std::size_t kMaxJobs = 16;
 
     sst::overlay::IOverlayBurner& burner_;
     PathResolver resolve_;

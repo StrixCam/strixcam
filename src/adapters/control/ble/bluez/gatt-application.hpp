@@ -47,6 +47,13 @@ class GattApplication {
     // central via PropertiesChanged. Safe to call from any thread.
     auto SendNotification(const std::vector<std::uint8_t>& bytes) -> void;
 
+    // Invoked when the central unsubscribes from the response characteristic
+    // (StopNotify) — BlueZ fires this when a connected central disconnects, so
+    // the transport treats it as a disconnect (resume advertising + session
+    // cleanup). The callback runs ON the D-Bus event-loop thread; it must not
+    // block (the transport hands off to a worker).
+    auto SetOnUnsubscribe(std::function<void()> handler) -> void;
+
    private:
     auto BuildRoot() -> void;
     auto BuildService() -> void;
@@ -63,6 +70,7 @@ class GattApplication {
     std::string response_char_uuid_;
 
     OnCommandBytes on_command_;
+    std::function<void()> on_unsubscribe_;
 
     std::unique_ptr<sdbus::IObject> root_obj_;
     std::unique_ptr<sdbus::IObject> service_obj_;

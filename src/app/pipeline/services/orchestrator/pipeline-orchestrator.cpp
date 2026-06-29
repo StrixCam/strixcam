@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cstddef>
+#include <exception>
 #include <utility>
 
 #include "domain/buffer/services/materialize-frame.hpp"
@@ -223,15 +224,26 @@ auto PipelineOrchestrator::BuildStreamFrame(
         const std::size_t other_index = chosen_index == 0 ? 1 : 0;
         const auto& other_slot = latest[other_index];
         if (other_slot.has_value()) {
-            const sst::processing::CropRect full_frame{
-                .x = 0,
-                .y = 0,
-                .width = other_slot->source_frame.geometry.width,
-                .height = other_slot->source_frame.geometry.height};
-            if (auto right = postprocessor_->Process(other_slot->source_frame, full_frame)) {
-                if (auto composite = compositor_->CompositeSideBySide(clean_chosen, *right)) {
-                    return std::move(*composite);
+            // Postprocess + composite call into OpenCV, which throws on a
+            // zero-area or mismatched Mat. Catch here so one bad frame degrades
+            // to the clean single view instead of escaping the consumer thread
+            // and tearing down record + preview with it.
+            try {
+                const sst::processing::CropRect full_frame{
+                    .x = 0,
+                    .y = 0,
+                    .width = other_slot->source_frame.geometry.width,
+                    .height = other_slot->source_frame.geometry.height};
+                if (auto right = postprocessor_->Process(other_slot->source_frame, full_frame)) {
+                    if (auto composite = compositor_->CompositeSideBySide(clean_chosen, *right)) {
+                        return std::move(*composite);
+                    }
                 }
+            } catch (const std::exception& e) {
+                spdlog::warn(
+                    "PipelineOrchestrator: side-by-side composite failed ({}); "
+                    "falling back to single frame",
+                    e.what());
             }
         }
         return clean_chosen;

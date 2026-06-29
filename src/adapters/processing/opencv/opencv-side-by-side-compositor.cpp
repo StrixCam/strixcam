@@ -37,23 +37,26 @@ auto WrapBgr(const sst::capture::Frame& frame) -> cv::Mat {
     return wrapped;
 }
 
-// Letterbox `src` into a `col_width` x `col_height` black canvas, preserving
-// aspect ratio (centered). An empty `src` yields an all-black column.
-auto LetterboxColumn(const cv::Mat& src, int col_width, int col_height) -> cv::Mat {
-    cv::Mat column = cv::Mat::zeros(col_height, col_width, CV_8UC3);
+// Letterbox `src` directly into the column starting at `col_x` of width
+// `col_width` within `canvas` (already cleared to black), preserving aspect ratio
+// and centering. Resizes straight into the destination sub-region — no per-column
+// temporary Mats. An empty `src` leaves the (already-black) column untouched.
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters) floor-ok: column geometry, single call site
+void BlitLetterboxed(const cv::Mat& src, cv::Mat& canvas, int col_x, int col_width,
+                     int col_height) {
     if (src.empty()) {
-        return column;
+        return;
     }
     const double scale = std::min(static_cast<double>(col_width) / src.cols,
                                   static_cast<double>(col_height) / src.rows);
     const int scaled_width = std::max(1, static_cast<int>(src.cols * scale));
     const int scaled_height = std::max(1, static_cast<int>(src.rows * scale));
-    cv::Mat resized;
-    cv::resize(src, resized, cv::Size(scaled_width, scaled_height), 0, 0, cv::INTER_AREA);
-    const int x_offset = (col_width - scaled_width) / 2;
+    const int x_offset = col_x + (col_width - scaled_width) / 2;
     const int y_offset = (col_height - scaled_height) / 2;
-    resized.copyTo(column(cv::Rect(x_offset, y_offset, scaled_width, scaled_height)));
-    return column;
+    // dst is exactly scaled_width x scaled_height, so cv::resize writes in place
+    // into the canvas ROI rather than reallocating.
+    cv::Mat dst = canvas(cv::Rect(x_offset, y_offset, scaled_width, scaled_height));
+    cv::resize(src, dst, dst.size(), 0, 0, cv::INTER_AREA);
 }
 
 }  // namespace
@@ -76,21 +79,25 @@ auto OpenCvSideBySideCompositor::CompositeSideBySide(const sst::capture::Frame& 
     }
 
     const int canvas_height = static_cast<int>(output_height_);
+    const int canvas_width = static_cast<int>(output_width_);
     // Split the canvas evenly; an odd width gives the right column the extra
     // pixel so the two columns still sum to output_width_ exactly.
-    const int left_width = static_cast<int>(output_width_) / 2;
-    const int right_width = static_cast<int>(output_width_) - left_width;
+    const int left_width = canvas_width / 2;
+    const int right_width = canvas_width - left_width;
 
-    const cv::Mat left_col = LetterboxColumn(left_mat, left_width, canvas_height);
-    const cv::Mat right_col = LetterboxColumn(right_mat, right_width, canvas_height);
-
-    cv::Mat composite;
-    cv::hconcat(left_col, right_col, composite);
+    // Allocate the reusable canvas once, then clear to black for the letterbox
+    // bars and resize each camera straight into its column ROI.
+    if (canvas_.rows != canvas_height || canvas_.cols != canvas_width) {
+        canvas_.create(canvas_height, canvas_width, CV_8UC3);
+    }
+    canvas_.setTo(cv::Scalar::all(0));
+    BlitLetterboxed(left_mat, canvas_, 0, left_width, canvas_height);
+    BlitLetterboxed(right_mat, canvas_, left_width, right_width, canvas_height);
 
     // frame_id / timestamp follow the left (chosen) camera so downstream PTS
-    // stamping stays monotonic with the single-camera path.
-    return MakeOwnedFrame(composite, sst::common::PixelFormat::BGR8, left.frame_id,
-                          left.captured_at);
+    // stamping stays monotonic with the single-camera path. MakeOwnedFrame copies
+    // the canvas into owned bytes, so reusing canvas_ next frame is safe.
+    return MakeOwnedFrame(canvas_, sst::common::PixelFormat::BGR8, left.frame_id, left.captured_at);
 }
 
 }  // namespace sst::adapters::processing

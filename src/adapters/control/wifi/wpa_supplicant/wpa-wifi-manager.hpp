@@ -40,8 +40,12 @@ auto IsWpaUnsolicitedEvent(const std::string& msg) -> bool;
 class WpaWifiManager final : public sst::control::IWifiManager {
    public:
     // iface defaults to "auto" — resolved at connect time via ResolveWifiInterface.
+    // ssid_postfix names the P2P group owner: a non-empty value (the device's
+    // `sst-cam-NNNN` name) makes the GO SSID `DIRECT-XY-sst-cam-NNNN`, matching
+    // the BLE advertised name. Empty leaves wpa_supplicant's bare `DIRECT-XY`.
     explicit WpaWifiManager(std::string iface = "auto",
-                            std::string ctrl_dir = "/run/wpa_supplicant");
+                            std::string ctrl_dir = "/run/wpa_supplicant",
+                            std::string ssid_postfix = "");
     ~WpaWifiManager() override;
 
     WpaWifiManager(const WpaWifiManager&) = delete;
@@ -63,9 +67,21 @@ class WpaWifiManager final : public sst::control::IWifiManager {
     // Non-blocking flush of any queued unsolicited events, so a following
     // command's reply is not skipped past by the event budget.
     auto DrainPendingEvents() const -> void;
+    // Dedicate the radio to WiFi-Direct: drop any STA association and disable
+    // every saved station network so a single-radio STA can't steal the channel
+    // from the GO. Called before forming the group.
+    auto DisableStaNetworks() -> void;
+    // The stored persistent P2P network id whose SSID carries [ssid_postfix_],
+    // if one exists — reusing it keeps the SSID/PSK stable across re-forms.
+    // Returns nullopt when none is stored yet (first bring-up) or unnamed.
+    auto FindNamedPersistentGroupId() -> std::optional<std::string>;
+    // Run [add_cmd] (P2P_GROUP_ADD ...) with the retry/await-GROUP-STARTED dance
+    // and build the resulting group, or nullopt after exhausting attempts.
+    auto FormGroup(std::string_view add_cmd) -> std::optional<sst::network::WifiDirectGroup>;
 
     std::string iface_;
     std::string ctrl_dir_;
+    std::string ssid_postfix_;
     int sock_{-1};
     std::string local_path_;
 

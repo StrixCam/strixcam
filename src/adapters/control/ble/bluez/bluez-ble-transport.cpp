@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <future>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -203,6 +204,10 @@ auto BluezBleTransport::Start() -> void {
             std::string{sst::control::BootstrapDefaults::kGattResponseCharUuid},
             [this](std::vector<std::uint8_t> bytes) { OnRawCommand(std::move(bytes)); });
 
+        // A central unsubscribing (StopNotify) is BlueZ's disconnect signal —
+        // resume advertising so the camera is findable again for the next session.
+        gatt_app_->SetOnUnsubscribe([this] { HandleCentralGone(); });
+
         BuildAdvertisement();
 
         // Set the adapter Alias so the classic device name also reads
@@ -316,6 +321,63 @@ auto BluezBleTransport::Stop() -> void {
     adv_obj_.reset();
     connection_.reset();
     running_ = false;
+}
+
+auto BluezBleTransport::HandleCentralGone() -> void {
+    ConnectionHandler on_disc;
+    {
+        std::lock_guard lock(mtx_);
+        if (!central_present_) {
+            return;  // never connected this session, or already handled
+        }
+        central_present_ = false;
+        on_disc = on_disconnect_;
+    }
+    // This runs on the D-Bus event-loop thread (a GATT StopNotify callback).
+    // Both the session cleanup and the re-advertise wait on work the event loop
+    // itself must service, so they cannot run inline — hand off to a worker. The
+    // transport lives for the process lifetime, so capturing `this` is safe.
+    std::thread([this, on_disc] {
+        if (on_disc) {
+            on_disc();
+        }
+        ReAdvertise();
+    }).detach();
+}
+
+auto BluezBleTransport::ReAdvertise() -> void {
+    if (!running_ || !connection_) {
+        return;
+    }
+    try {
+        auto bluez = sdbus::createProxy(*connection_, kBluezBus, adapter_path_);
+        // BlueZ pauses a connectable advertisement while a central is connected
+        // and does not resume it on disconnect; re-register to start advertising
+        // again. Drop the existing registration first (RegisterAdvertisement
+        // rejects a still-registered object path). Async, like Start(), so the
+        // event loop can answer BlueZ's reentrant property reads (see
+        // CallManagerAsync) instead of deadlocking.
+        try {
+            auto future = bluez->callMethodAsync("UnregisterAdvertisement")
+                              .onInterface(kIfaceLeAdvManager)
+                              .withArguments(sdbus::ObjectPath{adv_path_})
+                              .getResultAsFuture<>();
+            if (future.wait_for(kCallTimeout) == std::future_status::ready) {
+                future.get();
+            }
+        } catch (const sdbus::Error& e) {
+            // Not currently registered (teardown race) — fine, just register.
+            spdlog::debug("BluezBleTransport: UnregisterAdvertisement before re-advertise: {}",
+                          e.what());
+        }
+        CallManagerAsync(*bluez, kIfaceLeAdvManager, "RegisterAdvertisement",
+                         sdbus::ObjectPath{adv_path_});
+        advertisement_registered_ = true;
+        spdlog::info("BluezBleTransport: re-advertising as \"{}\" after central disconnect",
+                     advertised_name_);
+    } catch (const sdbus::Error& e) {
+        spdlog::warn("BluezBleTransport: re-advertise failed: {}", e.what());
+    }
 }
 
 auto BluezBleTransport::SendResponse(const sst_cam::CommandResponse& response) -> void {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <filesystem>
 
 #include "adapters/overlay/cairo/cairo-overlay-renderer.hpp"
@@ -18,7 +19,8 @@ class OpenCvOverlayBurner final : public sst::overlay::IOverlayBurner {
    public:
     [[nodiscard]] auto Burn(const std::filesystem::path& l1_path,
                             const sst::overlay::OverlayTimeline& timeline,
-                            const std::filesystem::path& l2_path) -> bool override;
+                            const std::filesystem::path& l2_path,
+                            const std::atomic<bool>& cancel) -> bool override;
 
    private:
     CairoOverlayRenderer renderer_;
