@@ -11,6 +11,7 @@
 
 #include "adapters/capture/frame/gstreamer/gstreamer.hpp"
 #include "adapters/control/ble/bluez/bluez-ble-transport.hpp"
+#include "adapters/control/network/ip-route-uplink-probe.hpp"
 #include "adapters/control/network/nmcli-uplink-configurator.hpp"
 #include "adapters/control/system/proc-system-stats.hpp"
 #include "adapters/control/wifi/wpa_supplicant/dnsmasq-dhcp-server.hpp"
@@ -164,6 +165,7 @@ auto RunFirmware() -> int {
     // persisted config on boot; re-pushable from the app over BLE (U4). Driven via
     // NetworkManager (the camera's ethernet is NM-managed, unlike the P2P radio).
     sst::adapters::control::NmcliUplinkConfigurator uplink_configurator;
+    sst::adapters::control::IpRouteUplinkProbe uplink_probe;
     sst::network::UplinkManager uplink_manager(uplink_configurator);
     const auto uplink_status = uplink_manager.Apply(cfg.uplink);
 
@@ -263,7 +265,8 @@ auto RunFirmware() -> int {
         std::make_shared<sst::control::MatchStateHandler>(session_manager, NowEpochMs));
     dispatcher.Register(std::make_shared<sst::control::RecordingHandler>(
         session_manager, recording_service, overlay_timeline, NowMs));
-    dispatcher.Register(std::make_shared<sst::control::StreamingHandler>(streaming_service));
+    dispatcher.Register(
+        std::make_shared<sst::control::StreamingHandler>(streaming_service, &uplink_probe));
     dispatcher.Register(std::make_shared<sst::control::DownloadHandler>(
         download_server, sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort,
         sst::runtime_defaults::kDownloadTokenTtlSeconds));

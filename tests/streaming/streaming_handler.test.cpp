@@ -7,11 +7,18 @@
 
 #include "app/control/services/handlers/streaming.handler.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
+#include "app/streaming/ports/uplink-probe.hpp"
 #include "bluetooth.pb.h"
 
 namespace {
 
 using sst::control::StreamingHandler;
+
+class FakeUplinkProbe final : public sst::streaming::IUplinkProbe {
+   public:
+    auto HasInternetUplink() -> bool override { return has_uplink; }
+    bool has_uplink{true};
+};
 
 class FakeStreaming final : public sst::streaming::IStreamingService {
    public:
@@ -92,6 +99,31 @@ TEST(StreamingHandlerTest, EmptyDestinationErrors) {
     auto resp = handler.Handle(StartCmd(""));
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
     EXPECT_FALSE(resp.error_message().empty());
+}
+
+// U6 / R9: a cloud-stream START with no internet uplink is rejected with a
+// clear, actionable message instead of an opaque rtmp failure.
+TEST(StreamingHandlerTest, NoUplinkRejectsStartWithClearError) {
+    FakeStreaming streaming;
+    FakeUplinkProbe probe;
+    probe.has_uplink = false;
+    StreamingHandler handler(streaming, &probe);
+
+    auto resp = handler.Handle(StartCmd("rtmp://ingest.example/live/key"));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
+    EXPECT_NE(resp.error_message().find("uplink"), std::string::npos);
+    EXPECT_TRUE(streaming.ListActivePlatformStreams().empty());  // never started
+}
+
+// With an uplink up, the START proceeds to the egress.
+TEST(StreamingHandlerTest, UplinkUpAllowsStart) {
+    FakeStreaming streaming;
+    FakeUplinkProbe probe;  // has_uplink defaults true
+    StreamingHandler handler(streaming, &probe);
+
+    auto resp = handler.Handle(StartCmd("rtmp://ingest.example/live/key"));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_FALSE(streaming.ListActivePlatformStreams().empty());
 }
 
 // SetStreamingConfig supplies a fallback destination used by a START with no

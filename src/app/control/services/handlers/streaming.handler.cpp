@@ -4,8 +4,9 @@
 
 namespace sst::control {
 
-StreamingHandler::StreamingHandler(sst::streaming::IStreamingService& streaming)
-    : streaming_(streaming) {}
+StreamingHandler::StreamingHandler(sst::streaming::IStreamingService& streaming,
+                                   sst::streaming::IUplinkProbe* uplink_probe)
+    : streaming_(streaming), uplink_probe_(uplink_probe) {}
 
 auto StreamingHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kStreamingControl, sst_cam::Command::kSetStreamingConfig};
@@ -31,6 +32,18 @@ auto StreamingHandler::HandleControl(const sst_cam::StreamingControlCommand& cmd
         if (destination.empty()) {
             resp.set_status(sst_cam::ResponseStatus::ERROR);
             resp.set_error_message("streaming start: no destination provided or configured");
+            return resp;
+        }
+
+        // Cloud streaming egresses over the camera's internet uplink (ethernet /
+        // wifi-STA), never the link-local WiFi-Direct GO. With no uplink there is
+        // no route to the cloud — fail clearly so the app points the user at
+        // Settings -> Network rather than surfacing an opaque rtmp connect error.
+        if (uplink_probe_ != nullptr && !uplink_probe_->HasInternetUplink()) {
+            resp.set_status(sst_cam::ResponseStatus::ERROR);
+            resp.set_error_message(
+                "streaming start: no internet uplink — configure ethernet or wifi in "
+                "Settings -> Network");
             return resp;
         }
 
