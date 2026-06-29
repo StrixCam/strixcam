@@ -11,6 +11,7 @@
 
 #include "adapters/capture/frame/gstreamer/gstreamer.hpp"
 #include "adapters/control/ble/bluez/bluez-ble-transport.hpp"
+#include "adapters/control/network/nmcli-uplink-configurator.hpp"
 #include "adapters/control/system/proc-system-stats.hpp"
 #include "adapters/control/wifi/wpa_supplicant/dnsmasq-dhcp-server.hpp"
 #include "adapters/control/wifi/wpa_supplicant/ip-network-configurator.hpp"
@@ -48,6 +49,7 @@
 #include "app/control/services/handlers/wifi-direct.handler.hpp"
 #include "app/decision/services/static_decision/static-decision.hpp"
 #include "app/network/services/download_server/download-server.hpp"
+#include "app/network/services/uplink-manager/uplink-manager.hpp"
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
 #include "app/session/services/session_cleanup/session-cleanup.hpp"
@@ -155,6 +157,14 @@ auto RunFirmware() -> int {
                                                         advertised_name);
     sst::adapters::control::IpNetworkConfigurator network_configurator;
     sst::adapters::control::DnsmasqDhcpServer dhcp_server;
+
+    // Internet uplink (ethernet / gated wifi-STA) for cloud streaming — a separate
+    // plane from the WiFi-Direct GO that serves the phone its preview. Applied from
+    // persisted config on boot; re-pushable from the app over BLE (U4). Driven via
+    // NetworkManager (the camera's ethernet is NM-managed, unlike the P2P radio).
+    sst::adapters::control::NmcliUplinkConfigurator uplink_configurator;
+    sst::network::UplinkManager uplink_manager(uplink_configurator);
+    uplink_manager.Apply(cfg.uplink);
 
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
     sst::session::SessionCleanup cleanup(recording_service, streaming_service, wifi_manager,
