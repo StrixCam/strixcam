@@ -169,7 +169,7 @@ class CountingSink final : public IFrameSink {
 constexpr Dims kCompositeDims{2222, 720};
 class FakeCompositor final : public sst::processing::IFrameCompositor {
    public:
-    // NOLINTBEGIN(bugprone-easily-swappable-parameters): fixed IFrameCompositor (left, right).
+    // NOLINTBEGIN(bugprone-easily-swappable-parameters) // floor-ok: IFrameCompositor contract
     auto CompositeSideBySide(const Frame& left,
                              const Frame& right) -> std::optional<Frame> override {
         // NOLINTEND(bugprone-easily-swappable-parameters)
@@ -552,8 +552,17 @@ TEST(PipelineOrchestratorTest, SideBySideCompositesBothCamerasToStream) {
         sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
 
     ASSERT_TRUE(orchestrator.Start());
-    std::this_thread::sleep_for(std::chrono::milliseconds(
-        300));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    // Poll for the composite to flow rather than assuming a fixed sleep suffices —
+    // a 300ms sleep flaked under the slower qemu CI emulation. Both cameras must
+    // capture + postprocess + composite, so wait for the sink to carry it.
+    constexpr auto kFlowTimeout = std::chrono::seconds(5);
+    constexpr auto kPollInterval = std::chrono::milliseconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (
+        std::chrono::steady_clock::now() < deadline &&
+        (compositor.Calls() == 0 || std::get<3>(sink.Snapshot()).width != kCompositeDims.width)) {
+        std::this_thread::sleep_for(kPollInterval);
+    }
     orchestrator.Stop();
 
     EXPECT_GT(compositor.Calls(), 0);
@@ -580,8 +589,14 @@ TEST(PipelineOrchestratorTest, SingleLayoutSkipsCompositor) {
         sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
 
     ASSERT_TRUE(orchestrator.Start());
-    std::this_thread::sleep_for(std::chrono::milliseconds(
-        200));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    // Poll for a frame to reach the sink (qemu is slow; a fixed sleep flakes).
+    constexpr auto kFlowTimeout = std::chrono::seconds(5);
+    constexpr auto kPollInterval = std::chrono::milliseconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (std::chrono::steady_clock::now() < deadline &&
+           std::get<3>(sink.Snapshot()).width != kOutputDims.width) {
+        std::this_thread::sleep_for(kPollInterval);
+    }
     orchestrator.Stop();
 
     EXPECT_EQ(compositor.Calls(), 0);
