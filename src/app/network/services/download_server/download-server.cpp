@@ -133,6 +133,24 @@ auto DownloadServer::MintToken(const std::string& recording_id,
     return token;
 }
 
+auto DownloadServer::MintTokenForFile(const fs::path& file, const std::string& file_id,
+                                      std::uint64_t ttl_seconds) -> std::optional<DownloadToken> {
+    std::error_code err;
+    if (!fs::exists(file, err) || !fs::is_regular_file(file, err)) {
+        spdlog::warn("DownloadServer::MintTokenForFile: {} missing", file.string());
+        return std::nullopt;
+    }
+    DownloadToken token;
+    token.recording_id = file_id;
+    token.token = sst::common::utils::MakeSecureToken();
+    token.expires_at_unix = clock_() + ttl_seconds;
+    {
+        std::lock_guard lock(mtx_);
+        tokens_[token.token] = Entry{.path = file, .expires_at_unix = token.expires_at_unix};
+    }
+    return token;
+}
+
 auto DownloadServer::ValidateToken(const std::string& token) -> std::optional<fs::path> {
     std::lock_guard lock(mtx_);
     const auto entry = tokens_.find(token);

@@ -13,6 +13,11 @@ class IOverlaySink {
     virtual ~IOverlaySink() = default;
 
     virtual auto PushFrame(const RgbaImage& frame) -> void = 0;
+
+    // Drop any retained overlay so the pipeline composites nothing until the next
+    // PushFrame. Called when a match ends / no match is active so the live preview
+    // stops showing a stale scoreboard. Default no-op for sinks that don't cache.
+    virtual auto Clear() -> void {}
 };
 
 }  // namespace sst::overlay

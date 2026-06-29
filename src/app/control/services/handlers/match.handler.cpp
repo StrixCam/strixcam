@@ -99,6 +99,10 @@ auto MatchHandler::HandleMatchControl(const sst_cam::MatchControlCommand& cmd)
                 break;
             case sst_cam::MATCH_PERIOD_START:
                 match.period = period > 0 ? period : match.period;
+                // A new period starts from 00:00 — reset the clock (KICKOFF does
+                // this too; PERIOD_START previously carried the prior period's
+                // time into the overlay).
+                match.clock_seconds = 0;
                 match.clock_running = true;
                 match.segment = MatchSegment::kInPlay;
                 break;
@@ -126,7 +130,14 @@ auto MatchHandler::HandleMatchControl(const sst_cam::MatchControlCommand& cmd)
         return resp;
     }
 
-    SyncOverlay();
+    if (action == sst_cam::MATCH_FINAL_WHISTLE) {
+        // Match is over — remove the scoreboard from the live preview entirely
+        // (no active match => no overlay), rather than leaving a frozen FT board.
+        spdlog::info("MatchHandler: final whistle -> clearing overlay");
+        controller_.Clear();
+    } else {
+        SyncOverlay();
+    }
     resp.set_status(sst_cam::ResponseStatus::OK);
     return resp;
 }
@@ -151,12 +162,18 @@ auto MatchHandler::HandleBannerEvent(const sst_cam::BannerEventCommand& cmd)
 }
 
 auto MatchHandler::TickClock() -> void {
-    const bool advanced = session_.ApplyMatchUpdate([](LiveMatch& match) {
+    bool ticked = false;
+    session_.ApplyMatchUpdate([&ticked](LiveMatch& match) {
         if (match.clock_running) {
             ++match.clock_seconds;
+            ticked = true;
         }
     });
-    if (advanced) {
+    // Refresh the overlay ONLY when the clock actually advanced. ApplyMatchUpdate
+    // returns true whenever a session is active (not whether the clock moved), so
+    // keying off it re-rendered every second even with the clock stopped — which
+    // resurrected the scoreboard one tick after a final-whistle Clear().
+    if (ticked) {
         SyncOverlay();
     }
 }

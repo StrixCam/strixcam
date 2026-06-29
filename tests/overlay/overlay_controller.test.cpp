@@ -50,7 +50,9 @@ class FakeRenderer final : public IOverlayRenderer {
 class FakeSink final : public IOverlaySink {
    public:
     auto PushFrame(const RgbaImage& /*frame*/) -> void override { ++pushes; }
+    auto Clear() -> void override { ++clears; }
     int pushes{0};
+    int clears{0};
 };
 
 constexpr std::uint32_t kCanvasSize = 100;
@@ -98,6 +100,29 @@ TEST(OverlayControllerTest, PushesOnlyOnChange) {
     EXPECT_TRUE(controller.Refresh(0));
     EXPECT_EQ(sink.pushes, 2);
     EXPECT_EQ(renderer.renders, 2);  // rendered exactly per push
+}
+
+// Clear() drops the cached overlay and re-arms the push gate, so an identical
+// refresh after a clear pushes again — the board reappears at kickoff after a
+// match-end clear instead of being suppressed as "unchanged".
+TEST(OverlayControllerTest, ClearDropsOverlayAndReArmsPush) {
+    FakeRenderer renderer;
+    FakeSink sink;
+    OverlayController controller(renderer, sink, sst::common::OutputSize{kCanvasSize, kCanvasSize});
+    controller.SetLayout(ScoreLayout());
+
+    BindingData data;
+    data.score_a = 1;
+    controller.SetBindingData(data);
+    EXPECT_TRUE(controller.Refresh(0));
+    EXPECT_EQ(sink.pushes, 1);
+
+    controller.Clear();
+    EXPECT_EQ(sink.clears, 1);
+
+    controller.SetBindingData(data);     // same data
+    EXPECT_TRUE(controller.Refresh(0));  // still pushes (gate was re-armed)
+    EXPECT_EQ(sink.pushes, 2);
 }
 
 // Between binding changes the compositor keeps the last buffer — the controller

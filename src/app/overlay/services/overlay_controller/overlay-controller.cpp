@@ -1,14 +1,16 @@
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
 
 #include <fmt/format.h>
+#include <spdlog/spdlog.h>
 
 #include <utility>
 
 namespace sst::overlay {
 
 OverlayController::OverlayController(IOverlayRenderer& renderer, IOverlaySink& sink,
-                                     common::OutputSize out_size)
-    : renderer_(renderer), sink_(sink), out_size_(out_size) {}
+                                     common::OutputSize out_size,
+                                     IOverlayTimelineRecorder* timeline)
+    : renderer_(renderer), sink_(sink), out_size_(out_size), timeline_(timeline) {}
 
 auto OverlayController::SetLayout(OverlayLayout layout) -> void {
     std::lock_guard lock(mtx_);
@@ -18,6 +20,17 @@ auto OverlayController::SetLayout(OverlayLayout layout) -> void {
 auto OverlayController::SetBindingData(const BindingData& data) -> void {
     std::lock_guard lock(mtx_);
     scene_.SetBindingData(data);
+}
+
+auto OverlayController::Clear() -> void {
+    std::lock_guard lock(mtx_);
+    spdlog::info("OverlayController: clearing overlay (push_count={})", push_count_);
+    sink_.Clear();
+    // Force the next Refresh to push even if the resolved scene matches what was
+    // last pushed before clearing — otherwise the signature gate would suppress
+    // the re-render and the board wouldn't come back at kickoff.
+    pushed_once_ = false;
+    last_signature_.clear();
 }
 
 auto OverlayController::ActivateBanner(const std::string& template_id,
@@ -54,6 +67,13 @@ auto OverlayController::Refresh(std::uint64_t now_ms) -> bool {
     }
     last_signature_ = sig;
     pushed_once_ = true;
+
+    // Persist the resolved scene to the recording's overlay timeline (#6 F6b)
+    // before rasterizing. The recorder no-ops outside a recording. Capturing the
+    // scene (not the RGBA) keeps the timeline compact and lets F6c re-rasterize.
+    if (timeline_ != nullptr) {
+        timeline_->OnScene(now_ms, scene);
+    }
 
     RgbaImage frame = renderer_.Render(scene, out_size_.width, out_size_.height);
     sink_.PushFrame(frame);

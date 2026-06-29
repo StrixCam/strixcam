@@ -2,7 +2,12 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <array>
+#include <cctype>
 #include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -24,6 +29,37 @@ constexpr const char* kBearerPrefix = "Bearer ";
 constexpr int kHttpUnauthorized = 401;
 constexpr int kHttpNotFound = 404;
 
+// Stream recordings to the Range sink in fixed slices instead of allocating the
+// whole requested length up front — a `Range: bytes=0-` on a multi-GB recording
+// would otherwise try to allocate gigabytes in one buffer and OOM the Jetson.
+constexpr std::size_t kStreamChunkBytes = 64UL * 1024;
+
+// Thumbnails are small preview JPEGs; refuse anything larger so a bad/huge file
+// can't be slurped whole into memory per request.
+constexpr std::uintmax_t kMaxThumbnailBytes = 16UL * 1024 * 1024;
+
+// Longest accepted recording/thumbnail id (a uuid-ish stem); anything longer is
+// rejected outright.
+constexpr std::size_t kMaxIdLength = 256;
+
+// A recording/thumbnail id addresses one file by stem. Reject anything with a
+// path separator or parent ref before it reaches the resolver: it both blocks
+// traversal attempts and stops obviously-bad ids from driving the resolver's
+// recursive directory scan (a DoS lever over the P2P link).
+auto IsSafeId(const std::string& recording_id) -> bool {
+    if (recording_id.empty() || recording_id.size() > kMaxIdLength) {
+        return false;
+    }
+    if (recording_id.find('/') != std::string::npos ||
+        recording_id.find('\\') != std::string::npos ||
+        recording_id.find("..") != std::string::npos) {
+        return false;
+    }
+    return std::all_of(recording_id.begin(), recording_id.end(), [](unsigned char chr) {
+        return std::isalnum(chr) != 0 || chr == '-' || chr == '_' || chr == '.';
+    });
+}
+
 // How long to wait for the accept loop to come up after bind, in 5 ms slices.
 constexpr int kStartupPollAttempts = 200;
 constexpr auto kStartupPollInterval = std::chrono::milliseconds(5);
@@ -39,6 +75,92 @@ auto ExtractBearer(const httplib::Request& req) -> std::string {
     return auth.substr(std::char_traits<char>::length(kBearerPrefix));
 }
 
+// Untokened thumbnail GET: resolve <id> -> <id>.jpg and serve it whole. The id
+// is charset-validated and the file size-capped before it is read into memory.
+void ServeThumbnail(const HttpDownloadServer::ThumbnailResolver& resolve,
+                    const httplib::Request& req, httplib::Response& res) {
+    const std::string recording_id = req.matches.size() > 1 ? req.matches[1].str() : "";
+    const std::optional<fs::path> path =
+        IsSafeId(recording_id) ? resolve(recording_id) : std::nullopt;
+    if (!path) {
+        res.status = kHttpNotFound;
+        res.set_content("not found", "text/plain");
+        return;
+    }
+    std::error_code size_ec;
+    const auto size = fs::file_size(*path, size_ec);
+    if (size_ec || size > kMaxThumbnailBytes) {
+        res.status = kHttpNotFound;
+        res.set_content("not found", "text/plain");
+        return;
+    }
+    std::ifstream stream(path->string(), std::ios::binary);
+    if (!stream) {
+        res.status = kHttpNotFound;
+        res.set_content("not found", "text/plain");
+        return;
+    }
+    std::string body((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    res.set_content(std::move(body), "image/jpeg");
+}
+
+// Stream the requested byte range of `file` to `sink` in bounded chunks, so a
+// huge `length` can't trigger a multi-GB allocation on the Jetson.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters) floor-ok: httplib provider param order
+auto StreamFileRange(const std::string& file, std::size_t offset, std::size_t length,
+                     httplib::DataSink& sink) -> bool {
+    std::ifstream stream(file, std::ios::binary);
+    if (!stream) {
+        return false;
+    }
+    stream.seekg(static_cast<std::streamoff>(offset));
+    std::array<char, kStreamChunkBytes> chunk{};
+    std::size_t remaining = length;
+    while (remaining > 0 && stream) {
+        const std::size_t want = std::min(remaining, chunk.size());
+        stream.read(chunk.data(), static_cast<std::streamsize>(want));
+        const auto got = static_cast<std::size_t>(stream.gcount());
+        if (got == 0) {
+            break;
+        }
+        if (!sink.write(chunk.data(), got)) {
+            return false;
+        }
+        remaining -= got;
+    }
+    return true;
+}
+// NOLINTEND(bugprone-easily-swappable-parameters)
+
+// Tokened recording GET with Range support: validate the bearer token, then hand
+// httplib a known-length content provider that streams the requested slice.
+void ServeRecording(const HttpDownloadServer::TokenValidator& validate, const httplib::Request& req,
+                    httplib::Response& res) {
+    const std::string token = ExtractBearer(req);
+    const std::optional<fs::path> path = token.empty() ? std::nullopt : validate(token);
+    if (!path) {
+        res.status = kHttpUnauthorized;
+        res.set_content("unauthorized", "text/plain");
+        return;
+    }
+    std::error_code err;
+    const auto size = static_cast<std::size_t>(fs::file_size(*path, err));
+    if (err) {
+        res.status = kHttpNotFound;
+        res.set_content("not found", "text/plain");
+        return;
+    }
+    const std::string file = path->string();
+    res.set_content_provider(
+        size, "video/mp4",
+        [file](std::size_t offset,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok:
+                                    // (offset,length) order fixed by httplib ContentProvider
+                                    // callback contract
+               std::size_t length, httplib::DataSink& sink) -> bool {
+            return StreamFileRange(file, offset, length, sink);
+        });
+}
+
 }  // namespace
 
 HttpDownloadServer::HttpDownloadServer(std::string bind_address, std::uint16_t port,
@@ -49,65 +171,14 @@ HttpDownloadServer::HttpDownloadServer(std::string bind_address, std::uint16_t p
       validator_(std::move(validator)),
       thumbnail_resolver_(std::move(thumbnail_resolver)),
       server_(std::make_unique<httplib::Server>()) {
-    // Thumbnails: untokened GET by recording id. The phone already had to join
-    // the P2P link to reach this; the payload is a small preview frame, not the
-    // recording. Resolves <id> -> <id>.jpg and serves it whole as image/jpeg.
+    // Thumbnails: untokened GET by recording id (small, non-sensitive preview
+    // frames over the P2P link the phone already had to join).
     server_->Get("/thumbnails/(.*)", [this](const httplib::Request& req, httplib::Response& res) {
-        const std::string recording_id = req.matches.size() > 1 ? req.matches[1].str() : "";
-        std::optional<fs::path> path =
-            recording_id.empty() ? std::nullopt : thumbnail_resolver_(recording_id);
-        if (!path) {
-            res.status = kHttpNotFound;
-            res.set_content("not found", "text/plain");
-            return;
-        }
-        std::ifstream stream(path->string(), std::ios::binary);
-        if (!stream) {
-            res.status = kHttpNotFound;
-            res.set_content("not found", "text/plain");
-            return;
-        }
-        std::string body((std::istreambuf_iterator<char>(stream)),
-                         std::istreambuf_iterator<char>());
-        res.set_content(std::move(body), "image/jpeg");
+        ServeThumbnail(thumbnail_resolver_, req, res);
     });
-
+    // Recordings: tokened GET with byte-range support.
     server_->Get("/recordings/(.*)", [this](const httplib::Request& req, httplib::Response& res) {
-        const std::string token = ExtractBearer(req);
-        std::optional<fs::path> path = token.empty() ? std::nullopt : validator_(token);
-        if (!path) {
-            res.status = kHttpUnauthorized;
-            res.set_content("unauthorized", "text/plain");
-            return;
-        }
-        std::error_code err;
-        const auto size = static_cast<std::size_t>(fs::file_size(*path, err));
-        if (err) {
-            res.status = kHttpNotFound;
-            res.set_content("not found", "text/plain");
-            return;
-        }
-        const std::string file = path->string();
-        // Content provider with known length: httplib serves Range requests
-        // (206 partial content) by invoking this for the requested slice.
-        // The (offset, length) parameter order and types are fixed by httplib's
-        // ContentProvider callback contract, so they can't be reordered/retyped.
-        res.set_content_provider(
-            size, "video/mp4",
-            [file](std::size_t offset,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok:
-                                        // (offset,length) order fixed by httplib ContentProvider
-                                        // callback contract
-                   std::size_t length, httplib::DataSink& sink) -> bool {
-                std::ifstream stream(file, std::ios::binary);
-                if (!stream) {
-                    return false;
-                }
-                stream.seekg(static_cast<std::streamoff>(offset));
-                std::string buf(length, '\0');
-                stream.read(buf.data(), static_cast<std::streamsize>(length));
-                const auto got = static_cast<std::size_t>(stream.gcount());
-                return sink.write(buf.data(), got);
-            });
+        ServeRecording(validator_, req, res);
     });
 }
 

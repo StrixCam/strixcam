@@ -31,6 +31,13 @@ class DownloadServer {
     auto MintToken(const std::string& recording_id,
                    std::uint64_t ttl_seconds) -> std::optional<DownloadToken>;
 
+    // Mint a token for an explicit file path (the burned overlay L2, #6 F6c),
+    // which lives outside the recordings catalog so it never appears in
+    // Enumerate(). `id` labels the token (echoed back as the download id).
+    // nullopt if the file does not exist.
+    auto MintTokenForFile(const std::filesystem::path& file, const std::string& file_id,
+                          std::uint64_t ttl_seconds) -> std::optional<DownloadToken>;
+
     // Resolve a (non-expired) token to the file it authorizes. nullopt if the
     // token is unknown or expired.
     auto ValidateToken(const std::string& token) -> std::optional<std::filesystem::path>;
@@ -42,10 +49,13 @@ class DownloadServer {
     [[nodiscard]] auto ResolveThumbnailPath(const std::string& recording_id) const
         -> std::optional<std::filesystem::path>;
 
-   private:
+    // Resolve a recording id to its `<id>.mp4` (or raw `.nv12`) under the video
+    // root. Public so the overlay-export job (#6 F6c) can locate the clean L1 to
+    // burn. nullopt if no such file exists.
     [[nodiscard]] auto ResolveRecordingPath(const std::string& recording_id) const
         -> std::optional<std::filesystem::path>;
 
+   private:
     std::filesystem::path video_root_;
     std::filesystem::path thumbnail_root_;
     Clock clock_;

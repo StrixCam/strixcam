@@ -16,10 +16,14 @@
 #include "adapters/control/wifi/wpa_supplicant/ip-network-configurator.hpp"
 #include "adapters/control/wifi/wpa_supplicant/wpa-wifi-manager.hpp"
 #include "adapters/network/http/http-download-server.hpp"
+#include "adapters/overlay/burn/opencv-overlay-burner.hpp"
 #include "adapters/overlay/caching/caching-overlay-sink.hpp"
 #include "adapters/overlay/cairo/cairo-overlay-renderer.hpp"
+#include "adapters/overlay/timeline/filesystem-overlay-timeline-recorder.hpp"
+#include "adapters/overlay/timeline/overlay-timeline-loader.hpp"
 #include "adapters/processing/opencv/opencv-postprocessor.hpp"
 #include "adapters/processing/opencv/opencv-preprocessor.hpp"
+#include "adapters/processing/opencv/opencv-side-by-side-compositor.hpp"
 #include "adapters/storage/filesystem/filesystem-disk-guard.hpp"
 #include "adapters/storage/gstreamer/gst-continuous-recorder.hpp"
 #include "adapters/storage/opencv/opencv-jpeg-encoder.hpp"
@@ -31,9 +35,11 @@
 #include "app/control/services/dispatcher/command-dispatcher.hpp"
 #include "app/control/services/handlers/device.handler.hpp"
 #include "app/control/services/handlers/download.handler.hpp"
+#include "app/control/services/handlers/export-burn.handler.hpp"
 #include "app/control/services/handlers/match-state.handler.hpp"
 #include "app/control/services/handlers/match.handler.hpp"
 #include "app/control/services/handlers/overlay.handler.hpp"
+#include "app/control/services/handlers/preview-layout.handler.hpp"
 #include "app/control/services/handlers/raw-capture.handler.hpp"
 #include "app/control/services/handlers/recording.handler.hpp"
 #include "app/control/services/handlers/session.handler.hpp"
@@ -141,7 +147,12 @@ auto RunFirmware() -> int {
     // ── WiFi Direct + DHCP ─────────────────────────────────────────────
     // "auto": detect the interface at runtime (names vary per board —
     // wlP1p1s0 on this Jetson, not wlan0). See ResolveWifiInterface.
-    sst::adapters::control::WpaWifiManager wifi_manager;
+    // The `sst-cam-NNNN` name doubles as the P2P SSID postfix, so the WiFi-Direct
+    // SSID (`DIRECT-XY-sst-cam-NNNN`) is recognizably the same camera as BLE.
+    const std::string advertised_name = sst::control::MakeAdvertisedName(
+        sst::control::DeriveUnitNumber(cfg.device.serial_number.value_or("")));
+    sst::adapters::control::WpaWifiManager wifi_manager("auto", "/run/wpa_supplicant",
+                                                        advertised_name);
     sst::adapters::control::IpNetworkConfigurator network_configurator;
     sst::adapters::control::DnsmasqDhcpServer dhcp_server;
 
@@ -156,10 +167,14 @@ auto RunFirmware() -> int {
     // each final BGR frame (CPU composite, single path for all output branches).
     sst::adapters::overlay::CairoOverlayRenderer overlay_renderer;
     sst::adapters::overlay::CachingOverlaySink overlay_sink;
+    // Persists the overlay scene timeline beside each L1 recording (#6 F6b) so
+    // the overlay can be burned onto the clean recording on demand (F6c).
+    sst::adapters::overlay::FilesystemOverlayTimelineRecorder overlay_timeline;
     sst::overlay::OverlayController overlay_controller(
         overlay_renderer, overlay_sink,
         sst::common::OutputSize{sst::runtime_defaults::kOverlayWidth,
-                                sst::runtime_defaults::kOverlayHeight});
+                                sst::runtime_defaults::kOverlayHeight},
+        &overlay_timeline);
 
     // ── Downloads ──────────────────────────────────────────────────────
     sst::network::DownloadServer download_server(video_root, thumbnail_root, NowUnixSeconds);
@@ -176,6 +191,28 @@ auto RunFirmware() -> int {
         [&download_server](const std::string& recording_id) {
             return download_server.ResolveThumbnailPath(recording_id);
         });
+
+    // ── Overlay export (on-demand burn, #6 F6c) ─────────────────────────
+    // Burns the recorded overlay timeline onto a clean L1 into an L2 living
+    // OUTSIDE the video root (so it never shows up in the recordings list),
+    // tokened for download exactly like a normal recording.
+    sst::adapters::overlay::OpenCvOverlayBurner overlay_burner;
+    sst::exportjob::ExportJobManager export_manager(
+        overlay_burner,
+        [&download_server](const std::string& recording_id) {
+            return download_server.ResolveRecordingPath(recording_id);
+        },
+        [](const std::filesystem::path& l1_path) {
+            const auto timeline_path =
+                l1_path.parent_path() / (l1_path.stem().string() + ".timeline.json");
+            return sst::adapters::overlay::LoadOverlayTimeline(timeline_path)
+                .value_or(sst::overlay::OverlayTimeline{});
+        },
+        [&download_server](const std::filesystem::path& l2_path, const std::string& job_id) {
+            return download_server.MintTokenForFile(
+                l2_path, job_id, sst::runtime_defaults::kDownloadTokenTtlSeconds);
+        },
+        video_root.parent_path() / "exports");
 
     // ── System stats (telemetry source) ────────────────────────────────
     sst::adapters::control::ProcSystemStats system_stats(video_root);
@@ -200,7 +237,8 @@ auto RunFirmware() -> int {
         [&streaming_service] { return !streaming_service.ListActivePlatformStreams().empty(); },
         [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
         [&wifi_manager] { return wifi_manager.State(); }));
-    dispatcher.Register(std::make_shared<sst::control::SessionHandler>(session_manager));
+    dispatcher.Register(
+        std::make_shared<sst::control::SessionHandler>(session_manager, overlay_controller));
     dispatcher.Register(std::make_shared<sst::control::WifiDirectHandler>(
         session_manager, wifi_manager, network_configurator, dhcp_server, streaming_service,
         sst::control::PreviewPort{sst::runtime_defaults::kPreviewPort},
@@ -212,16 +250,22 @@ auto RunFirmware() -> int {
     dispatcher.Register(match_handler);
     dispatcher.Register(
         std::make_shared<sst::control::MatchStateHandler>(session_manager, NowEpochMs));
-    dispatcher.Register(
-        std::make_shared<sst::control::RecordingHandler>(session_manager, recording_service));
+    dispatcher.Register(std::make_shared<sst::control::RecordingHandler>(
+        session_manager, recording_service, overlay_timeline, NowMs));
     dispatcher.Register(std::make_shared<sst::control::StreamingHandler>(streaming_service));
     dispatcher.Register(std::make_shared<sst::control::DownloadHandler>(
         download_server, sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort,
         sst::runtime_defaults::kDownloadTokenTtlSeconds));
+    dispatcher.Register(std::make_shared<sst::control::ExportBurnHandler>(
+        export_manager,
+        [&recording_service, &streaming_service] {
+            return recording_service.CurrentState() != sst::storage::RecordingState::kIdle ||
+                   !streaming_service.ListActivePlatformStreams().empty();
+        },
+        sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort));
 
     // ── BLE transport ──────────────────────────────────────────────────
-    const std::string advertised_name = sst::control::MakeAdvertisedName(
-        sst::control::DeriveUnitNumber(cfg.device.serial_number.value_or("")));
+    // advertised_name computed above (shared with the WiFi-Direct SSID postfix).
     sst::adapters::control::BluezBleTransport ble_transport(advertised_name);
     ble_transport.SetOnCommand(
         [&dispatcher](const sst_cam::Command& cmd) { return dispatcher.Dispatch(cmd); });
@@ -251,10 +295,23 @@ auto RunFirmware() -> int {
     auto postprocessor = std::make_unique<sst::adapters::processing::OpenCvPostprocessor>();
     auto decision = std::make_unique<sst::decision::StaticDecision>();
 
+    // #6 F6d dual preview: the SetPreviewLayout handler flips this shared state;
+    // the pipeline consumer reads it each tick and composites cam0 | cam1 (clean)
+    // into the preview stream via the side-by-side compositor. The composite
+    // targets the same output canvas as the single stream, so the RTSP encoder
+    // caps never change — connected viewers are not dropped on a layout switch.
+    sst::streaming::PreviewLayoutState preview_layout_state;
+    sst::adapters::processing::OpenCvSideBySideCompositor side_by_side_compositor(
+        sst::runtime_defaults::kOverlayWidth, sst::runtime_defaults::kOverlayHeight);
+
     sst::pipeline::PipelineOrchestrator pipeline(
         std::move(camera_chains), std::move(postprocessor), std::move(decision), recording_service,
-        streaming_service, sst::pipeline::PipelineConfig{}, &raw_capture_sink, &overlay_sink);
+        streaming_service, sst::pipeline::PipelineConfig{}, &raw_capture_sink, &overlay_sink,
+        &side_by_side_compositor, &preview_layout_state);
     dispatcher.Register(std::make_shared<sst::control::RawCaptureHandler>(raw_capture_sink));
+    dispatcher.Register(std::make_shared<sst::control::PreviewLayoutHandler>(
+        preview_layout_state, sst::runtime_defaults::kOverlayWidth,
+        sst::runtime_defaults::kOverlayHeight));
 
     // On-demand thumbnail: snapshot the latest pipeline frame + encode to JPEG
     // in memory. Registered here (after the pipeline exists) but before the BLE

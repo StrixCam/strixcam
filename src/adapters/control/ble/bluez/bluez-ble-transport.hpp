@@ -48,6 +48,16 @@ class BluezBleTransport final : public sst::control::IBleTransport {
 
    private:
     auto BuildAdvertisement() -> void;
+    // The central unsubscribed (StopNotify) — BlueZ fires this on disconnect.
+    // Fire on_disconnect_ (session cleanup) and resume advertising so the camera
+    // is discoverable again. Invoked on the D-Bus event-loop thread, so it hands
+    // the (blocking) work to a detached worker — running it inline would deadlock
+    // the event loop the re-advertise futures depend on.
+    auto HandleCentralGone() -> void;
+    // Re-register the LE advertisement so BlueZ resumes advertising (it pauses
+    // our connectable advert on connect and does not auto-resume on disconnect).
+    // MUST run off the event-loop thread.
+    auto ReAdvertise() -> void;
     // Demux a Command-Write characteristic write: either an inbound command
     // ChunkedPayload (total_chunks >= 1) or a ChunkAck (total_chunks == 0,
     // wire-compatible on fields 1/2) acking an outbound response chunk.

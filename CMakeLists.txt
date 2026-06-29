@@ -79,6 +79,12 @@ find_library(SST_OPENCV_IMGCODECS
     NAMES libopencv_imgcodecs.so.406
     REQUIRED
 )
+# videoio (cv::VideoCapture / cv::VideoWriter, ffmpeg backend) — decodes the L1
+# MP4 and encodes the overlaid L2 for the on-demand overlay burn (#6 F6c).
+find_library(SST_OPENCV_VIDEOIO
+    NAMES libopencv_videoio.so.406
+    REQUIRED
+)
 
 target_include_directories(sst_cam_firmware_external_libs INTERFACE
     ${OPENCV_INCLUDE_DIRS}
@@ -88,6 +94,7 @@ target_link_libraries(sst_cam_firmware_external_libs INTERFACE
     ${SST_OPENCV_CORE}
     ${SST_OPENCV_IMGPROC}
     ${SST_OPENCV_IMGCODECS}
+    ${SST_OPENCV_VIDEOIO}
 )
 
 # Control plane + live preview: BlueZ over D-Bus (sdbus-c++) and the GStreamer

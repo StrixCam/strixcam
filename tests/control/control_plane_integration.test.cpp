@@ -183,7 +183,7 @@ TEST(ControlPlaneIntegrationTest, RoutesFullLifecycleToReady) {
                                           sst::common::OutputSize{kCanvasEdge, kCanvasEdge});
 
     control::CommandDispatcher dispatcher;
-    dispatcher.Register(std::make_shared<control::SessionHandler>(manager));
+    dispatcher.Register(std::make_shared<control::SessionHandler>(manager, controller));
     dispatcher.Register(std::make_shared<control::WifiDirectHandler>(
         manager, wifi, netcfg, dhcp, streaming, sst::control::PreviewPort{kPreviewPort},
         sst::control::DownloadPort{kDownloadPort}));
@@ -204,8 +204,12 @@ TEST(ControlPlaneIntegrationTest, RoutesFullLifecycleToReady) {
 TEST(ControlPlaneIntegrationTest, OutOfOrderConfigRejected) {
     FakeCleanup cleanup;
     session::SessionManager manager(cleanup);
+    FakeRenderer renderer;
+    FakeSink sink;
+    overlay::OverlayController controller(renderer, sink,
+                                          sst::common::OutputSize{kCanvasEdge, kCanvasEdge});
     control::CommandDispatcher dispatcher;
-    dispatcher.Register(std::make_shared<control::SessionHandler>(manager));
+    dispatcher.Register(std::make_shared<control::SessionHandler>(manager, controller));
     manager.OnConnect();
 
     sst_cam::Command cmd;
@@ -214,6 +218,33 @@ TEST(ControlPlaneIntegrationTest, OutOfOrderConfigRejected) {
     auto resp = dispatcher.Dispatch(cmd);
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
     EXPECT_FALSE(resp.error_message().empty());
+}
+
+// #6 overlay model: configuring a match does NOT show a scoreboard (no active
+// match yet -> no overlay). The board only appears at kickoff. The handler clears
+// the overlay on config so a previous match's board can't linger.
+TEST(ControlPlaneIntegrationTest, PushSessionConfigShowsNoPreKickoffOverlay) {
+    FakeCleanup cleanup;
+    session::SessionManager manager(cleanup);
+    FakeWifi wifi;
+    FakeDhcp dhcp;
+    FakeNetworkConfigurator netcfg;
+    FakeRenderer renderer;
+    FakeSink sink;
+    FakeStreaming streaming;
+    overlay::OverlayController controller(renderer, sink,
+                                          sst::common::OutputSize{kCanvasEdge, kCanvasEdge});
+    control::CommandDispatcher dispatcher;
+    dispatcher.Register(std::make_shared<control::SessionHandler>(manager, controller));
+    dispatcher.Register(std::make_shared<control::WifiDirectHandler>(
+        manager, wifi, netcfg, dhcp, streaming, sst::control::PreviewPort{kPreviewPort},
+        sst::control::DownloadPort{kDownloadPort}));
+
+    manager.OnConnect();
+    StepStartWifiDirect(dispatcher, manager);
+    EXPECT_EQ(controller.PushCount(), 0U);  // nothing rendered before any config
+    StepPushSessionConfig(dispatcher, manager);
+    EXPECT_EQ(controller.PushCount(), 0U);  // config clears; no board until kickoff
 }
 
 }  // namespace

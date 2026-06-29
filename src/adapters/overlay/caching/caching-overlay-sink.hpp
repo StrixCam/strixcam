@@ -26,6 +26,13 @@ class CachingOverlaySink final : public sst::overlay::IOverlaySink,
         latest_ = frame;
     }
 
+    // Drop the cached overlay so LatestOverlay() returns nullopt and the pipeline
+    // composites a clean frame — the scoreboard disappears from the live preview.
+    auto Clear() -> void override {
+        std::lock_guard lock(mtx_);
+        latest_.reset();
+    }
+
     [[nodiscard]] auto LatestOverlay() const -> std::optional<sst::overlay::RgbaImage> override {
         std::lock_guard lock(mtx_);
         return latest_;

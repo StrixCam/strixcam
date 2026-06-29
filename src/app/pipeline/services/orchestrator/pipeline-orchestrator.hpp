@@ -13,12 +13,14 @@
 #include "app/decision/ports/decision.hpp"
 #include "app/overlay/ports/overlay-frame-source.hpp"
 #include "app/pipeline/ports/frame-snapshot-source.hpp"
+#include "app/processing/ports/frame-compositor.hpp"
 #include "app/processing/ports/postprocessor.hpp"
 #include "app/processing/ports/preprocessor.hpp"
 #include "app/storage/ports/raw-capture-sink.hpp"
 #include "domain/buffer/services/latest-only-slot.hpp"
 #include "domain/capture/models/frame.hpp"
 #include "domain/processing/models/frame-bundle.hpp"
+#include "domain/streaming/models/preview-layout.hpp"
 
 namespace sst::pipeline {
 
@@ -85,7 +87,13 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
                          // NOLINTEND(bugprone-easily-swappable-parameters)
                          PipelineConfig config = PipelineConfig{},
                          sst::storage::IRawCaptureSink* raw_sink = nullptr,
-                         sst::overlay::IOverlayFrameSource* overlay_source = nullptr);
+                         sst::overlay::IOverlayFrameSource* overlay_source = nullptr,
+                         // #6 F6d dual preview: both optional. When set and the
+                         // layout is SIDE_BY_SIDE, the consumer postprocesses the
+                         // second camera and composites cam0 | cam1 (clean) into
+                         // the stream instead of the single overlaid frame.
+                         sst::processing::IFrameCompositor* compositor = nullptr,
+                         sst::streaming::PreviewLayoutState* preview_layout = nullptr);
 
     ~PipelineOrchestrator() override;
 
@@ -111,6 +119,14 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     auto ProducerLoop(std::size_t camera_index) -> void;
     auto ConsumerLoop() -> void;
 
+    // Produce the frame pushed to the live/broadcast stream from the clean
+    // chosen-camera frame. SIDE_BY_SIDE composites cam0 | cam1 clean; otherwise
+    // bakes the current overlay onto a copy (SINGLE broadcast view). Returns an
+    // owned frame (its pixels survive the call).
+    auto BuildStreamFrame(const sst::capture::Frame& clean_chosen,
+                          const std::vector<std::optional<sst::processing::FrameBundle>>& latest,
+                          std::size_t chosen_index) -> sst::capture::Frame;
+
     std::vector<CameraChain> cameras_;
     std::unique_ptr<sst::processing::IPostprocessor> postprocessor_;
     std::unique_ptr<sst::decision::IDecision> decision_;
@@ -119,6 +135,8 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     PipelineConfig config_;
     sst::storage::IRawCaptureSink* raw_sink_;
     sst::overlay::IOverlayFrameSource* overlay_source_;
+    sst::processing::IFrameCompositor* compositor_;
+    sst::streaming::PreviewLayoutState* preview_layout_;
 
     // One slot per camera. unique_ptr because LatestOnlySlot is non-movable and
     // we size the vector at construction from the camera count.
