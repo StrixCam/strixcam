@@ -170,7 +170,15 @@ auto RunFirmware() -> int {
     sst::network::UplinkManager uplink_manager(uplink_configurator);
     sst::adapters::network::JsonUplinkStore uplink_store(std::string(sst::paths::kConfigDir) +
                                                          "/uplink.json");
-    uplink_manager.Apply(cfg.uplink);  // bring up enabled uplinks on boot
+    // Bring up enabled uplinks on boot OFF the main path: nmcli con up can stall
+    // (NM mid-restart, DHCP wait), and the subprocess deadline is generous (45s).
+    // Doing it synchronously here would delay BLE/WiFi-Direct/preview start by
+    // that long on a bad boot. Detach so BLE comes up regardless; the manager +
+    // configurator outlive main()'s run loop, and a copy of the config is moved
+    // into the thread, so there is no use-after-free of locals.
+    std::thread([&uplink_manager, boot_cfg = cfg.uplink]() mutable {
+        uplink_manager.Apply(boot_cfg);
+    }).detach();
 
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
     sst::session::SessionCleanup cleanup(recording_service, streaming_service, wifi_manager,
