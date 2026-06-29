@@ -71,4 +71,19 @@ inline constexpr std::string_view kWifiDirectJson = R"({
 }
 )";
 
+// Internet uplink — both interfaces start disabled (a fresh camera has no
+// configured uplink; the user sets one in app Settings -> Network). DHCP is the
+// default IP mode for each. Separate from wifi-direct.json (the GO).
+inline constexpr std::string_view kUplinkJson = R"({
+  "ethernet": {
+    "enabled": false,
+    "dhcp": true
+  },
+  "wifi": {
+    "enabled": false,
+    "dhcp": true
+  }
+}
+)";
+
 }  // namespace sst::config::defaults

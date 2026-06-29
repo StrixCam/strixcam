@@ -42,6 +42,8 @@ ConfigLoader::ConfigLoader(std::string root_path, std::string file_type)
             std::make_unique<JsonReaderAdapter<StorageData>>(MakePath(root_path_, "storage", ext));
         wifiDirectAdapter_ = std::make_unique<JsonReaderAdapter<WifiDirectData>>(
             MakePath(root_path_, "wifi-direct", ext));
+        uplinkAdapter_ =
+            std::make_unique<JsonReaderAdapter<UplinkData>>(MakePath(root_path_, "uplink", ext));
     } else {
         throw std::runtime_error("Unsupported config file type: " + file_type_);
     }
@@ -72,9 +74,11 @@ auto ConfigLoader::get() -> ConfigData {
         EnsureDefault("calibration", defaults::kCalibrationJson);
         EnsureDefault("storage", defaults::kStorageJson);
         EnsureDefault("wifi-direct", defaults::kWifiDirectJson);
+        EnsureDefault("uplink", defaults::kUplinkJson);
     }
 
-    if (!deviceAdapter_ || !calibrationAdapter_ || !storageAdapter_ || !wifiDirectAdapter_) {
+    if (!deviceAdapter_ || !calibrationAdapter_ || !storageAdapter_ || !wifiDirectAdapter_ ||
+        !uplinkAdapter_) {
         throw std::logic_error("ConfigLoader adapters not initialized");
     }
 
@@ -82,9 +86,11 @@ auto ConfigLoader::get() -> ConfigData {
     const auto calibrationConfig = calibrationAdapter_->load();
     const auto storageConfig = storageAdapter_->load();
     const auto wifiDirectConfig = wifiDirectAdapter_->load();
+    const auto uplinkConfig = uplinkAdapter_->load();
 
     if (fail("device", deviceConfig) || fail("calibration", calibrationConfig) ||
-        fail("storage", storageConfig) || fail("wifi-direct", wifiDirectConfig)) {
+        fail("storage", storageConfig) || fail("wifi-direct", wifiDirectConfig) ||
+        fail("uplink", uplinkConfig)) {
         throw std::runtime_error("failed to load configuration files");
     }
 
@@ -93,6 +99,7 @@ auto ConfigLoader::get() -> ConfigData {
         .device = deviceConfig.data,
         .storage = storageConfig.data,
         .wifi_direct = wifiDirectConfig.data,
+        .uplink = uplinkConfig.data,
     };
 }
 
