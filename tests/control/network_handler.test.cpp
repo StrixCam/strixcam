@@ -24,13 +24,19 @@ class FakeConfigurator final : public sst::network::IUplinkConfigurator {
         -> sst::network::UplinkResult override {
         return {.ok = false, .detail = "unavailable"};
     }
+    auto ProbeEthernet() -> sst::network::UplinkResult override {
+        return {.ok = true, .detail = "10.10.1.30/24"};
+    }
+    auto ProbeWifiSta() -> sst::network::UplinkResult override {
+        return {.ok = false, .detail = "unavailable"};
+    }
     int ethernet_calls{0};
 };
 
 TEST(NetworkHandlerTest, HandlesSetAndGet) {
     FakeConfigurator configurator;
     sst::network::UplinkManager manager(configurator);
-    sst::control::NetworkHandler handler(manager, "/tmp/ignored.json", {}, {});
+    sst::control::NetworkHandler handler(manager, "/tmp/ignored.json", {});
 
     const auto cases = handler.HandledCases();
     EXPECT_NE(std::find(cases.begin(), cases.end(), sst_cam::Command::kSetNetworkConfig),
@@ -44,7 +50,7 @@ TEST(NetworkHandlerTest, SetAppliesPersistsAndEchoesStatus) {
     fs::remove(path);
     FakeConfigurator configurator;
     sst::network::UplinkManager manager(configurator);
-    sst::control::NetworkHandler handler(manager, path.string(), {}, {});
+    sst::control::NetworkHandler handler(manager, path.string(), {});
 
     sst_cam::Command cmd;
     auto* eth = cmd.mutable_set_network_config()->mutable_config()->mutable_ethernet();
@@ -63,7 +69,7 @@ TEST(NetworkHandlerTest, SetAppliesPersistsAndEchoesStatus) {
     EXPECT_FALSE(echoed.dhcp());
     EXPECT_EQ(echoed.address(), "10.10.1.30/24");
     EXPECT_EQ(echoed.gateway(), "10.10.1.1");
-    // Live status from the apply.
+    // Live status (probed, not the apply result).
     EXPECT_TRUE(resp.network_config().ethernet_up());
     EXPECT_EQ(resp.network_config().ethernet_address(), "10.10.1.30/24");
     // Applied + persisted.
@@ -80,10 +86,8 @@ TEST(NetworkHandlerTest, GetReturnsInitialConfigWithoutApplying) {
     sst::config::UplinkData initial;
     initial.ethernet.enabled = true;
     initial.ethernet.address = "192.168.0.5/24";
-    sst::network::UplinkStatus initial_status;
-    initial_status.ethernet = {.ok = true, .detail = "192.168.0.5/24"};
 
-    sst::control::NetworkHandler handler(manager, "/tmp/ignored.json", initial, initial_status);
+    sst::control::NetworkHandler handler(manager, "/tmp/ignored.json", initial);
 
     sst_cam::Command cmd;
     cmd.mutable_get_network_config();

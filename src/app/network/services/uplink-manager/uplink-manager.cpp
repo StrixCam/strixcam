@@ -28,4 +28,13 @@ auto UplinkManager::Apply(const sst::config::UplinkData& cfg) -> UplinkStatus {
     return status;
 }
 
+auto UplinkManager::QueryStatus() -> UplinkStatus {
+    UplinkStatus status;
+    status.ethernet = configurator_.ProbeEthernet();
+    status.ethernet_enabled = status.ethernet.ok;
+    status.wifi = configurator_.ProbeWifiSta();
+    status.wifi_enabled = status.wifi.ok;
+    return status;
+}
+
 }  // namespace sst::network

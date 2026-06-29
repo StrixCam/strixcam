@@ -167,7 +167,7 @@ auto RunFirmware() -> int {
     sst::adapters::control::NmcliUplinkConfigurator uplink_configurator;
     sst::adapters::control::IpRouteUplinkProbe uplink_probe;
     sst::network::UplinkManager uplink_manager(uplink_configurator);
-    const auto uplink_status = uplink_manager.Apply(cfg.uplink);
+    uplink_manager.Apply(cfg.uplink);  // bring up enabled uplinks on boot
 
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
     sst::session::SessionCleanup cleanup(recording_service, streaming_service, wifi_manager,
@@ -327,8 +327,7 @@ auto RunFirmware() -> int {
         preview_layout_state, sst::runtime_defaults::kOverlayWidth,
         sst::runtime_defaults::kOverlayHeight));
     dispatcher.Register(std::make_shared<sst::control::NetworkHandler>(
-        uplink_manager, std::string(sst::paths::kConfigDir) + "/uplink.json", cfg.uplink,
-        uplink_status));
+        uplink_manager, std::string(sst::paths::kConfigDir) + "/uplink.json", cfg.uplink));
 
     // On-demand thumbnail: snapshot the latest pipeline frame + encode to JPEG
     // in memory. Registered here (after the pipeline exists) but before the BLE

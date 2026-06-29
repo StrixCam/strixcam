@@ -29,6 +29,10 @@ class UplinkManager {
     // Apply the config; returns the per-interface outcome for status reporting.
     auto Apply(const sst::config::UplinkData& cfg) -> UplinkStatus;
 
+    // Probe the LIVE per-interface state (reality, not the last apply) — what
+    // GetNetworkConfig reports so the app shows the camera's actual ethernet/wifi.
+    auto QueryStatus() -> UplinkStatus;
+
    private:
     IUplinkConfigurator& configurator_;
 };

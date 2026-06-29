@@ -34,6 +34,14 @@ class IUplinkConfigurator {
     // that is validated on this hardware, the adapter reports unavailable rather
     // than disturbing the live-preview GO. The camera joins a network as a client.
     virtual auto ApplyWifiSta(const sst::config::WifiStaUplink& cfg) -> UplinkResult = 0;
+
+    // Probe the LIVE state of each interface (not the last-applied config) so the
+    // app's Settings -> Network shows reality: the camera's ethernet is
+    // NM-managed and may be up with an address even when the firmware uplink
+    // config has it disabled. `ok` = the interface currently has connectivity;
+    // `detail` = its current address (ethernet) / status (wifi).
+    virtual auto ProbeEthernet() -> UplinkResult = 0;
+    virtual auto ProbeWifiSta() -> UplinkResult = 0;
 };
 
 }  // namespace sst::network

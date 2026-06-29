@@ -19,7 +19,7 @@ namespace sst::control {
 class NetworkHandler final : public ICommandHandler {
    public:
     NetworkHandler(sst::network::UplinkManager& manager, std::string config_path,
-                   sst::config::UplinkData initial, sst::network::UplinkStatus initial_status);
+                   sst::config::UplinkData initial);
 
     [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
@@ -33,7 +33,6 @@ class NetworkHandler final : public ICommandHandler {
     sst::network::UplinkManager& manager_;
     std::string config_path_;
     sst::config::UplinkData current_;
-    sst::network::UplinkStatus last_status_;
     std::mutex mtx_;
 };
 

@@ -25,6 +25,8 @@ class NmcliUplinkConfigurator final : public sst::network::IUplinkConfigurator {
     auto ApplyEthernet(const sst::config::EthernetUplink& cfg)
         -> sst::network::UplinkResult override;
     auto ApplyWifiSta(const sst::config::WifiStaUplink& cfg) -> sst::network::UplinkResult override;
+    auto ProbeEthernet() -> sst::network::UplinkResult override;
+    auto ProbeWifiSta() -> sst::network::UplinkResult override;
 
    private:
     // Discover the managed ethernet connection name (empty if none). Runs

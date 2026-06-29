@@ -54,12 +54,8 @@ void UplinkToProto(const sst::config::UplinkData& data, sst_cam::NetworkConfig* 
 }  // namespace
 
 NetworkHandler::NetworkHandler(sst::network::UplinkManager& manager, std::string config_path,
-                               sst::config::UplinkData initial,
-                               sst::network::UplinkStatus initial_status)
-    : manager_(manager),
-      config_path_(std::move(config_path)),
-      current_(std::move(initial)),
-      last_status_(std::move(initial_status)) {}
+                               sst::config::UplinkData initial)
+    : manager_(manager), config_path_(std::move(config_path)), current_(std::move(initial)) {}
 
 auto NetworkHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kSetNetworkConfig, sst_cam::Command::kGetNetworkConfig};
@@ -75,19 +71,22 @@ auto NetworkHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResp
 auto NetworkHandler::HandleSet(const sst_cam::NetworkConfig& proto) -> sst_cam::CommandResponse {
     std::lock_guard lock(mtx_);
     current_ = ProtoToUplink(proto);
-    last_status_ = manager_.Apply(current_);
+    manager_.Apply(current_);
     Persist();
-    return HandleGet();  // echo back the applied config + fresh status
+    return HandleGet();  // echo back the applied config + fresh LIVE status
 }
 
 auto NetworkHandler::HandleGet() -> sst_cam::CommandResponse {
+    // Live interface state (reality), not the last-applied result — the camera's
+    // ethernet is NM-managed and may be up even when the uplink config disables it.
+    const auto status = manager_.QueryStatus();
     sst_cam::CommandResponse resp;
     auto* payload = resp.mutable_network_config();
     UplinkToProto(current_, payload->mutable_config());
-    payload->set_ethernet_up(last_status_.ethernet.ok);
-    payload->set_ethernet_address(last_status_.ethernet.detail);
-    payload->set_wifi_up(last_status_.wifi.ok);
-    payload->set_wifi_status(last_status_.wifi.detail);
+    payload->set_ethernet_up(status.ethernet.ok);
+    payload->set_ethernet_address(status.ethernet.detail);
+    payload->set_wifi_up(status.wifi.ok);
+    payload->set_wifi_status(status.wifi.detail);
     resp.set_status(sst_cam::ResponseStatus::OK);
     return resp;
 }

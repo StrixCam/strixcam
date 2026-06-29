@@ -148,4 +148,23 @@ auto NmcliUplinkConfigurator::ApplyWifiSta(const sst::config::WifiStaUplink& /*c
             .detail = "wifi uplink unavailable: single radio is dedicated to the WiFi-Direct GO"};
 }
 
+auto NmcliUplinkConfigurator::ProbeEthernet() -> sst::network::UplinkResult {
+    // Live state, independent of the firmware uplink config: the camera's
+    // ethernet is NM-managed, so it may be up with an address even when the
+    // uplink config has it disabled. up == a managed connection with an address.
+    const std::string connection = DetectEthernetConnection();
+    if (connection.empty()) {
+        return {.ok = false, .detail = "no ethernet connection"};
+    }
+    const std::string address = CurrentAddress(connection);
+    return {.ok = !address.empty(), .detail = address.empty() ? "no address" : address};
+}
+
+auto NmcliUplinkConfigurator::ProbeWifiSta() -> sst::network::UplinkResult {
+    // The wifi-STA uplink is gated (single radio = the WiFi-Direct GO), so it is
+    // never up; report the same reason the apply path does.
+    return {.ok = false,
+            .detail = "wifi uplink unavailable: single radio is dedicated to the WiFi-Direct GO"};
+}
+
 }  // namespace sst::adapters::control

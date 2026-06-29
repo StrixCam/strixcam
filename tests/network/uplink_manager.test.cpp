@@ -21,9 +21,17 @@ class FakeConfigurator final : public sst::network::IUplinkConfigurator {
         ++wifi_calls;
         return {.ok = false, .detail = "unavailable"};
     }
+    auto ProbeEthernet() -> sst::network::UplinkResult override {
+        ++ethernet_probes;
+        return {.ok = true, .detail = "10.10.1.30/24"};
+    }
+    auto ProbeWifiSta() -> sst::network::UplinkResult override {
+        return {.ok = false, .detail = "unavailable"};
+    }
 
     int ethernet_calls{0};
     int wifi_calls{0};
+    int ethernet_probes{0};
     bool last_eth_dhcp{true};
 };
 
@@ -76,6 +84,21 @@ TEST(UplinkManagerTest, WifiEnabledIsDrivenButReportsGatedUnavailable) {
     EXPECT_EQ(configurator.wifi_calls, 1);
     EXPECT_TRUE(status.wifi_enabled);
     EXPECT_FALSE(status.wifi.ok);  // gated on single-radio hardware
+}
+
+// Fix B: QueryStatus probes the LIVE interface state (reality), independent of
+// any apply — so GetNetworkConfig shows the camera's actual ethernet/wifi.
+TEST(UplinkManagerTest, QueryStatusProbesLiveState) {
+    FakeConfigurator configurator;
+    sst::network::UplinkManager manager(configurator);
+
+    const auto status = manager.QueryStatus();
+
+    EXPECT_EQ(configurator.ethernet_probes, 1);
+    EXPECT_EQ(configurator.ethernet_calls, 0);  // probe, not apply
+    EXPECT_TRUE(status.ethernet.ok);
+    EXPECT_EQ(status.ethernet.detail, "10.10.1.30/24");
+    EXPECT_FALSE(status.wifi.ok);
 }
 
 }  // namespace
