@@ -39,6 +39,7 @@
 #include "app/control/services/handlers/export-burn.handler.hpp"
 #include "app/control/services/handlers/match-state.handler.hpp"
 #include "app/control/services/handlers/match.handler.hpp"
+#include "app/control/services/handlers/network.handler.hpp"
 #include "app/control/services/handlers/overlay.handler.hpp"
 #include "app/control/services/handlers/preview-layout.handler.hpp"
 #include "app/control/services/handlers/raw-capture.handler.hpp"
@@ -164,7 +165,7 @@ auto RunFirmware() -> int {
     // NetworkManager (the camera's ethernet is NM-managed, unlike the P2P radio).
     sst::adapters::control::NmcliUplinkConfigurator uplink_configurator;
     sst::network::UplinkManager uplink_manager(uplink_configurator);
-    uplink_manager.Apply(cfg.uplink);
+    const auto uplink_status = uplink_manager.Apply(cfg.uplink);
 
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
     sst::session::SessionCleanup cleanup(recording_service, streaming_service, wifi_manager,
@@ -322,6 +323,9 @@ auto RunFirmware() -> int {
     dispatcher.Register(std::make_shared<sst::control::PreviewLayoutHandler>(
         preview_layout_state, sst::runtime_defaults::kOverlayWidth,
         sst::runtime_defaults::kOverlayHeight));
+    dispatcher.Register(std::make_shared<sst::control::NetworkHandler>(
+        uplink_manager, std::string(sst::paths::kConfigDir) + "/uplink.json", cfg.uplink,
+        uplink_status));
 
     // On-demand thumbnail: snapshot the latest pipeline frame + encode to JPEG
     // in memory. Registered here (after the pipeline exists) but before the BLE
