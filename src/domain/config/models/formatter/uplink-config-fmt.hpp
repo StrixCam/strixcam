@@ -28,13 +28,15 @@ struct fmt::formatter<sst::config::WifiStaUplink> {
     auto format(const sst::config::WifiStaUplink& data, FormatContext& ctx) const {
         using sst::config::BoolOptToStr;
         using sst::config::StrOptToStr;
+        // Never log the passphrase in cleartext — emit a presence-only mask so a
+        // logged ConfigData/UplinkData can't leak venue/hotspot WiFi credentials.
+        const char* passphrase = data.passphrase.has_value() ? "<redacted>" : "(unset)";
         return fmt::format_to(
             ctx.out(),
             "WifiStaUplink{{enabled={}, ssid={}, passphrase={}, dhcp={}, address={}, "
             "gateway={}, dns={}}}",
-            BoolOptToStr(data.enabled), StrOptToStr(data.ssid), StrOptToStr(data.passphrase),
-            BoolOptToStr(data.dhcp), StrOptToStr(data.address), StrOptToStr(data.gateway),
-            StrOptToStr(data.dns));
+            BoolOptToStr(data.enabled), StrOptToStr(data.ssid), passphrase, BoolOptToStr(data.dhcp),
+            StrOptToStr(data.address), StrOptToStr(data.gateway), StrOptToStr(data.dns));
     }
 };
 
