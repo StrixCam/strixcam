@@ -38,7 +38,7 @@ TEST(SideBySideCompositorTest, OutputMatchesCanvasGeometryAndFormat) {
     const auto out = compositor.CompositeSideBySide(left, right);
     ASSERT_TRUE(out.has_value());
     const auto& result =
-        out.value();  // NOLINT(bugprone-unchecked-optional-access): ASSERT_TRUE guards above
+        out.value();  // NOLINT(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE
     EXPECT_EQ(result.geometry.width, kOutW);
     EXPECT_EQ(result.geometry.height, kOutH);
     EXPECT_EQ(result.format, sst::common::PixelFormat::BGR8);
@@ -54,7 +54,7 @@ TEST(SideBySideCompositorTest, LeftHalfIsLeftCameraRightHalfIsRightCamera) {
     const auto out = compositor.CompositeSideBySide(left, right);
     ASSERT_TRUE(out.has_value());
     const auto& result =
-        out.value();  // NOLINT(bugprone-unchecked-optional-access): ASSERT_TRUE guards above
+        out.value();  // NOLINT(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE
 
     // A 1280x720 input letterboxes to 640x360 centered in its 640x720 column;
     // the column center (row 360) lands inside the image.
@@ -88,7 +88,7 @@ TEST(SideBySideCompositorTest, OneInvalidInputStillComposites) {
     const auto out = compositor.CompositeSideBySide(left, nv12);
     ASSERT_TRUE(out.has_value());
     const auto& result =
-        out.value();  // NOLINT(bugprone-unchecked-optional-access): ASSERT_TRUE guards above
+        out.value();  // NOLINT(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE
     // Right half is black (invalid input → letterbox black column).
     const auto right_center = PixelAt(result, (kOutW * 3) / 4, kOutH / 2);
     EXPECT_LE(right_center.b, kFull - kNearFull);
