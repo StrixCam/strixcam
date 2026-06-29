@@ -13,8 +13,13 @@ namespace sst::config {
 //   - ethernet (eth0): the guaranteed uplink when a cable is present.
 //   - wifi (STA on the camera): GATED on single-radio GO+STA concurrency — the
 //     camera joins a network (venue wifi, a phone hotspot) as a normal client.
-// All fields optional so a partial JSON / partial BLE push leaves the rest at
-// the firmware's last value (mirrors WifiDirectData).
+// Fields are optional so a partial JSON on disk leaves the rest nullopt
+// (mirrors WifiDirectData). NOTE on the BLE push: SetNetworkConfig is a FULL
+// REPLACE of the uplink config, not a partial merge. proto3 scalars are
+// always-present, so ProtoToUplink engages every optional from the incoming
+// NetworkConfig — the app always sends the complete config and the firmware
+// overwrites its current uplink wholesale. (A true field-mask / proto
+// `optional` partial-push is a deferred cross-repo change.)
 
 // Static-vs-DHCP addressing shared by both uplink interfaces. `dhcp == true`
 // (or unset) means DHCP and the static fields are ignored; `dhcp == false`
