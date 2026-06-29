@@ -169,8 +169,10 @@ class CountingSink final : public IFrameSink {
 constexpr Dims kCompositeDims{2222, 720};
 class FakeCompositor final : public sst::processing::IFrameCompositor {
    public:
+    // NOLINTBEGIN(bugprone-easily-swappable-parameters): fixed IFrameCompositor (left, right).
     auto CompositeSideBySide(const Frame& left,
                              const Frame& right) -> std::optional<Frame> override {
+        // NOLINTEND(bugprone-easily-swappable-parameters)
         std::lock_guard lock(mtx_);
         ++calls;
         last_left_id = left.frame_id;

@@ -263,6 +263,7 @@ TEST(SessionManagerTest, NewMatchConfigResetsScoreSameMatchKeeps) {
     EXPECT_EQ(after.match.score_b, 0U);
     EXPECT_EQ(after.match.period, 0U);
     ASSERT_TRUE(after.config.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access): ASSERT_TRUE guards above
     EXPECT_EQ(after.config->match_uuid, "match-uuid-2");
 
     fs::remove_all(root);

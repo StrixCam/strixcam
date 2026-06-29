@@ -24,8 +24,8 @@ struct Bgr {
 };
 auto PixelAt(const sst::capture::Frame& frame, std::uint32_t col, std::uint32_t row) -> Bgr {
     const auto idx = (static_cast<std::size_t>(row) * frame.geometry.width + col) * kBgrChannels;
-    const auto* d = frame.planes[0].data;
-    return Bgr{d[idx + 0], d[idx + 1], d[idx + 2]};
+    const auto* data = frame.planes[0].data;
+    return Bgr{data[idx + 0], data[idx + 1], data[idx + 2]};
 }
 
 }  // namespace
@@ -37,11 +37,13 @@ TEST(SideBySideCompositorTest, OutputMatchesCanvasGeometryAndFormat) {
 
     const auto out = compositor.CompositeSideBySide(left, right);
     ASSERT_TRUE(out.has_value());
-    EXPECT_EQ(out->geometry.width, kOutW);
-    EXPECT_EQ(out->geometry.height, kOutH);
-    EXPECT_EQ(out->format, sst::common::PixelFormat::BGR8);
-    ASSERT_FALSE(out->planes.empty());
-    EXPECT_EQ(out->planes[0].size, static_cast<std::size_t>(kOutW) * kOutH * kBgrChannels);
+    const auto& result =
+        out.value();  // NOLINT(bugprone-unchecked-optional-access): ASSERT_TRUE guards above
+    EXPECT_EQ(result.geometry.width, kOutW);
+    EXPECT_EQ(result.geometry.height, kOutH);
+    EXPECT_EQ(result.format, sst::common::PixelFormat::BGR8);
+    ASSERT_FALSE(result.planes.empty());
+    EXPECT_EQ(result.planes[0].size, static_cast<std::size_t>(kOutW) * kOutH * kBgrChannels);
 }
 
 TEST(SideBySideCompositorTest, LeftHalfIsLeftCameraRightHalfIsRightCamera) {
@@ -51,19 +53,21 @@ TEST(SideBySideCompositorTest, LeftHalfIsLeftCameraRightHalfIsRightCamera) {
 
     const auto out = compositor.CompositeSideBySide(left, right);
     ASSERT_TRUE(out.has_value());
+    const auto& result =
+        out.value();  // NOLINT(bugprone-unchecked-optional-access): ASSERT_TRUE guards above
 
     // A 1280x720 input letterboxes to 640x360 centered in its 640x720 column;
     // the column center (row 360) lands inside the image.
-    const auto left_center = PixelAt(*out, kOutW / 4, kOutH / 2);
+    const auto left_center = PixelAt(result, kOutW / 4, kOutH / 2);
     EXPECT_GE(left_center.b, kNearFull);
     EXPECT_LE(left_center.r, kFull - kNearFull);
 
-    const auto right_center = PixelAt(*out, (kOutW * 3) / 4, kOutH / 2);
+    const auto right_center = PixelAt(result, (kOutW * 3) / 4, kOutH / 2);
     EXPECT_GE(right_center.r, kNearFull);
     EXPECT_LE(right_center.b, kFull - kNearFull);
 
     // Top edge of the canvas is letterbox black (image is vertically centered).
-    const auto top = PixelAt(*out, kOutW / 4, 0);
+    const auto top = PixelAt(result, kOutW / 4, 0);
     EXPECT_LE(top.b, kFull - kNearFull);
     EXPECT_LE(top.g, kFull - kNearFull);
     EXPECT_LE(top.r, kFull - kNearFull);
@@ -83,8 +87,10 @@ TEST(SideBySideCompositorTest, OneInvalidInputStillComposites) {
     const auto nv12 = sst::tests::processing::MakeNv12Frame(64, 64, 16, 128, 128);  // invalid right
     const auto out = compositor.CompositeSideBySide(left, nv12);
     ASSERT_TRUE(out.has_value());
+    const auto& result =
+        out.value();  // NOLINT(bugprone-unchecked-optional-access): ASSERT_TRUE guards above
     // Right half is black (invalid input → letterbox black column).
-    const auto right_center = PixelAt(*out, (kOutW * 3) / 4, kOutH / 2);
+    const auto right_center = PixelAt(result, (kOutW * 3) / 4, kOutH / 2);
     EXPECT_LE(right_center.b, kFull - kNearFull);
     EXPECT_LE(right_center.r, kFull - kNearFull);
 }
