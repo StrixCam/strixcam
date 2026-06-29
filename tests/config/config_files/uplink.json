@@ -1,0 +1,15 @@
+{
+  "ethernet": {
+    "enabled": true,
+    "dhcp": false,
+    "address": "10.10.1.30/24",
+    "gateway": "10.10.1.1",
+    "dns": "1.1.1.1"
+  },
+  "wifi": {
+    "enabled": true,
+    "ssid": "venue-wifi",
+    "passphrase": "secretpass",
+    "dhcp": true
+  }
+}

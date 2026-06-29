@@ -11,11 +11,14 @@
 
 #include "adapters/capture/frame/gstreamer/gstreamer.hpp"
 #include "adapters/control/ble/bluez/bluez-ble-transport.hpp"
+#include "adapters/control/network/ip-route-uplink-probe.hpp"
+#include "adapters/control/network/nmcli-uplink-configurator.hpp"
 #include "adapters/control/system/proc-system-stats.hpp"
 #include "adapters/control/wifi/wpa_supplicant/dnsmasq-dhcp-server.hpp"
 #include "adapters/control/wifi/wpa_supplicant/ip-network-configurator.hpp"
 #include "adapters/control/wifi/wpa_supplicant/wpa-wifi-manager.hpp"
 #include "adapters/network/http/http-download-server.hpp"
+#include "adapters/network/json/json-uplink-store.hpp"
 #include "adapters/overlay/burn/opencv-overlay-burner.hpp"
 #include "adapters/overlay/caching/caching-overlay-sink.hpp"
 #include "adapters/overlay/cairo/cairo-overlay-renderer.hpp"
@@ -38,6 +41,7 @@
 #include "app/control/services/handlers/export-burn.handler.hpp"
 #include "app/control/services/handlers/match-state.handler.hpp"
 #include "app/control/services/handlers/match.handler.hpp"
+#include "app/control/services/handlers/network.handler.hpp"
 #include "app/control/services/handlers/overlay.handler.hpp"
 #include "app/control/services/handlers/preview-layout.handler.hpp"
 #include "app/control/services/handlers/raw-capture.handler.hpp"
@@ -48,6 +52,7 @@
 #include "app/control/services/handlers/wifi-direct.handler.hpp"
 #include "app/decision/services/static_decision/static-decision.hpp"
 #include "app/network/services/download_server/download-server.hpp"
+#include "app/network/services/uplink-manager/uplink-manager.hpp"
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
 #include "app/session/services/session_cleanup/session-cleanup.hpp"
@@ -156,6 +161,25 @@ auto RunFirmware() -> int {
     sst::adapters::control::IpNetworkConfigurator network_configurator;
     sst::adapters::control::DnsmasqDhcpServer dhcp_server;
 
+    // Internet uplink (ethernet / gated wifi-STA) for cloud streaming — a separate
+    // plane from the WiFi-Direct GO that serves the phone its preview. Applied from
+    // persisted config on boot; re-pushable from the app over BLE (U4). Driven via
+    // NetworkManager (the camera's ethernet is NM-managed, unlike the P2P radio).
+    sst::adapters::control::NmcliUplinkConfigurator uplink_configurator;
+    sst::adapters::control::IpRouteUplinkProbe uplink_probe;
+    sst::network::UplinkManager uplink_manager(uplink_configurator);
+    sst::adapters::network::JsonUplinkStore uplink_store(std::string(sst::paths::kConfigDir) +
+                                                         "/uplink.json");
+    // Bring up enabled uplinks on boot OFF the main path: nmcli con up can stall
+    // (NM mid-restart, DHCP wait), and the subprocess deadline is generous (45s).
+    // Doing it synchronously here would delay BLE/WiFi-Direct/preview start by
+    // that long on a bad boot. Detach so BLE comes up regardless; the manager +
+    // configurator outlive main()'s run loop, and a copy of the config is moved
+    // into the thread, so there is no use-after-free of locals.
+    std::thread([&uplink_manager, boot_cfg = cfg.uplink]() mutable {
+        uplink_manager.Apply(boot_cfg);
+    }).detach();
+
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
     sst::session::SessionCleanup cleanup(recording_service, streaming_service, wifi_manager,
                                          dhcp_server);
@@ -252,7 +276,8 @@ auto RunFirmware() -> int {
         std::make_shared<sst::control::MatchStateHandler>(session_manager, NowEpochMs));
     dispatcher.Register(std::make_shared<sst::control::RecordingHandler>(
         session_manager, recording_service, overlay_timeline, NowMs));
-    dispatcher.Register(std::make_shared<sst::control::StreamingHandler>(streaming_service));
+    dispatcher.Register(
+        std::make_shared<sst::control::StreamingHandler>(streaming_service, &uplink_probe));
     dispatcher.Register(std::make_shared<sst::control::DownloadHandler>(
         download_server, sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort,
         sst::runtime_defaults::kDownloadTokenTtlSeconds));
@@ -312,6 +337,8 @@ auto RunFirmware() -> int {
     dispatcher.Register(std::make_shared<sst::control::PreviewLayoutHandler>(
         preview_layout_state, sst::runtime_defaults::kOverlayWidth,
         sst::runtime_defaults::kOverlayHeight));
+    dispatcher.Register(
+        std::make_shared<sst::control::NetworkHandler>(uplink_manager, uplink_store, cfg.uplink));
 
     // On-demand thumbnail: snapshot the latest pipeline frame + encode to JPEG
     // in memory. Registered here (after the pipeline exists) but before the BLE

@@ -38,6 +38,27 @@ TEST(ConfigLoaderTest, YieldsDeviceIdentityAndCalibrationWithoutDb) {
     ASSERT_TRUE(cfg.calibration.cameras.has_value());
 }
 
+// U3 / R5, R7: the camera's internet uplink (separate from the WiFi-Direct GO)
+// loads from uplink.json — ethernet with a static IP, wifi STA with creds.
+TEST(ConfigLoaderTest, LoadsUplinkConfig) {
+    const fs::path root = fs::path{SST_REPO_ROOT_DIR} / kConfigDir;
+    sst::config::app::ConfigLoader loader(root.string(), "json");
+    sst::config::ConfigData cfg = loader.get();
+
+    // Ethernet: enabled + static addressing.
+    EXPECT_EQ(cfg.uplink.ethernet.enabled, true);
+    EXPECT_EQ(cfg.uplink.ethernet.dhcp, false);
+    EXPECT_EQ(cfg.uplink.ethernet.address.value_or(""), "10.10.1.30/24");
+    EXPECT_EQ(cfg.uplink.ethernet.gateway.value_or(""), "10.10.1.1");
+    EXPECT_EQ(cfg.uplink.ethernet.dns.value_or(""), "1.1.1.1");
+
+    // WiFi STA: enabled + creds + DHCP.
+    EXPECT_EQ(cfg.uplink.wifi.enabled, true);
+    EXPECT_EQ(cfg.uplink.wifi.ssid.value_or(""), "venue-wifi");
+    EXPECT_EQ(cfg.uplink.wifi.passphrase.value_or(""), "secretpass");
+    EXPECT_EQ(cfg.uplink.wifi.dhcp, true);
+}
+
 // First-run self-provisioning: on a fresh device /etc/sst/cam/config is empty.
 // ConfigLoader must write built-in default config files and return them rather
 // than throwing, so the firmware (and its systemd service) starts out-of-box.
@@ -55,11 +76,16 @@ TEST(ConfigLoaderTest, WritesDefaultsWhenFilesMissing) {
     EXPECT_TRUE(fs::exists(root / "calibration.json"));
     EXPECT_TRUE(fs::exists(root / "storage.json"));
     EXPECT_TRUE(fs::exists(root / "wifi-direct.json"));
+    EXPECT_TRUE(fs::exists(root / "uplink.json"));
 
     // Defaults are sane + parse back through the loader.
     EXPECT_TRUE(cfg.device.name.has_value());
     ASSERT_TRUE(cfg.calibration.cameras.has_value());
     EXPECT_TRUE(cfg.wifi_direct.ssid.has_value());
+
+    // A fresh camera has NO configured uplink — both interfaces default off.
+    EXPECT_EQ(cfg.uplink.ethernet.enabled, false);
+    EXPECT_EQ(cfg.uplink.wifi.enabled, false);
 
     // Second load reads the written files unchanged — idempotent, no clobber.
     sst::config::app::ConfigLoader loader2(root.string(), "json");
