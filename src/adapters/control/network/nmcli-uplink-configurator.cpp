@@ -1,76 +1,35 @@
 #include "adapters/control/network/nmcli-uplink-configurator.hpp"
 
 #include <spdlog/spdlog.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
-#include <array>
-#include <cerrno>
-#include <cstdio>
-#include <cstring>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #include "adapters/control/network/nmcli-command.hpp"
+#include "adapters/control/network/subprocess.hpp"
 
 namespace sst::adapters::control {
 
 namespace {
-constexpr int kExecFailedExitCode = 127;
-constexpr std::size_t kReadBufferSize = 256;
-
-// Run `nmcli` with [argv] to completion; true iff it exits 0. Mirrors the
-// IpNetworkConfigurator fork/execvp style (nmcli con mod/up are short-lived).
+// Run a state-changing `nmcli` invocation, bounded by the apply deadline (a
+// hung `con up` mid-NM-restart must not stall the BLE dispatcher thread).
 auto RunNmcli(const std::vector<std::string>& argv) -> bool {
-    if (argv.empty()) {
-        return false;
-    }
-    std::vector<char*> c_argv;
-    c_argv.reserve(argv.size() + 1);
-    for (const auto& arg : argv) {
-        c_argv.push_back(
-            const_cast<char*>(arg.c_str()));  // NOLINT(cppcoreguidelines-pro-type-const-cast)
-    }
-    c_argv.push_back(nullptr);
-
-    const pid_t pid = ::fork();
-    if (pid < 0) {
-        spdlog::error("NmcliUplinkConfigurator: fork failed: {}", std::strerror(errno));
-        return false;
-    }
-    if (pid == 0) {
-        ::execvp("nmcli", c_argv.data());
-        ::_exit(kExecFailedExitCode);  // only reached if exec fails
-    }
-    int status = 0;
-    if (::waitpid(pid, &status, 0) != pid) {
-        return false;
-    }
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    return RunBounded(argv, kApplyTimeout);
 }
 
-// Capture stdout of a read-only `nmcli` query. Used only for discovery (the
-// connection name + current address), never to mutate state.
-auto Capture(const std::string& command) -> std::string {
-    std::array<char, kReadBufferSize> buffer{};
-    std::string out;
-    // NOLINTNEXTLINE(cert-env33-c) — fixed nmcli query strings, no user input in the command.
-    FILE* pipe = ::popen(command.c_str(), "r");
-    if (pipe == nullptr) {
-        return out;
-    }
-    while (std::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
-        out += buffer.data();
-    }
-    ::pclose(pipe);
-    return out;
+// Capture stdout of a read-only `nmcli` query, bounded by the short query
+// deadline. Used only for discovery (the connection name + current address),
+// never to mutate state. Returns empty on timeout/failure.
+auto Capture(const std::vector<std::string>& argv) -> std::string {
+    return CaptureBounded(argv, kQueryTimeout).output;
 }
 }  // namespace
 
 auto NmcliUplinkConfigurator::DetectEthernetConnection() -> std::string {
     // Lines: "DEVICE:TYPE:STATE:CONNECTION", e.g. "enP8p1s0:ethernet:connected:Wired connection 1".
-    const std::string out = Capture("nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device status");
+    const std::string out =
+        Capture({"nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"});
     std::istringstream stream(out);
     std::string line;
     while (std::getline(stream, line)) {
@@ -103,7 +62,8 @@ auto NmcliUplinkConfigurator::CurrentAddress(const std::string& connection) -> s
         return {};
     }
     // "IP4.ADDRESS[1]:10.10.1.30/24" → take the value after the colon.
-    const std::string out = Capture("nmcli -t -g IP4.ADDRESS con show \"" + connection + "\"");
+    const std::string out =
+        Capture({"nmcli", "-t", "-g", "IP4.ADDRESS", "con", "show", connection});
     std::string address = out;
     const auto newline = address.find('\n');
     if (newline != std::string::npos) {
