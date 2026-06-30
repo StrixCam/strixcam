@@ -94,7 +94,9 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     const std::string stamped = SST_FIRMWARE_VERSION;
     const std::string expected_fw = (stamped.empty() || stamped == "unknown") ? "1.0.0" : stamped;
     EXPECT_EQ(resp.device_info().firmware_version(), expected_fw);
-    EXPECT_GT(resp.device_info().protocol_version(), 0U);
+    // The reboot command surface (U7) bumped kProtocolVersion to 3; the app gates
+    // Reboot on an exact version match, so guard against a downward regression.
+    EXPECT_GE(resp.device_info().protocol_version(), 3U);
 }
 
 // is_recording / is_streaming / is_raw_capturing reflect the injected providers,
@@ -124,6 +126,20 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     // internet_reachable reflects the injected uplink probe (true here), not a
     // hardcoded false.
     EXPECT_TRUE(resp.telemetry().internet_reachable());
+}
+
+// The internet_reachable flag tracks the injected uplink probe in both
+// directions: a false-returning probe must report false (it replaced a
+// hardcoded false, so guard the live false path too, not just the true case).
+TEST(DeviceHandlerTest, TelemetryInternetReachableReflectsFalseProbe) {
+    FakeStats stats;
+    DeviceHandler handler(
+        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
+        NoWifi, [] { return false; });
+
+    auto resp = handler.Handle(TelemetryCommand());
+
+    EXPECT_FALSE(resp.telemetry().internet_reachable());
 }
 
 // R7: the handler never reads stats / produces telemetry unless a command is

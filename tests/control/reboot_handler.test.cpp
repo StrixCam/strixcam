@@ -43,5 +43,18 @@ TEST(RebootHandlerTest, RebootFailureReportsError) {
     const auto resp = handler.Handle(RebootCmd());
 
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
-    EXPECT_FALSE(resp.error_message().empty());
+    EXPECT_EQ(resp.error_message(), "reboot failed");
+}
+
+// A default-constructed (null) RebootFn is the silent-failure guard: Handle
+// short-circuits `reboot_ && reboot_()` and reports ERROR rather than calling
+// through a null std::function. Production never wires null, but the guard is
+// live code and gets a regression test.
+TEST(RebootHandlerTest, NullRebootFnReportsError) {
+    sst::control::RebootHandler handler(nullptr);
+
+    const auto resp = handler.Handle(RebootCmd());
+
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
+    EXPECT_EQ(resp.error_message(), "reboot failed");
 }
