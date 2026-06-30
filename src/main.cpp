@@ -265,7 +265,8 @@ auto RunFirmware() -> int {
         },
         [&streaming_service] { return !streaming_service.ListActivePlatformStreams().empty(); },
         [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
-        [&wifi_manager] { return wifi_manager.State(); }));
+        [&wifi_manager] { return wifi_manager.State(); },
+        [&uplink_probe] { return uplink_probe.HasInternetUplink(); }));
     dispatcher.Register(
         std::make_shared<sst::control::SessionHandler>(session_manager, overlay_controller));
     dispatcher.Register(std::make_shared<sst::control::WifiDirectHandler>(

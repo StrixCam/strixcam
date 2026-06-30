@@ -32,13 +32,15 @@ constexpr std::uint32_t kProtocolVersion = 3;
 
 DeviceHandler::DeviceHandler(sst::config::DeviceData device, ISystemStats& stats,
                              FlagProvider is_recording, FlagProvider is_streaming,
-                             FlagProvider is_raw_capturing, WifiStateProvider wifi_state)
+                             FlagProvider is_raw_capturing, WifiStateProvider wifi_state,
+                             FlagProvider internet_reachable)
     : device_(std::move(device)),
       stats_(stats),
       is_recording_(std::move(is_recording)),
       is_streaming_(std::move(is_streaming)),
       is_raw_capturing_(std::move(is_raw_capturing)),
-      wifi_state_(std::move(wifi_state)) {}
+      wifi_state_(std::move(wifi_state)),
+      internet_reachable_(std::move(internet_reachable)) {}
 
 auto DeviceHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kGetDeviceInfo, sst_cam::Command::kGetTelemetry};
@@ -93,7 +95,7 @@ auto DeviceHandler::HandleTelemetry() -> sst_cam::CommandResponse {
     } else {
         telemetry->set_wifi_state(sst_cam::WifiState::WIFI_DISCONNECTED);
     }
-    telemetry->set_internet_reachable(false);
+    telemetry->set_internet_reachable(internet_reachable_ && internet_reachable_());
     return resp;
 }
 

@@ -79,7 +79,7 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     FakeStats stats;
     DeviceHandler handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi);
+        NoWifi, [] { return false; });
 
     auto resp = handler.Handle(DeviceInfoCommand());
 
@@ -107,8 +107,8 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
      TelemetryReflectsRecordingStreamingAndRawCapturingFlags) {
     FakeStats stats;
     DeviceHandler handler(
-        MakeDevice(), stats, [] { return true; }, [] { return false; }, [] { return true; },
-        NoWifi);
+        MakeDevice(), stats, [] { return true; }, [] { return false; }, [] { return true; }, NoWifi,
+        [] { return true; });
 
     auto resp = handler.Handle(TelemetryCommand());
 
@@ -121,6 +121,9 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     // Set independently of is_recording (which is true here): proves field 14 is
     // wired, not mirroring is_recording.
     EXPECT_TRUE(resp.telemetry().is_raw_capturing());
+    // internet_reachable reflects the injected uplink probe (true here), not a
+    // hardcoded false.
+    EXPECT_TRUE(resp.telemetry().internet_reachable());
 }
 
 // R7: the handler never reads stats / produces telemetry unless a command is
@@ -129,7 +132,7 @@ TEST(DeviceHandlerTest, NoTelemetryWithoutACommand) {
     FakeStats stats;
     DeviceHandler handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi);
+        NoWifi, [] { return false; });
 
     EXPECT_EQ(stats.reads, 0);  // nothing read until asked
 
@@ -149,14 +152,15 @@ TEST(DeviceHandlerTest, TelemetryReportsLiveWifiState) {
                                            .connected = true,
                                            .ssid = "DIRECT-sst-cam",
                                            .ip_address = "192.168.49.1"};
-        });
+        },
+        [] { return false; });
     auto connected = connected_handler.Handle(TelemetryCommand());
     EXPECT_EQ(connected.telemetry().wifi_state(), sst_cam::WifiState::WIFI_CONNECTED);
     EXPECT_EQ(connected.telemetry().wifi_ssid(), "DIRECT-sst-cam");
 
     DeviceHandler off_handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi);
+        NoWifi, [] { return false; });
     auto off = off_handler.Handle(TelemetryCommand());
     EXPECT_EQ(off.telemetry().wifi_state(), sst_cam::WifiState::WIFI_DISCONNECTED);
 }
