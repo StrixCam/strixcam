@@ -13,6 +13,7 @@
 #include "adapters/control/ble/bluez/bluez-ble-transport.hpp"
 #include "adapters/control/network/ip-route-uplink-probe.hpp"
 #include "adapters/control/network/nmcli-uplink-configurator.hpp"
+#include "adapters/control/network/subprocess.hpp"
 #include "adapters/control/system/proc-system-stats.hpp"
 #include "adapters/control/wifi/wpa_supplicant/dnsmasq-dhcp-server.hpp"
 #include "adapters/control/wifi/wpa_supplicant/ip-network-configurator.hpp"
@@ -45,6 +46,7 @@
 #include "app/control/services/handlers/overlay.handler.hpp"
 #include "app/control/services/handlers/preview-layout.handler.hpp"
 #include "app/control/services/handlers/raw-capture.handler.hpp"
+#include "app/control/services/handlers/reboot.handler.hpp"
 #include "app/control/services/handlers/recording.handler.hpp"
 #include "app/control/services/handlers/session.handler.hpp"
 #include "app/control/services/handlers/streaming.handler.hpp"
@@ -81,6 +83,9 @@ constexpr std::uint32_t kPreviewPort = 8554;   // RTSP preview (wifi.proto)
 constexpr std::uint32_t kDownloadPort = 8080;  // HTTP downloads
 constexpr std::uint64_t kDownloadTokenTtlSeconds = 3600;
 constexpr const char* kGroupOwnerIp = "192.168.49.1";
+// Bound for the `systemctl reboot` exec — the call returns quickly, but the
+// deadline keeps a hung systemd/D-Bus from stalling the dispatcher thread.
+constexpr std::chrono::seconds kRebootTimeout{10};
 
 }  // namespace sst::runtime_defaults
 
@@ -339,6 +344,13 @@ auto RunFirmware() -> int {
         sst::runtime_defaults::kOverlayHeight));
     dispatcher.Register(
         std::make_shared<sst::control::NetworkHandler>(uplink_manager, uplink_store, cfg.uplink));
+    // Reboot: `systemctl reboot` requires the sst-cam service user to be
+    // permitted (polkit / sudoers — provisioned by deploy/install.sh). Run
+    // bounded so a hung call can't stall the single dispatcher thread.
+    dispatcher.Register(std::make_shared<sst::control::RebootHandler>([] {
+        return sst::adapters::control::RunBounded({"systemctl", "reboot"},
+                                                  sst::runtime_defaults::kRebootTimeout);
+    }));
 
     // On-demand thumbnail: snapshot the latest pipeline frame + encode to JPEG
     // in memory. Registered here (after the pipeline exists) but before the BLE

@@ -14,7 +14,9 @@ namespace {
 // capability, not a field addition, so the app gates the Network Settings page
 // on protocol_version >= 2 (an older firmware returns UNSUPPORTED with no
 // positive signal otherwise).
-constexpr std::uint32_t kProtocolVersion = 2;
+// v3: RebootCommand (U7) + record/stream quality surface; the app gates the
+// Reboot action and quality pickers on protocol_version >= 3.
+constexpr std::uint32_t kProtocolVersion = 3;
 }  // namespace
 
 DeviceHandler::DeviceHandler(sst::config::DeviceData device, ISystemStats& stats,
