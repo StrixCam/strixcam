@@ -229,8 +229,24 @@ target_include_directories(sst_cam_firmware_internal_libs PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 )
 
+# Firmware build version, stamped from `git describe` at configure time (the
+# parallel of the app's APP_VERSION --dart-define). This is the version reported
+# over the wire in DeviceInfoResponse — the config's `version` field is only a
+# fallback. Falls back to "unknown" outside a git checkout (e.g. a tarball build).
+execute_process(
+    COMMAND git describe --tags --always --dirty
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    OUTPUT_VARIABLE SST_FIRMWARE_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if(NOT SST_FIRMWARE_VERSION)
+    set(SST_FIRMWARE_VERSION "unknown")
+endif()
+
 target_compile_definitions(sst_cam_firmware_internal_libs PUBLIC
     SST_REPO_ROOT_DIR="${SST_REPO_ROOT_DIR}"
+    SST_FIRMWARE_VERSION="${SST_FIRMWARE_VERSION}"
 )
 
 # ============================================================

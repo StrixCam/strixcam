@@ -5,12 +5,18 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <string>
 
 #include "app/control/ports/system-stats.hpp"
 #include "app/control/ports/wifi-manager.hpp"
 #include "app/control/services/handlers/device.handler.hpp"
 #include "bluetooth.pb.h"
 #include "domain/config/models/device.hpp"
+
+// Same git-describe stamp the handler reports; guarded for non-CMake builds.
+#ifndef SST_FIRMWARE_VERSION
+#define SST_FIRMWARE_VERSION "unknown"
+#endif
 
 namespace {
 
@@ -82,7 +88,12 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     EXPECT_EQ(resp.device_info().device_id(), "00000042");
     EXPECT_EQ(resp.device_info().name(), "sst-cam");
     EXPECT_EQ(resp.device_info().model(), "v1");
-    EXPECT_EQ(resp.device_info().firmware_version(), "1.0.0");
+    // firmware_version is the real build (git describe), not the config's
+    // "1.0.0" placeholder — mirror the handler's fallback so this holds whether
+    // or not the test build was stamped from a git checkout.
+    const std::string stamped = SST_FIRMWARE_VERSION;
+    const std::string expected_fw = (stamped.empty() || stamped == "unknown") ? "1.0.0" : stamped;
+    EXPECT_EQ(resp.device_info().firmware_version(), expected_fw);
     EXPECT_GT(resp.device_info().protocol_version(), 0U);
 }
 
