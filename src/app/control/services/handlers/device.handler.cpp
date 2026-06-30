@@ -1,31 +1,46 @@
 #include "app/control/services/handlers/device.handler.hpp"
 
 #include <cstdint>
+#include <string>
 #include <utility>
 
 #include "domain/control/models/system-stats.hpp"
 
+// Stamped by CMake (git describe). Guarded so the TU still compiles if built
+// outside the project's CMake (e.g. a standalone tooling invocation).
+#ifndef SST_FIRMWARE_VERSION
+#define SST_FIRMWARE_VERSION "unknown"
+#endif
+
 namespace sst::control {
 
 namespace {
+// Real build version (git describe) — the wire-reported firmware_version. The
+// config's `version` field is only a fallback when the build wasn't stamped
+// from a git checkout.
+constexpr const char* kBuildVersion = SST_FIRMWARE_VERSION;
 // Bump on any breaking wire-schema change (proto/README.md versioning policy).
 // v2: added the network-config command surface — commands 42 (SetNetworkConfig)
 // + 43 (GetNetworkConfig) and response slot 26 (NetworkConfigResponse). New
 // capability, not a field addition, so the app gates the Network Settings page
 // on protocol_version >= 2 (an older firmware returns UNSUPPORTED with no
 // positive signal otherwise).
-constexpr std::uint32_t kProtocolVersion = 2;
+// v3: RebootCommand (U7) + record/stream quality surface; the app gates the
+// Reboot action and quality pickers on protocol_version >= 3.
+constexpr std::uint32_t kProtocolVersion = 3;
 }  // namespace
 
 DeviceHandler::DeviceHandler(sst::config::DeviceData device, ISystemStats& stats,
                              FlagProvider is_recording, FlagProvider is_streaming,
-                             FlagProvider is_raw_capturing, WifiStateProvider wifi_state)
+                             FlagProvider is_raw_capturing, WifiStateProvider wifi_state,
+                             FlagProvider internet_reachable)
     : device_(std::move(device)),
       stats_(stats),
       is_recording_(std::move(is_recording)),
       is_streaming_(std::move(is_streaming)),
       is_raw_capturing_(std::move(is_raw_capturing)),
-      wifi_state_(std::move(wifi_state)) {}
+      wifi_state_(std::move(wifi_state)),
+      internet_reachable_(std::move(internet_reachable)) {}
 
 auto DeviceHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kGetDeviceInfo, sst_cam::Command::kGetTelemetry};
@@ -44,7 +59,10 @@ auto DeviceHandler::HandleDeviceInfo() const -> sst_cam::CommandResponse {
     auto* info = resp.mutable_device_info();
     info->set_device_id(device_.serial_number.value_or(""));
     info->set_name(device_.name.value_or(""));
-    info->set_firmware_version(device_.version.value_or(""));
+    const std::string build_version = kBuildVersion;
+    info->set_firmware_version((build_version.empty() || build_version == "unknown")
+                                   ? device_.version.value_or("")
+                                   : build_version);
     info->set_model(device_.model.value_or(""));
     info->set_protocol_version(kProtocolVersion);
     return resp;
@@ -77,7 +95,7 @@ auto DeviceHandler::HandleTelemetry() -> sst_cam::CommandResponse {
     } else {
         telemetry->set_wifi_state(sst_cam::WifiState::WIFI_DISCONNECTED);
     }
-    telemetry->set_internet_reachable(false);
+    telemetry->set_internet_reachable(internet_reachable_ && internet_reachable_());
     return resp;
 }
 

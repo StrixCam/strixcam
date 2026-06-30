@@ -24,7 +24,7 @@ class DeviceHandler final : public ICommandHandler {
 
     DeviceHandler(sst::config::DeviceData device, ISystemStats& stats, FlagProvider is_recording,
                   FlagProvider is_streaming, FlagProvider is_raw_capturing,
-                  WifiStateProvider wifi_state);
+                  WifiStateProvider wifi_state, FlagProvider internet_reachable);
 
     [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
@@ -39,6 +39,9 @@ class DeviceHandler final : public ICommandHandler {
     FlagProvider is_streaming_;
     FlagProvider is_raw_capturing_;
     WifiStateProvider wifi_state_;
+    // True when the camera has an internet uplink (default route) — from the
+    // IUplinkProbe in main. Distinct from the WiFi-Direct GO link (link-local).
+    FlagProvider internet_reachable_;
 };
 
 }  // namespace sst::control

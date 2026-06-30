@@ -5,12 +5,18 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <string>
 
 #include "app/control/ports/system-stats.hpp"
 #include "app/control/ports/wifi-manager.hpp"
 #include "app/control/services/handlers/device.handler.hpp"
 #include "bluetooth.pb.h"
 #include "domain/config/models/device.hpp"
+
+// Same git-describe stamp the handler reports; guarded for non-CMake builds.
+#ifndef SST_FIRMWARE_VERSION
+#define SST_FIRMWARE_VERSION "unknown"
+#endif
 
 namespace {
 
@@ -73,7 +79,7 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     FakeStats stats;
     DeviceHandler handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi);
+        NoWifi, [] { return false; });
 
     auto resp = handler.Handle(DeviceInfoCommand());
 
@@ -82,8 +88,15 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     EXPECT_EQ(resp.device_info().device_id(), "00000042");
     EXPECT_EQ(resp.device_info().name(), "sst-cam");
     EXPECT_EQ(resp.device_info().model(), "v1");
-    EXPECT_EQ(resp.device_info().firmware_version(), "1.0.0");
-    EXPECT_GT(resp.device_info().protocol_version(), 0U);
+    // firmware_version is the real build (git describe), not the config's
+    // "1.0.0" placeholder — mirror the handler's fallback so this holds whether
+    // or not the test build was stamped from a git checkout.
+    const std::string stamped = SST_FIRMWARE_VERSION;
+    const std::string expected_fw = (stamped.empty() || stamped == "unknown") ? "1.0.0" : stamped;
+    EXPECT_EQ(resp.device_info().firmware_version(), expected_fw);
+    // The reboot command surface (U7) bumped kProtocolVersion to 3; the app gates
+    // Reboot on an exact version match, so guard against a downward regression.
+    EXPECT_GE(resp.device_info().protocol_version(), 3U);
 }
 
 // is_recording / is_streaming / is_raw_capturing reflect the injected providers,
@@ -96,8 +109,8 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
      TelemetryReflectsRecordingStreamingAndRawCapturingFlags) {
     FakeStats stats;
     DeviceHandler handler(
-        MakeDevice(), stats, [] { return true; }, [] { return false; }, [] { return true; },
-        NoWifi);
+        MakeDevice(), stats, [] { return true; }, [] { return false; }, [] { return true; }, NoWifi,
+        [] { return true; });
 
     auto resp = handler.Handle(TelemetryCommand());
 
@@ -110,6 +123,23 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     // Set independently of is_recording (which is true here): proves field 14 is
     // wired, not mirroring is_recording.
     EXPECT_TRUE(resp.telemetry().is_raw_capturing());
+    // internet_reachable reflects the injected uplink probe (true here), not a
+    // hardcoded false.
+    EXPECT_TRUE(resp.telemetry().internet_reachable());
+}
+
+// The internet_reachable flag tracks the injected uplink probe in both
+// directions: a false-returning probe must report false (it replaced a
+// hardcoded false, so guard the live false path too, not just the true case).
+TEST(DeviceHandlerTest, TelemetryInternetReachableReflectsFalseProbe) {
+    FakeStats stats;
+    DeviceHandler handler(
+        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
+        NoWifi, [] { return false; });
+
+    auto resp = handler.Handle(TelemetryCommand());
+
+    EXPECT_FALSE(resp.telemetry().internet_reachable());
 }
 
 // R7: the handler never reads stats / produces telemetry unless a command is
@@ -118,7 +148,7 @@ TEST(DeviceHandlerTest, NoTelemetryWithoutACommand) {
     FakeStats stats;
     DeviceHandler handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi);
+        NoWifi, [] { return false; });
 
     EXPECT_EQ(stats.reads, 0);  // nothing read until asked
 
@@ -138,14 +168,15 @@ TEST(DeviceHandlerTest, TelemetryReportsLiveWifiState) {
                                            .connected = true,
                                            .ssid = "DIRECT-sst-cam",
                                            .ip_address = "192.168.49.1"};
-        });
+        },
+        [] { return false; });
     auto connected = connected_handler.Handle(TelemetryCommand());
     EXPECT_EQ(connected.telemetry().wifi_state(), sst_cam::WifiState::WIFI_CONNECTED);
     EXPECT_EQ(connected.telemetry().wifi_ssid(), "DIRECT-sst-cam");
 
     DeviceHandler off_handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi);
+        NoWifi, [] { return false; });
     auto off = off_handler.Handle(TelemetryCommand());
     EXPECT_EQ(off.telemetry().wifi_state(), sst_cam::WifiState::WIFI_DISCONNECTED);
 }

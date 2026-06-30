@@ -39,6 +39,8 @@ INSTALL_DIR="${INSTALL_ROOT}/bin"
 INSTALL_PATH="${INSTALL_DIR}/sst_cam_firmware"
 BACKUP_PATH="${INSTALL_PATH}.bak"
 UNIT_PATH="/etc/systemd/system/${SERVICE}.service"
+# polkit rule granting SERVICE_USER the logind reboot action (firmware Reboot cmd).
+POLKIT_RULE_PATH="/etc/polkit-1/rules.d/49-sst-cam-reboot.rules"
 # Config dir the firmware reads on boot. MUST match the compiled-in path in
 # src/main.cpp (kConfigDir). The service runs as the non-root SERVICE_USER and
 # self-writes default JSON here on first boot for files it does not find, so the
@@ -238,6 +240,26 @@ WantedBy=multi-user.target
 UNIT
 }
 
+# polkit JS rule granting the unprivileged SERVICE_USER exactly the logind reboot
+# actions — so the firmware's `systemctl reboot` (BLE RebootCommand) is allowed
+# without running the service as root. Unquoted heredoc to interpolate
+# SERVICE_USER; the rule body contains no other shell metacharacters.
+embedded_polkit_rule() {
+  cat <<RULE
+// Managed by sst-cam-firmware deploy/install.sh — do not edit by hand.
+// Allow the sst-cam service user to reboot the camera (firmware RebootCommand,
+// served by exec'ing systemctl reboot). Grants only the reboot actions to that
+// user; everything else still follows the system polkit defaults.
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.login1.reboot" ||
+         action.id == "org.freedesktop.login1.reboot-multiple-sessions") &&
+        subject.user == "${SERVICE_USER}") {
+        return polkit.Result.YES;
+    }
+});
+RULE
+}
+
 ensure_setup() {
   local changed="no"
 
@@ -298,6 +320,23 @@ ensure_setup() {
     changed="yes"
   fi
   systemctl enable "$SERVICE" >/dev/null 2>&1 || true
+
+  # Reboot privilege: the firmware runs as the unprivileged SERVICE_USER and
+  # serves the BLE RebootCommand by exec'ing `systemctl reboot`, which logind
+  # gates behind polkit. Grant exactly that action (and reboot with other
+  # sessions active) to SERVICE_USER via a polkit rule — nothing else — so the
+  # camera can restart itself without running as root. polkitd picks up
+  # rules.d changes live, so no daemon restart is needed.
+  if [ -d /etc/polkit-1/rules.d ]; then
+    if [ ! -f "$POLKIT_RULE_PATH" ] || ! embedded_polkit_rule | cmp -s - "$POLKIT_RULE_PATH"; then
+      log "Setup: installing reboot polkit rule -> ${POLKIT_RULE_PATH} ..."
+      embedded_polkit_rule > "$POLKIT_RULE_PATH"
+      chmod 0644 "$POLKIT_RULE_PATH"
+      changed="yes"
+    fi
+  else
+    log "Setup: WARNING /etc/polkit-1/rules.d absent — Reboot command will be denied until a polkit grant exists."
+  fi
 
   if [ "$changed" = "yes" ]; then
     log "Setup complete."

@@ -188,13 +188,26 @@ auto HttpDownloadServer::Start() -> bool {
     if (running_) {
         return true;
     }
-    // Bind synchronously so we can report bind failure to the caller.
-    const int bound = static_cast<int>(server_->bind_to_port(bind_address_, port_));
-    if (bound <= 0) {
-        spdlog::error("HttpDownloadServer: bind {}:{} failed", bind_address_, port_);
-        return false;
+    // Bind synchronously so we can report bind failure to the caller. NOTE:
+    // httplib's bind_to_port returns 1=success / 0=failure — NOT the bound port.
+    // So for a fixed port we keep port_ (using the return value as the port is
+    // the bug that made telemetry/logs report ":1"). Only an ephemeral request
+    // (port 0, used by tests) needs bind_to_any_port, which DOES return the
+    // actual assigned port.
+    if (port_ == 0) {
+        const int assigned = server_->bind_to_any_port(bind_address_);
+        if (assigned <= 0) {
+            spdlog::error("HttpDownloadServer: bind {}:0 (ephemeral) failed", bind_address_);
+            return false;
+        }
+        bound_port_ = static_cast<std::uint16_t>(assigned);
+    } else {
+        if (!server_->bind_to_port(bind_address_, port_)) {
+            spdlog::error("HttpDownloadServer: bind {}:{} failed", bind_address_, port_);
+            return false;
+        }
+        bound_port_ = port_;
     }
-    bound_port_ = static_cast<std::uint16_t>(bound);
     running_ = true;
     thread_ = std::thread([this] { server_->listen_after_bind(); });
 
