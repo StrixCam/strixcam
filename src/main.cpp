@@ -12,6 +12,7 @@
 #include "adapters/capture/frame/gstreamer/gstreamer.hpp"
 #include "adapters/control/ble/bluez/bluez-ble-transport.hpp"
 #include "adapters/control/network/ip-route-uplink-probe.hpp"
+#include "adapters/control/network/iw-station-rssi-probe.hpp"
 #include "adapters/control/network/nmcli-uplink-configurator.hpp"
 #include "adapters/control/network/subprocess.hpp"
 #include "adapters/control/system/proc-system-stats.hpp"
@@ -52,6 +53,7 @@
 #include "app/control/services/handlers/streaming.handler.hpp"
 #include "app/control/services/handlers/thumbnail.handler.hpp"
 #include "app/control/services/handlers/wifi-direct.handler.hpp"
+#include "app/control/services/telemetry_probe/telemetry-probe.hpp"
 #include "app/decision/services/static_decision/static-decision.hpp"
 #include "app/network/services/download_server/download-server.hpp"
 #include "app/network/services/uplink-manager/uplink-manager.hpp"
@@ -172,6 +174,15 @@ auto RunFirmware() -> int {
     // NetworkManager (the camera's ethernet is NM-managed, unlike the P2P radio).
     sst::adapters::control::NmcliUplinkConfigurator uplink_configurator;
     sst::adapters::control::IpRouteUplinkProbe uplink_probe;
+    // Telemetry signals that need a subprocess to read — internet uplink (`ip
+    // route`) and WiFi-Direct peer RSSI (`iw`) — are sampled on a background
+    // thread, not inline on the BLE dispatcher. A per-telemetry-request fork
+    // there risked stalling every BLE command on a hung tool; the handler now
+    // reads cached atomics. Declared after uplink_probe (borrows it), torn down
+    // before it.
+    sst::adapters::control::IwStationRssiProbe wifi_signal_probe;
+    sst::control::TelemetryProbe telemetry_probe(uplink_probe, wifi_signal_probe);
+    telemetry_probe.Start();
     sst::network::UplinkManager uplink_manager(uplink_configurator);
     sst::adapters::network::JsonUplinkStore uplink_store(std::string(sst::paths::kConfigDir) +
                                                          "/uplink.json");
@@ -266,7 +277,8 @@ auto RunFirmware() -> int {
         [&streaming_service] { return !streaming_service.ListActivePlatformStreams().empty(); },
         [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
         [&wifi_manager] { return wifi_manager.State(); },
-        [&uplink_probe] { return uplink_probe.HasInternetUplink(); }));
+        [&telemetry_probe] { return telemetry_probe.InternetReachable(); },
+        [&telemetry_probe] { return telemetry_probe.WifiSignalDbm(); }));
     dispatcher.Register(
         std::make_shared<sst::control::SessionHandler>(session_manager, overlay_controller));
     dispatcher.Register(std::make_shared<sst::control::WifiDirectHandler>(
@@ -409,6 +421,7 @@ auto RunFirmware() -> int {
 
     clock_running.store(false);
     clock_thread.join();
+    telemetry_probe.Stop();
     http_download_server.Stop();
     ble_transport.Stop();
     pipeline.Stop();

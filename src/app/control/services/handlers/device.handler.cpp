@@ -1,6 +1,7 @@
 #include "app/control/services/handlers/device.handler.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -33,14 +34,15 @@ constexpr std::uint32_t kProtocolVersion = 3;
 DeviceHandler::DeviceHandler(sst::config::DeviceData device, ISystemStats& stats,
                              FlagProvider is_recording, FlagProvider is_streaming,
                              FlagProvider is_raw_capturing, WifiStateProvider wifi_state,
-                             FlagProvider internet_reachable)
+                             FlagProvider internet_reachable, SignalProvider wifi_signal_dbm)
     : device_(std::move(device)),
       stats_(stats),
       is_recording_(std::move(is_recording)),
       is_streaming_(std::move(is_streaming)),
       is_raw_capturing_(std::move(is_raw_capturing)),
       wifi_state_(std::move(wifi_state)),
-      internet_reachable_(std::move(internet_reachable)) {}
+      internet_reachable_(std::move(internet_reachable)),
+      wifi_signal_dbm_(std::move(wifi_signal_dbm)) {}
 
 auto DeviceHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kGetDeviceInfo, sst_cam::Command::kGetTelemetry};
@@ -96,6 +98,15 @@ auto DeviceHandler::HandleTelemetry() -> sst_cam::CommandResponse {
         telemetry->set_wifi_state(sst_cam::WifiState::WIFI_DISCONNECTED);
     }
     telemetry->set_internet_reachable(internet_reachable_ && internet_reachable_());
+
+    // wifi_signal_dbm has no presence bit (plain sint32), and a real RSSI is
+    // always negative — so leave it at the proto default 0 to mean "unknown"
+    // (no peer / probe unavailable) and only set it when we have a reading.
+    if (wifi_signal_dbm_) {
+        if (const std::optional<int> dbm = wifi_signal_dbm_()) {
+            telemetry->set_wifi_signal_dbm(*dbm);
+        }
+    }
     return resp;
 }
 

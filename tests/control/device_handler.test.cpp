@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 #include "app/control/ports/system-stats.hpp"
@@ -26,12 +27,16 @@ using sst::control::DeviceHandler;
 // override with a connected state.
 auto NoWifi() -> sst::control::WifiState { return sst::control::WifiState{}; }
 
+// Default signal provider: no connected peer → nullopt → wifi_signal_dbm unset.
+auto NoSignal() -> std::optional<int> { return std::nullopt; }
+
 // Fixed telemetry values the fake reports; the tests assert these exact numbers
 // flow through to the response.
 constexpr std::uint64_t kStorageFreeBytes = 1000;
 constexpr std::uint64_t kStorageTotalBytes = 4000;
 constexpr std::uint64_t kUptimeSeconds = 12345;
 constexpr float kCpuUsedPct = 25.0F;
+constexpr int kPeerRssiDbm = -57;
 
 class FakeStats final : public sst::control::ISystemStats {
    public:
@@ -79,7 +84,7 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     FakeStats stats;
     DeviceHandler handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; });
+        NoWifi, [] { return false; }, NoSignal);
 
     auto resp = handler.Handle(DeviceInfoCommand());
 
@@ -110,7 +115,7 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     FakeStats stats;
     DeviceHandler handler(
         MakeDevice(), stats, [] { return true; }, [] { return false; }, [] { return true; }, NoWifi,
-        [] { return true; });
+        [] { return true; }, NoSignal);
 
     auto resp = handler.Handle(TelemetryCommand());
 
@@ -135,11 +140,27 @@ TEST(DeviceHandlerTest, TelemetryInternetReachableReflectsFalseProbe) {
     FakeStats stats;
     DeviceHandler handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; });
+        NoWifi, [] { return false; }, NoSignal);
 
     auto resp = handler.Handle(TelemetryCommand());
 
     EXPECT_FALSE(resp.telemetry().internet_reachable());
+}
+
+// U9.2: wifi_signal_dbm carries the peer RSSI when the probe has a reading, and
+// stays at the proto default 0 ("unknown") when the probe returns nullopt — the
+// app distinguishes the two (real RSSI is always negative).
+TEST(DeviceHandlerTest, TelemetryWifiSignalDbmReflectsProbe) {
+    FakeStats stats;
+    DeviceHandler with_signal(
+        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
+        NoWifi, [] { return false; }, [] { return std::optional<int>{kPeerRssiDbm}; });
+    EXPECT_EQ(with_signal.Handle(TelemetryCommand()).telemetry().wifi_signal_dbm(), kPeerRssiDbm);
+
+    DeviceHandler no_signal(
+        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
+        NoWifi, [] { return false; }, NoSignal);
+    EXPECT_EQ(no_signal.Handle(TelemetryCommand()).telemetry().wifi_signal_dbm(), 0);
 }
 
 // R7: the handler never reads stats / produces telemetry unless a command is
@@ -148,7 +169,7 @@ TEST(DeviceHandlerTest, NoTelemetryWithoutACommand) {
     FakeStats stats;
     DeviceHandler handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; });
+        NoWifi, [] { return false; }, NoSignal);
 
     EXPECT_EQ(stats.reads, 0);  // nothing read until asked
 
@@ -169,14 +190,14 @@ TEST(DeviceHandlerTest, TelemetryReportsLiveWifiState) {
                                            .ssid = "DIRECT-sst-cam",
                                            .ip_address = "192.168.49.1"};
         },
-        [] { return false; });
+        [] { return false; }, NoSignal);
     auto connected = connected_handler.Handle(TelemetryCommand());
     EXPECT_EQ(connected.telemetry().wifi_state(), sst_cam::WifiState::WIFI_CONNECTED);
     EXPECT_EQ(connected.telemetry().wifi_ssid(), "DIRECT-sst-cam");
 
     DeviceHandler off_handler(
         MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; });
+        NoWifi, [] { return false; }, NoSignal);
     auto off = off_handler.Handle(TelemetryCommand());
     EXPECT_EQ(off.telemetry().wifi_state(), sst_cam::WifiState::WIFI_DISCONNECTED);
 }
