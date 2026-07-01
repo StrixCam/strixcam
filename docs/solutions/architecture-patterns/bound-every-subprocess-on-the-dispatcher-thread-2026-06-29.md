@@ -65,5 +65,9 @@ Any new adapter that execs a tool on the dispatcher thread inherits this hazard.
 Before adding one: bound it with a deadline, never block unboundedly, and prefer
 the shared `subprocess.{hpp,cpp}` helpers over a fresh `popen`. If the work can be
 slow and is not on the response's critical path, run it off-thread (detached) like
-the boot apply. Related: [[non-blocking-sink-with-async-stop-2026-06-10]] (the
+the boot apply. For a **recurring per-request** fork (e.g. telemetry sampling `ip
+route`/`iw` on every `GetTelemetry`), bounding the inline call is not enough — move
+it to a background poller that caches off-thread: see
+[[telemetry-probe-background-poller-off-the-dispatcher-thread-2026-06-30]].
+Related: [[non-blocking-sink-with-async-stop-2026-06-10]] (the
 same "never block the hot path" discipline for the capture/encode side).
