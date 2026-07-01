@@ -56,6 +56,10 @@ TEST(RtmpLaunchTest, CarriesEncodeAndMuxChain) {
     EXPECT_TRUE(Contains(launch, "rtmp2sink"));
     EXPECT_TRUE(Contains(launch, "voaacenc"));  // silent AAC track (YouTube et al.)
     EXPECT_TRUE(Contains(launch, "location=\"rtmp://ingest.example/live/secretkey\""));
+    // 4:2:0 pin (decodability) + a leaky pre-encoder queue so a slow software
+    // encode drops frames instead of backing up the is-live appsrc unbounded.
+    EXPECT_TRUE(Contains(launch, "format=I420"));
+    EXPECT_TRUE(Contains(launch, "queue leaky=downstream"));
 }
 
 TEST(RtmpLaunchTest, LocationAppendsKeyAsFinalSegment) {

@@ -179,7 +179,7 @@ TEST(StreamingHandlerTest, SupportedStreamQualityAppliedToConfig) {
     EXPECT_EQ(streaming.last_framerate, kMode.fps);
 }
 
-// No quality field → the config keeps its default resolution/fps (1080p60).
+// No quality field → the config keeps its default resolution/fps (1080p30).
 TEST(StreamingHandlerTest, MissingStreamQualityKeepsDefault) {
     FakeStreaming streaming;
     StreamingHandler handler(streaming);
@@ -189,6 +189,11 @@ TEST(StreamingHandlerTest, MissingStreamQualityKeepsDefault) {
     EXPECT_EQ(streaming.last_width, sst::streaming::kDefaultWidth);
     EXPECT_EQ(streaming.last_height, sst::streaming::kDefaultHeight);
     EXPECT_EQ(streaming.last_framerate, sst::streaming::kDefaultFramerate);
+    // The no-quality default MUST be a mode the hardware sustains — otherwise a
+    // legitimate quality-less START runs the unsustainable software encode.
+    EXPECT_TRUE(
+        sst::common::IsSupportedMode({sst::streaming::kDefaultWidth, sst::streaming::kDefaultHeight,
+                                      sst::streaming::kDefaultFramerate}));
 }
 
 // U8/R16: an unadvertised mode is rejected to the firmware default, never applied.

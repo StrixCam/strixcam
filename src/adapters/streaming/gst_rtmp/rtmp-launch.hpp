@@ -8,6 +8,11 @@ namespace sst::adapters::streaming {
 
 inline constexpr const char* kRtmpAppsrcName = "src";
 
+// Bound on the leaky pre-encoder queue (~0.5s at 60fps). Drop-oldest keeps the
+// software encoder from accumulating raw frames unbounded in the is-live appsrc
+// when it falls behind realtime (no NVENC).
+inline constexpr int kRtmpPreEncodeQueueBuffers = 30;
+
 // Builds the "<url>/<key>" location rtmp2sink expects — most ingest endpoints
 // accept the stream key as the final path segment. rtmp:// and rtmps:// use the
 // same element; only the URL scheme differs.
