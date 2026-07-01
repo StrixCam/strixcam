@@ -82,9 +82,7 @@ auto TelemetryCommand() -> sst_cam::Command {
 TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
      DeviceInfoReturnsIdentityAndProtocolVersion) {
     FakeStats stats;
-    DeviceHandler handler(
-        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; }, NoSignal);
+    DeviceHandler handler(MakeDevice(), stats, {});  // device-info ignores the telemetry providers
 
     auto resp = handler.Handle(DeviceInfoCommand());
 
@@ -113,9 +111,10 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
 TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
      TelemetryReflectsRecordingStreamingAndRawCapturingFlags) {
     FakeStats stats;
-    DeviceHandler handler(
-        MakeDevice(), stats, [] { return true; }, [] { return false; }, [] { return true; }, NoWifi,
-        [] { return true; }, NoSignal);
+    DeviceHandler handler(MakeDevice(), stats,
+                          {.is_recording = [] { return true; },
+                           .is_raw_capturing = [] { return true; },
+                           .internet_reachable = [] { return true; }});
 
     auto resp = handler.Handle(TelemetryCommand());
 
@@ -138,9 +137,7 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
 // hardcoded false, so guard the live false path too, not just the true case).
 TEST(DeviceHandlerTest, TelemetryInternetReachableReflectsFalseProbe) {
     FakeStats stats;
-    DeviceHandler handler(
-        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; }, NoSignal);
+    DeviceHandler handler(MakeDevice(), stats, {.internet_reachable = [] { return false; }});
 
     auto resp = handler.Handle(TelemetryCommand());
 
@@ -152,14 +149,11 @@ TEST(DeviceHandlerTest, TelemetryInternetReachableReflectsFalseProbe) {
 // app distinguishes the two (real RSSI is always negative).
 TEST(DeviceHandlerTest, TelemetryWifiSignalDbmReflectsProbe) {
     FakeStats stats;
-    DeviceHandler with_signal(
-        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; }, [] { return std::optional<int>{kPeerRssiDbm}; });
+    DeviceHandler with_signal(MakeDevice(), stats,
+                              {.wifi_signal_dbm = [] { return std::optional<int>{kPeerRssiDbm}; }});
     EXPECT_EQ(with_signal.Handle(TelemetryCommand()).telemetry().wifi_signal_dbm(), kPeerRssiDbm);
 
-    DeviceHandler no_signal(
-        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; }, NoSignal);
+    DeviceHandler no_signal(MakeDevice(), stats, {.wifi_signal_dbm = NoSignal});
     EXPECT_EQ(no_signal.Handle(TelemetryCommand()).telemetry().wifi_signal_dbm(), 0);
 }
 
@@ -167,9 +161,7 @@ TEST(DeviceHandlerTest, TelemetryWifiSignalDbmReflectsProbe) {
 // dispatched — no background polling, no unsolicited push.
 TEST(DeviceHandlerTest, NoTelemetryWithoutACommand) {
     FakeStats stats;
-    DeviceHandler handler(
-        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; }, NoSignal);
+    DeviceHandler handler(MakeDevice(), stats, {});
 
     EXPECT_EQ(stats.reads, 0);  // nothing read until asked
 
@@ -182,22 +174,18 @@ TEST(DeviceHandlerTest, NoTelemetryWithoutACommand) {
 // keeps the app's wifi indicator coherent with the actual preview link.
 TEST(DeviceHandlerTest, TelemetryReportsLiveWifiState) {
     FakeStats stats;
-    DeviceHandler connected_handler(
-        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        [] {
-            return sst::control::WifiState{.mode = sst::control::WifiMode::kP2pGroupOwner,
-                                           .connected = true,
-                                           .ssid = "DIRECT-sst-cam",
-                                           .ip_address = "192.168.49.1"};
-        },
-        [] { return false; }, NoSignal);
+    DeviceHandler connected_handler(MakeDevice(), stats, {.wifi_state = [] {
+                                        return sst::control::WifiState{
+                                            .mode = sst::control::WifiMode::kP2pGroupOwner,
+                                            .connected = true,
+                                            .ssid = "DIRECT-sst-cam",
+                                            .ip_address = "192.168.49.1"};
+                                    }});
     auto connected = connected_handler.Handle(TelemetryCommand());
     EXPECT_EQ(connected.telemetry().wifi_state(), sst_cam::WifiState::WIFI_CONNECTED);
     EXPECT_EQ(connected.telemetry().wifi_ssid(), "DIRECT-sst-cam");
 
-    DeviceHandler off_handler(
-        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; }, NoSignal);
+    DeviceHandler off_handler(MakeDevice(), stats, {.wifi_state = NoWifi});
     auto off = off_handler.Handle(TelemetryCommand());
     EXPECT_EQ(off.telemetry().wifi_state(), sst_cam::WifiState::WIFI_DISCONNECTED);
 }

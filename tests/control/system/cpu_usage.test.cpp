@@ -45,6 +45,28 @@ TEST(CpuBusyPercent, ZeroWhenNoElapsedJiffiesOrCountersRegress) {
     EXPECT_FLOAT_EQ(CpuBusyPercent(same, regressed), 0.0F);  // counters went backwards
 }
 
+TEST(CpuBusyPercent, ZeroWhenIdleAcrossTheWindow) {
+    // The common real-world reading: time elapses (total advances) but no busy
+    // jiffies accrue — an idle Jetson must read 0%, distinct from "no elapsed time".
+    const CpuTimes prev{.busy = 100, .total = 1000};
+    const CpuTimes cur{.busy = 100, .total = 1200};
+    EXPECT_FLOAT_EQ(CpuBusyPercent(prev, cur), 0.0F);
+}
+
+TEST(CpuBusyPercent, FullyLoadedReadsExactlyFullScale) {
+    // Non-degenerate 100%: every elapsed jiffy is busy (busy delta == total delta),
+    // so the upper bound is pinned by real math, not only the clamp.
+    const CpuTimes prev{.busy = 500, .total = 1000};
+    const CpuTimes cur{.busy = 700, .total = 1200};
+    EXPECT_FLOAT_EQ(CpuBusyPercent(prev, cur), 100.0F);
+}
+
+TEST(ParseProcStatCpu, HandlesPreStealSevenFieldKernels) {
+    // Older /proc/stat lines omit steal+guest; the parser needs 8 fields, so a
+    // 7-field line degrades to nullopt (0% CPU) rather than mis-summing.
+    EXPECT_FALSE(ParseProcStatCpu("cpu 10 0 5 100 2 1 1\n").has_value());
+}
+
 TEST(CpuBusyPercent, ClampsToFullScale) {
     const CpuTimes prev{.busy = 0, .total = 0};
     const CpuTimes cur{.busy = 500, .total = 100};  // busy delta > total delta (degenerate)

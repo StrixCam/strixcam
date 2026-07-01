@@ -271,14 +271,20 @@ auto RunFirmware() -> int {
     // ★ Extensibility point — one Register() line per concern.
     dispatcher.Register(std::make_shared<sst::control::DeviceHandler>(
         cfg.device, system_stats,
-        [&recording_service] {
-            return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
-        },
-        [&streaming_service] { return !streaming_service.ListActivePlatformStreams().empty(); },
-        [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
-        [&wifi_manager] { return wifi_manager.State(); },
-        [&telemetry_probe] { return telemetry_probe.InternetReachable(); },
-        [&telemetry_probe] { return telemetry_probe.WifiSignalDbm(); }));
+        sst::control::DeviceHandler::Providers{
+            .is_recording =
+                [&recording_service] {
+                    return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
+                },
+            .is_streaming =
+                [&streaming_service] {
+                    return !streaming_service.ListActivePlatformStreams().empty();
+                },
+            .is_raw_capturing = [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
+            .wifi_state = [&wifi_manager] { return wifi_manager.State(); },
+            .internet_reachable =
+                [&telemetry_probe] { return telemetry_probe.InternetReachable(); },
+            .wifi_signal_dbm = [&telemetry_probe] { return telemetry_probe.WifiSignalDbm(); }}));
     dispatcher.Register(
         std::make_shared<sst::control::SessionHandler>(session_manager, overlay_controller));
     dispatcher.Register(std::make_shared<sst::control::WifiDirectHandler>(

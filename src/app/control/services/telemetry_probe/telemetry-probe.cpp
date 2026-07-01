@@ -25,14 +25,16 @@ auto TelemetryProbe::SampleOnce() -> void {
 }
 
 auto TelemetryProbe::Start() -> void {
-    {
-        const std::lock_guard lock(run_mtx_);
-        if (running_) {
-            return;
-        }
-        running_ = true;
+    // Assign thread_ while still holding run_mtx_ so a concurrent Stop() can never
+    // observe running_==true with an unassigned thread_ (which would leave the
+    // Loop thread joinable-but-never-joined → std::terminate at destruction). The
+    // first sample runs inside Loop() rather than synchronously here, so Start()
+    // never blocks the caller on a slow `ip`/`iw` fork at boot.
+    const std::lock_guard lock(run_mtx_);
+    if (running_) {
+        return;
     }
-    SampleOnce();  // warm the cache before the first telemetry request
+    running_ = true;
     thread_ = std::thread([this] { Loop(); });
 }
 
@@ -53,14 +55,14 @@ auto TelemetryProbe::Stop() -> void {
 auto TelemetryProbe::Loop() -> void {
     std::unique_lock lock(run_mtx_);
     while (running_) {
+        lock.unlock();
+        SampleOnce();  // sample immediately on the first pass, then every interval
+        lock.lock();
         // Wait out the interval, but wake immediately on Stop() so shutdown is
-        // prompt rather than blocked on a full interval.
+        // prompt (bounded only by an already-in-flight SampleOnce()).
         if (run_cv_.wait_for(lock, interval_, [this] { return !running_; })) {
             break;
         }
-        lock.unlock();
-        SampleOnce();
-        lock.lock();
     }
 }
 

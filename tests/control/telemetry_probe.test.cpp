@@ -55,21 +55,46 @@ auto WaitFor(Pred pred) -> bool {
     return pred();
 }
 
-TEST(TelemetryProbe, WarmsCacheSynchronouslyOnStart) {
+TEST(TelemetryProbe, PopulatesCacheShortlyAfterStart) {
     FakeUplink uplink;
     FakeSignal signal;
     uplink.value = true;
     signal.value = kRssiStrong;
 
     TelemetryProbe probe(uplink, signal, kPollInterval);
-    probe.Start();  // samples once synchronously before returning
+    probe.Start();  // first sample runs on the poll thread (not synchronously)
 
-    EXPECT_TRUE(probe.InternetReachable());
-    const std::optional<int> signal_dbm = probe.WifiSignalDbm();
-    ASSERT_TRUE(signal_dbm.has_value());
-    EXPECT_EQ(signal_dbm.value_or(0), kRssiStrong);
+    EXPECT_TRUE(WaitFor([&] { return probe.InternetReachable(); }));
+    EXPECT_TRUE(WaitFor([&] { return probe.WifiSignalDbm() == std::optional<int>{kRssiStrong}; }));
     EXPECT_GE(uplink.calls.load(), 1);
     EXPECT_GE(signal.calls.load(), 1);
+}
+
+TEST(TelemetryProbe, StartIsIdempotentAndStopBeforeStartIsSafe) {
+    FakeUplink uplink;
+    FakeSignal signal;
+    TelemetryProbe probe(uplink, signal, kPollInterval);
+    probe.Stop();  // no-op before any Start()
+    probe.Start();
+    probe.Start();  // second Start() is a no-op — must not spawn a second thread
+    EXPECT_TRUE(WaitFor([&] { return uplink.calls.load() >= 1; }));
+    probe.Stop();  // must join the single thread cleanly
+    SUCCEED();
+}
+
+TEST(TelemetryProbe, RestartResumesSampling) {
+    FakeUplink uplink;
+    FakeSignal signal;
+    uplink.value = true;
+    TelemetryProbe probe(uplink, signal, kPollInterval);
+    probe.Start();
+    EXPECT_TRUE(WaitFor([&] { return probe.InternetReachable(); }));
+    probe.Stop();
+    const int calls_after_first = uplink.calls.load();
+
+    probe.Start();  // restart — the joined thread slot is reused
+    EXPECT_TRUE(WaitFor([&] { return uplink.calls.load() > calls_after_first; }));
+    probe.Stop();
 }
 
 TEST(TelemetryProbe, RefreshesCacheOnTheInterval) {
