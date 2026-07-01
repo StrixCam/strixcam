@@ -4,6 +4,7 @@
 #include <string>
 #include <utility>
 
+#include "domain/common/models/video-quality.hpp"
 #include "domain/control/models/system-stats.hpp"
 
 // Stamped by CMake (git describe). Guarded so the TU still compiles if built
@@ -65,6 +66,16 @@ auto DeviceHandler::HandleDeviceInfo() const -> sst_cam::CommandResponse {
                                    : build_version);
     info->set_model(device_.model.value_or(""));
     info->set_protocol_version(kProtocolVersion);
+    // Advertise the concrete record/stream modes the encode pipeline can deliver
+    // so the app offers only real options (R16). Single source of truth shared
+    // with the record/stream quality validation (kSupportedVideoModes). The
+    // fixed-resolution raw dual-recording is deliberately not advertised.
+    for (const auto& mode : sst::common::kSupportedVideoModes) {
+        auto* wire_mode = info->add_supported_modes();
+        wire_mode->set_width(static_cast<std::uint32_t>(mode.width));
+        wire_mode->set_height(static_cast<std::uint32_t>(mode.height));
+        wire_mode->set_fps(static_cast<std::uint32_t>(mode.fps));
+    }
     return resp;
 }
 

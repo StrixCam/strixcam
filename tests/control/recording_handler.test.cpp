@@ -14,6 +14,7 @@
 #include "app/session/services/session_manager/session-manager.hpp"
 #include "app/storage/ports/recording-service.hpp"
 #include "bluetooth.pb.h"
+#include "domain/common/models/video-quality.hpp"
 #include "domain/session/models/session-config.hpp"
 #include "domain/storage/models/recording-state.hpp"
 
@@ -26,10 +27,12 @@ using sst::session::SessionPhase;
 
 class FakeRecorder final : public sst::storage::IRecordingService {
    public:
-    auto StartRecording(const std::string& video, const std::string& thumb) -> bool override {
+    auto StartRecording(const std::string& video, const std::string& thumb,
+                        const sst::common::VideoQuality& quality) -> bool override {
         ++start_calls;
         last_video = video;
         last_thumb = thumb;
+        last_quality = quality;
         return start_ok;
     }
     auto Pause() -> bool override {
@@ -60,6 +63,7 @@ class FakeRecorder final : public sst::storage::IRecordingService {
     bool stop_ok{true};
     std::string last_video;
     std::string last_thumb;
+    sst::common::VideoQuality last_quality;
     sst::storage::RecordingState state{};
 };
 
@@ -116,6 +120,15 @@ auto Cmd(sst_cam::RecordingAction action) -> sst_cam::Command {
     return cmd;
 }
 
+auto StartCmdWithQuality(const sst::common::VideoQuality& mode) -> sst_cam::Command {
+    auto cmd = Cmd(sst_cam::RECORDING_START);
+    auto* quality = cmd.mutable_recording_control()->mutable_quality();
+    quality->set_width(static_cast<std::uint32_t>(mode.width));
+    quality->set_height(static_cast<std::uint32_t>(mode.height));
+    quality->set_fps(static_cast<std::uint32_t>(mode.fps));
+    return cmd;
+}
+
 TEST(RecordingHandlerTest, StartInReadyPhaseStartsRecorderAndTransitions) {
     FakeCleanup cleanup;
     SessionManager session_mgr(cleanup);
@@ -145,6 +158,52 @@ TEST(RecordingHandlerTest, StartBeforeReadyRejectedWithoutTouchingRecorder) {
     EXPECT_EQ(recorder.start_calls, 0);
     EXPECT_EQ(recorder.stop_calls, 0);
     EXPECT_EQ(session_mgr.Phase(), SessionPhase::kConfigured);
+}
+
+// U8/R15: a supported record quality on the START command reaches the recording
+// service verbatim, independent of any stream quality.
+TEST(RecordingHandlerTest, SupportedRecordQualityForwarded) {
+    FakeCleanup cleanup;
+    SessionManager session_mgr(cleanup);
+    FakeRecorder recorder;
+    FakeTimeline timeline;
+    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    AdvanceToReady(session_mgr);
+
+    const sst::common::VideoQuality kMode{1920, 1080, 60};
+    auto resp = handler.Handle(StartCmdWithQuality(kMode));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(recorder.last_quality, kMode);
+}
+
+// U8/R16: an unsupported requested mode is rejected to the firmware default
+// (unset) rather than driving the pipeline to an unadvertised resolution.
+TEST(RecordingHandlerTest, UnsupportedRecordQualityFallsBackToDefault) {
+    FakeCleanup cleanup;
+    SessionManager session_mgr(cleanup);
+    FakeRecorder recorder;
+    FakeTimeline timeline;
+    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    AdvanceToReady(session_mgr);
+
+    const sst::common::VideoQuality k4K{3840, 2160, 30};  // not advertised
+    auto resp = handler.Handle(StartCmdWithQuality(k4K));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_FALSE(recorder.last_quality.IsSet());
+}
+
+// A START with no quality field leaves the recorder on its default (unset).
+TEST(RecordingHandlerTest, MissingRecordQualityIsUnset) {
+    FakeCleanup cleanup;
+    SessionManager session_mgr(cleanup);
+    FakeRecorder recorder;
+    FakeTimeline timeline;
+    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    AdvanceToReady(session_mgr);
+
+    auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_FALSE(recorder.last_quality.IsSet());
 }
 
 TEST(RecordingHandlerTest, StartWithNoSessionConfigErrors) {

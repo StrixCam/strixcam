@@ -4,10 +4,13 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <string>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #include "adapters/storage/raw_capture/filesystem-raw-capture-sink.hpp"
+#include "app/storage/ports/raw-capture-sink.hpp"
 #include "domain/capture/models/frame.hpp"
 #include "domain/storage/models/raw-capture-identity.hpp"
 #include "domain/storage/services/raw-capture-naming.hpp"
@@ -16,6 +19,15 @@ namespace {
 
 using sst::adapters::storage::FilesystemRawCaptureSink;
 using sst::capture::Frame;
+
+// R17: the raw dual-recording is NOT quality-controllable — record/stream
+// quality (U8) must never reach it. The raw sink's Start takes only a
+// capture_group_id; there is no VideoQuality parameter to plumb one in. Pinned
+// at compile time so a future signature change that adds a quality knob to the
+// raw path fails the build.
+static_assert(std::is_same_v<decltype(&sst::storage::IRawCaptureSink::Start),
+                             bool (sst::storage::IRawCaptureSink::*)(const std::string&)>,
+              "raw capture Start must remain quality-free (R17)");
 
 // A unique temp directory per test, removed on destruction.
 class TempDir {

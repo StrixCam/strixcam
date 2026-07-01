@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "app/control/services/handlers/quality-mapping.hpp"
 #include "domain/session/models/session-phase.hpp"
 
 namespace sst::control {
@@ -35,8 +36,12 @@ auto RecordingHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
                 resp.set_error_message("recording start rejected: session not ready");
                 return resp;
             }
+            // Record quality is independent of the stream quality and of the
+            // fixed-resolution raw dual-recording; unset/unsupported → default.
+            const auto quality = ResolveQuality(cmd.recording_control().has_quality(),
+                                                cmd.recording_control().quality());
             if (!recording_.StartRecording(state.config->video_output_path,
-                                           state.config->thumbnail_output_path)) {
+                                           state.config->thumbnail_output_path, quality)) {
                 resp.set_status(sst_cam::ResponseStatus::ERROR);
                 resp.set_error_message("recorder failed to start (disk full or already running)");
                 return resp;

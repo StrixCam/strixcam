@@ -3,6 +3,7 @@
 #include <filesystem>
 
 #include "domain/capture/models/frame.hpp"
+#include "domain/common/models/video-quality.hpp"
 
 namespace sst::storage {
 
@@ -13,7 +14,11 @@ class IContinuousRecorder {
    public:
     virtual ~IContinuousRecorder() = default;
 
-    virtual auto Start(const std::filesystem::path& output_mp4) -> bool = 0;
+    // `quality` sets the record resolution/fps (VideoQuality::IsSet() == false
+    // keeps the source resolution at the default framerate). Applied at pipeline
+    // (re)build via a per-branch scaler — the raw dual-recording is unaffected.
+    virtual auto Start(const std::filesystem::path& output_mp4,
+                       const sst::common::VideoQuality& quality) -> bool = 0;
     virtual auto Pause() -> void = 0;
     virtual auto Resume() -> void = 0;
     // EOS the muxer and finalize a playable file. Returns false if not running.

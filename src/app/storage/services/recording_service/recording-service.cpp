@@ -60,7 +60,8 @@ RecordingService::~RecordingService() {
 }
 
 auto RecordingService::StartRecording(const std::string& video_output_path,
-                                      const std::string& thumbnail_output_path) -> bool {
+                                      const std::string& thumbnail_output_path,
+                                      const sst::common::VideoQuality& quality) -> bool {
     std::lock_guard lock(mtx_);
     if (state_ != RecordingState::kIdle) {
         spdlog::warn("RecordingService::StartRecording rejected: state={}", state_);
@@ -108,7 +109,7 @@ auto RecordingService::StartRecording(const std::string& video_output_path,
         std::filesystem::create_directories(video_path_.parent_path(), mkdir_ec);
     }
 
-    if (!recorder_->Start(video_path_)) {
+    if (!recorder_->Start(video_path_, quality)) {
         spdlog::error("RecordingService::StartRecording: recorder failed to start ({})",
                       video_path_.string());
         video_path_.clear();

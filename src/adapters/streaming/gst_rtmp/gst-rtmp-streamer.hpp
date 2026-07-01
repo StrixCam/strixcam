@@ -58,6 +58,10 @@ class GstRtmpStreamer final : public sst::streaming::IPlatformStreamer {
 
     GstElement* pipeline_{nullptr};
     GstElement* appsrc_{nullptr};
+    // Whether the appsrc input caps have been set from a frame this pipeline
+    // life. Reset on every (re)build so a reconnect re-derives them from the next
+    // frame's real geometry/format. Guarded by mtx_.
+    bool caps_set_{false};
 };
 
 }  // namespace sst::adapters::streaming

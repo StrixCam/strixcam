@@ -1,5 +1,6 @@
 #include "app/control/services/handlers/streaming.handler.hpp"
 
+#include "app/control/services/handlers/quality-mapping.hpp"
 #include "domain/streaming/models/platform-stream-config.hpp"
 
 namespace sst::control {
@@ -52,6 +53,17 @@ auto StreamingHandler::HandleControl(const sst_cam::StreamingControlCommand& cmd
         config.name = "egress";
         config.type = sst::streaming::PlatformStreamType::kRtmp;
         config.url = destination;  // full RTMP URL (app supplies key inline)
+
+        // Stream quality is independent of the record quality (e.g. record 1080p
+        // while streaming 720p). Unset/unsupported → keep the config's default
+        // resolution/fps. The per-branch scaler in the RTMP streamer conforms the
+        // source frame to this.
+        const auto quality = ResolveQuality(cmd.has_quality(), cmd.quality());
+        if (quality.IsSet()) {
+            config.width = quality.width;
+            config.height = quality.height;
+            config.framerate = quality.fps;
+        }
 
         if (!streaming_.StartPlatformStream(config)) {
             resp.set_status(sst_cam::ResponseStatus::ERROR);

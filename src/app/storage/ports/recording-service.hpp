@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 
+#include "domain/common/models/video-quality.hpp"
 #include "domain/storage/models/recording-state.hpp"
 
 namespace sst::storage {
@@ -22,9 +23,11 @@ class IRecordingService {
    public:
     virtual ~IRecordingService() = default;
 
-    // Begin a continuous recording to the app-supplied output paths.
+    // Begin a continuous recording to the app-supplied output paths at the
+    // app-supplied record `quality` (unset => firmware default resolution/fps).
     virtual auto StartRecording(const std::string& video_output_path,
-                                const std::string& thumbnail_output_path) -> bool = 0;
+                                const std::string& thumbnail_output_path,
+                                const sst::common::VideoQuality& quality) -> bool = 0;
 
     virtual auto Pause() -> bool = 0;
     virtual auto Resume() -> bool = 0;
