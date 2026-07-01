@@ -14,8 +14,10 @@ namespace sst::adapters::storage {
 namespace {
 
 // Bound the wait for mp4mux to flush its moov atom on Stop() so a stuck pipeline
-// can't hang shutdown indefinitely.
-constexpr int kFinalizeTimeoutSeconds = 5;
+// can't hang shutdown indefinitely. Generous enough to drain a small residual
+// backlog on a slow software encode (the leaky pre-encoder queue caps how large
+// that backlog can get); a too-short wait leaves an unfinalized, unplayable MP4.
+constexpr int kFinalizeTimeoutSeconds = 10;
 
 auto GstFormatFor(sst::common::PixelFormat fmt) -> const char* {
     switch (fmt) {

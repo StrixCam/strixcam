@@ -12,6 +12,11 @@ namespace sst::adapters::storage {
 inline constexpr int kRecorderDefaultFramerate = 30;
 inline constexpr int kRecorderBitrateKbps = 8000;
 
+// Bound on the leaky pre-encoder queue (~0.5s at 60fps). Drop-oldest under
+// encode overload keeps the encoder realtime so the MP4 always finalizes a valid
+// moov, at the cost of dropped frames rather than a corrupt file.
+inline constexpr int kRecorderQueueMaxBuffers = 30;
+
 // Names the appsrc and encoder elements so GstContinuousRecorder can look them
 // up after gst_parse_launch.
 inline constexpr const char* kRecorderAppsrcName = "src";

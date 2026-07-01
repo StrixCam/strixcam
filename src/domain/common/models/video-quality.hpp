@@ -28,11 +28,16 @@ struct VideoQuality {
 //   2. what an app-requested record/stream quality is validated against.
 // The fixed-resolution raw dual-recording is deliberately NOT in this set — it
 // is not app-controllable (720p, see IRawCaptureSink).
-inline constexpr std::array<VideoQuality, 4> kSupportedVideoModes{{
+//
+// 1080p60 is deliberately EXCLUDED: on-device measurement showed software
+// x264enc encodes 1080p60 at ~0.64x realtime (no NVENC), so the appsrc backlog
+// grows unbounded and the recording never finalizes a valid moov ("no playable
+// streams"). 1080p30 and 720p60 both sustain realtime. Do not re-add 1080p60
+// without a hardware encoder or a faster encode path.
+inline constexpr std::array<VideoQuality, 3> kSupportedVideoModes{{
     {1920, 1080, 30},
-    {1920, 1080, 60},
-    {1280, 720, 30},
     {1280, 720, 60},
+    {1280, 720, 30},
 }};
 
 // True when `quality` is one of the advertised modes exactly. An unset quality

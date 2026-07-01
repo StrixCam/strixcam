@@ -26,6 +26,9 @@ TEST(RecorderLaunchTest, UnsetQualityKeepsSourceAndDefaults) {
     EXPECT_TRUE(Contains(launch, "key-int-max=60"));  // default 30 fps * 2
     EXPECT_TRUE(Contains(launch, "filesink location=/videos/m/m.mp4"));
     EXPECT_TRUE(Contains(launch, "x264enc"));  // software encode (no NVENC)
+    // Leaky pre-encoder queue: a slow software encode drops frames instead of
+    // backing up unbounded and leaving an unfinalized MP4.
+    EXPECT_TRUE(Contains(launch, "queue leaky=downstream"));
 }
 
 // A pinned mode inserts the per-branch videoscale/videorate with the requested

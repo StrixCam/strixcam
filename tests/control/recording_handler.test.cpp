@@ -170,7 +170,7 @@ TEST(RecordingHandlerTest, SupportedRecordQualityForwarded) {
     RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
     AdvanceToReady(session_mgr);
 
-    const sst::common::VideoQuality kMode{1920, 1080, 60};
+    const sst::common::VideoQuality kMode{1920, 1080, 30};  // advertised mode
     auto resp = handler.Handle(StartCmdWithQuality(kMode));
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
     EXPECT_EQ(recorder.last_quality, kMode);
