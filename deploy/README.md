@@ -70,15 +70,16 @@ systemctl status sst-cam-firmware
 ## What `install.sh` does
 
 0. **One-time setup (idempotent)** — creates the `sst-cam` user, `/opt/sst-cam/bin`,
-   installs + enables the systemd unit, and sets the default boot target to
-   **`multi-user.target` (headless)** if any are missing. Re-running is safe.
+   and installs + enables the systemd unit if any are missing. Re-running is safe.
    Skip with `--no-setup`.
-   - **Headless boot:** the camera is a headless appliance (controlled over
-     BLE/WiFi-Direct), so setup switches off the graphical desktop to give the
-     encode/AI pipeline the CPU + RAM back. This is a reversible runtime switch,
-     **not a reflash** — restore the desktop any time with
-     `sudo systemctl set-default graphical.target && sudo reboot`. The service is
-     `WantedBy=multi-user.target`, so it starts either way.
+   - **Headless boot — deferred (do NOT `set-default multi-user.target`).**
+     Tempting for the ~2.6 GB RAM the desktop holds, but validated on-metal to
+     **break the camera pipeline**: without the graphical target's display/GPU
+     bring-up the NVIDIA stack fails (`NvRmGpuLibOpen failed`, `Cuda status=100`,
+     `EGL failed to initialize! Exiting...`) and the firmware crash-loops —
+     `nvarguscamerasrc` + `nvvidconv` both need EGL/CUDA. Real headless needs the
+     GPU/EGL subsystem up without the GNOME desktop (surfaceless/GBM EGL or a
+     trimmed target); tracked as research in the capture-transfer plan.
 1. **Resolves the release** by `--version <tag>` or `--sha256 <hex>` (default `latest`).
 2. **Fails early** (before stopping the service) on a bad download, a non-aarch64
    ELF, a **platform mismatch** (a JetPack-7.2 binary on a non-r39 flash), or a
