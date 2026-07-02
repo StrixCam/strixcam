@@ -35,7 +35,16 @@ inline constexpr const char* kRecorderEncoderName = "enc";
 // The `video/x-raw,format=I420` cap forces 4:2:0 chroma before x264enc — without
 // it, BGR/RGB input encodes High 4:4:4 which Android and most hardware decoders
 // cannot play.
+//
+// `use_vic` selects the scale + colour-convert element: false (default) uses the
+// proven software `videoconvert ! videoscale` path; true offloads it to the
+// Jetson VIC (`nvvidconv`, hardware) to free CPU for the software encoders (U2).
+// The default stays software off-metal — the VIC path is enabled + validated by
+// the on-metal combined-load spike (record + RTMP + preview + 2 proxies), which
+// also gates advertising 1080p60 (U3). `videorate` stays software either way
+// (VIC does not resample framerate).
 [[nodiscard]] auto BuildRecorderLaunch(const std::string& output_mp4,
-                                       const sst::common::VideoQuality& quality) -> std::string;
+                                       const sst::common::VideoQuality& quality,
+                                       bool use_vic = false) -> std::string;
 
 }  // namespace sst::adapters::storage

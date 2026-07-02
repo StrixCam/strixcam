@@ -28,6 +28,12 @@ inline constexpr int kRtmpPreEncodeQueueBuffers = 30;
 // (cfg.width/height/framerate), independent of the record and raw branches. A
 // silent AAC track rides alongside because platforms (YouTube) reject video-only
 // FLV.
-[[nodiscard]] auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg) -> std::string;
+//
+// `use_vic` selects the scale + colour-convert element: false (default) is the
+// proven software `videoconvert ! videoscale`; true offloads to the Jetson VIC
+// (`nvvidconv`) to free CPU for the shared software encoders (U2). Default stays
+// software off-metal — enabled + validated by the on-metal combined-load spike.
+[[nodiscard]] auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg,
+                                   bool use_vic = false) -> std::string;
 
 }  // namespace sst::adapters::streaming

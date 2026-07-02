@@ -62,6 +62,27 @@ TEST(RtmpLaunchTest, CarriesEncodeAndMuxChain) {
     EXPECT_TRUE(Contains(launch, "queue leaky=downstream"));
 }
 
+// Default is the proven software path; U2 use_vic=true offloads scale + convert
+// to the VIC (nvvidconv), keeping videorate software and the mux/audio chain.
+TEST(RtmpLaunchTest, VicOffloadUsesNvvidconv) {
+    const auto sw = BuildRtmpLaunch(MakeConfig());
+    EXPECT_TRUE(Contains(sw, "videoconvert ! videoscale"));
+    EXPECT_FALSE(Contains(sw, "nvvidconv"));
+
+    const auto vic = BuildRtmpLaunch(MakeConfig(), /*use_vic=*/true);
+    EXPECT_TRUE(Contains(vic, "nvvidconv"));
+    EXPECT_FALSE(Contains(vic, "videoconvert"));
+    EXPECT_FALSE(Contains(vic, "videoscale"));
+    EXPECT_TRUE(Contains(vic, "videorate"));  // fps stays software
+    EXPECT_TRUE(Contains(vic, "width=1280"));
+    EXPECT_TRUE(Contains(vic, "height=720"));
+    EXPECT_TRUE(Contains(vic, "framerate=30/1"));
+    EXPECT_TRUE(Contains(vic, "format=I420"));
+    EXPECT_TRUE(Contains(vic, "x264enc"));
+    EXPECT_TRUE(Contains(vic, "flvmux"));    // mux chain intact
+    EXPECT_TRUE(Contains(vic, "voaacenc"));  // silent audio track intact
+}
+
 TEST(RtmpLaunchTest, LocationAppendsKeyAsFinalSegment) {
     auto cfg = MakeConfig();
     EXPECT_EQ(BuildRtmpLocation(cfg), "rtmp://ingest.example/live/secretkey");
