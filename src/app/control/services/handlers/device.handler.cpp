@@ -1,6 +1,7 @@
 #include "app/control/services/handlers/device.handler.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -31,16 +32,8 @@ constexpr std::uint32_t kProtocolVersion = 3;
 }  // namespace
 
 DeviceHandler::DeviceHandler(sst::config::DeviceData device, ISystemStats& stats,
-                             FlagProvider is_recording, FlagProvider is_streaming,
-                             FlagProvider is_raw_capturing, WifiStateProvider wifi_state,
-                             FlagProvider internet_reachable)
-    : device_(std::move(device)),
-      stats_(stats),
-      is_recording_(std::move(is_recording)),
-      is_streaming_(std::move(is_streaming)),
-      is_raw_capturing_(std::move(is_raw_capturing)),
-      wifi_state_(std::move(wifi_state)),
-      internet_reachable_(std::move(internet_reachable)) {}
+                             Providers providers)
+    : device_(std::move(device)), stats_(stats), providers_(std::move(providers)) {}
 
 auto DeviceHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kGetDeviceInfo, sst_cam::Command::kGetTelemetry};
@@ -81,21 +74,32 @@ auto DeviceHandler::HandleTelemetry() -> sst_cam::CommandResponse {
     telemetry->set_cpu_used_pct(stats.cpu_used_pct);
     telemetry->set_uptime_seconds(stats.uptime_seconds);
     telemetry->set_battery_level_pct(stats.battery_level_pct);
-    telemetry->set_is_recording(is_recording_ && is_recording_());
-    telemetry->set_is_streaming(is_streaming_ && is_streaming_());
-    telemetry->set_is_raw_capturing(is_raw_capturing_ && is_raw_capturing_());
+    telemetry->set_is_recording(providers_.is_recording && providers_.is_recording());
+    telemetry->set_is_streaming(providers_.is_streaming && providers_.is_streaming());
+    telemetry->set_is_raw_capturing(providers_.is_raw_capturing && providers_.is_raw_capturing());
 
     // Live WiFi state from the P2P-GO manager (not hardcoded), so the app's wifi
     // indicator matches reality. The camera only ever runs as a WiFi-Direct group
     // owner (no infrastructure join), so "connected" == the GO group is up.
-    const sst::control::WifiState wifi = wifi_state_ ? wifi_state_() : sst::control::WifiState{};
+    const sst::control::WifiState wifi =
+        providers_.wifi_state ? providers_.wifi_state() : sst::control::WifiState{};
     if (wifi.connected) {
         telemetry->set_wifi_state(sst_cam::WifiState::WIFI_CONNECTED);
         telemetry->set_wifi_ssid(wifi.ssid);
     } else {
         telemetry->set_wifi_state(sst_cam::WifiState::WIFI_DISCONNECTED);
     }
-    telemetry->set_internet_reachable(internet_reachable_ && internet_reachable_());
+    telemetry->set_internet_reachable(providers_.internet_reachable &&
+                                      providers_.internet_reachable());
+
+    // wifi_signal_dbm has no presence bit (plain sint32), and a real RSSI is
+    // always negative — so leave it at the proto default 0 to mean "unknown"
+    // (no peer / probe unavailable) and only set it when we have a reading.
+    if (providers_.wifi_signal_dbm) {
+        if (const std::optional<int> dbm = providers_.wifi_signal_dbm()) {
+            telemetry->set_wifi_signal_dbm(*dbm);
+        }
+    }
     return resp;
 }
 

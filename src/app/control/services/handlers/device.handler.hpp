@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <optional>
 #include <vector>
 
 #include "app/control/ports/handler.hpp"
@@ -21,10 +22,27 @@ class DeviceHandler final : public ICommandHandler {
     // Reports the live WiFi state so telemetry reflects the actual P2P-GO link
     // (not a hardcoded UNKNOWN) — keeps the app's wifi indicator coherent.
     using WifiStateProvider = std::function<sst::control::WifiState()>;
+    // Reports the connected WiFi-Direct peer's RSSI (dBm); nullopt → "unknown".
+    using SignalProvider = std::function<std::optional<int>()>;
 
-    DeviceHandler(sst::config::DeviceData device, ISystemStats& stats, FlagProvider is_recording,
-                  FlagProvider is_streaming, FlagProvider is_raw_capturing,
-                  WifiStateProvider wifi_state, FlagProvider internet_reachable);
+    // The live telemetry sources, grouped and named. Four of these are the same
+    // FlagProvider type and are not adjacent, so passing them positionally invited
+    // a silent transposition bug (report the wrong flag, compiles clean). Callers
+    // wire them with designated initializers instead:
+    //   DeviceHandler{dev, stats, {.is_recording = ..., .wifi_signal_dbm = ...}}
+    struct Providers {
+        FlagProvider is_recording;
+        FlagProvider is_streaming;
+        FlagProvider is_raw_capturing;
+        WifiStateProvider wifi_state;
+        // True when the camera has an internet uplink (default route). Distinct
+        // from the WiFi-Direct GO link (link-local).
+        FlagProvider internet_reachable;
+        // Connected peer RSSI in dBm; nullopt when no peer / unavailable.
+        SignalProvider wifi_signal_dbm;
+    };
+
+    DeviceHandler(sst::config::DeviceData device, ISystemStats& stats, Providers providers);
 
     [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
@@ -35,13 +53,7 @@ class DeviceHandler final : public ICommandHandler {
 
     sst::config::DeviceData device_;
     ISystemStats& stats_;
-    FlagProvider is_recording_;
-    FlagProvider is_streaming_;
-    FlagProvider is_raw_capturing_;
-    WifiStateProvider wifi_state_;
-    // True when the camera has an internet uplink (default route) — from the
-    // IUplinkProbe in main. Distinct from the WiFi-Direct GO link (link-local).
-    FlagProvider internet_reachable_;
+    Providers providers_;
 };
 
 }  // namespace sst::control

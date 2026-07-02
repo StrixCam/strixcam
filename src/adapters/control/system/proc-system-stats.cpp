@@ -3,12 +3,12 @@
 #include <spdlog/spdlog.h>
 #include <sys/sysinfo.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <fstream>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <system_error>
-#include <thread>
 #include <utility>
 
 namespace sst::adapters::control {
@@ -34,14 +34,14 @@ auto ReadThermalCelsius() -> float {
     return static_cast<float>(static_cast<double>(milli) / kMilliDegreePerDegree);
 }
 
-auto ReadLoadAvgFirst() -> double {
-    std::ifstream stream("/proc/loadavg");
+auto ReadProcStat() -> std::string {
+    std::ifstream stream("/proc/stat");
     if (!stream) {
-        return 0.0;
+        return {};
     }
-    double one_min = 0.0;
-    stream >> one_min;
-    return stream ? one_min : 0.0;
+    std::string line;
+    std::getline(stream, line);  // the aggregate "cpu ..." line is the first
+    return line;
 }
 
 }  // namespace
@@ -74,10 +74,16 @@ auto ProcSystemStats::Read() const -> sst::control::SystemStats {
         }
     }
 
-    // CPU — 1-minute load average normalized by core count, clamped to 100%.
-    const unsigned cores = std::max(1U, std::thread::hardware_concurrency());
-    const double load_pct = (ReadLoadAvgFirst() / static_cast<double>(cores)) * kPercentMax;
-    stats.cpu_used_pct = static_cast<float>(load_pct > kPercentMax ? kPercentMax : load_pct);
+    // CPU — real busy-jiffy utilisation from a /proc/stat delta vs the previous
+    // read (loadavg counts the run queue, incl. I/O waiters, so it falsely pegged
+    // 100% under non-CPU load). First read has no prior sample → 0%.
+    if (const std::optional<CpuTimes> cur = ParseProcStatCpu(ReadProcStat())) {
+        const std::lock_guard lock(cpu_mtx_);
+        if (prev_cpu_) {
+            stats.cpu_used_pct = CpuBusyPercent(*prev_cpu_, *cur);
+        }
+        prev_cpu_ = cur;
+    }
 
     // SoC temperature (device-specific; 0 off-device).
     stats.temp_celsius = ReadThermalCelsius();
