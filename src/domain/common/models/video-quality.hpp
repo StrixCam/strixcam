@@ -40,6 +40,16 @@ inline constexpr std::array<VideoQuality, 3> kSupportedVideoModes{{
     {1280, 720, 30},
 }};
 
+// The always-on dual-camera training proxy encodes at a fixed, low internal
+// resolution/fps. Like the raw dual-recording, this is NOT app-controllable: it
+// is deliberately kept OUT of kSupportedVideoModes so it never surfaces in
+// DeviceInfoResponse.supported_modes nor passes app record/stream validation.
+// The proxy encode builder (see proxy-launch) references this constant directly.
+// Kept small + low-fps so the proxy is a cheap ADDITIONAL concurrent x264 encode
+// alongside record/preview/stream (VIC scales, but does not raise the encode
+// ceiling — see software-h264-encode-ceiling-no-nvenc).
+inline constexpr VideoQuality kProxyVideoMode{854, 480, 15};
+
 // True when `quality` is one of the advertised modes exactly. An unset quality
 // (all-zero) is not "supported" — callers treat unset and unsupported
 // differently (unset → default, unsupported → reject/ignore).

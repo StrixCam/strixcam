@@ -7,6 +7,7 @@
 namespace {
 
 using sst::common::IsSupportedMode;
+using sst::common::kProxyVideoMode;
 using sst::common::kSupportedVideoModes;
 using sst::common::VideoQuality;
 
@@ -29,6 +30,24 @@ TEST(VideoQualityTest, UnadvertisedModesAreRejected) {
     EXPECT_FALSE(IsSupportedMode({1280, 720, 25}));    // right size, wrong fps
     EXPECT_FALSE(IsSupportedMode({1920, 1080, 120}));  // right size, wrong fps
     EXPECT_FALSE(IsSupportedMode({}));                 // unset is not "supported"
+}
+
+// 1080p60 stays UNADVERTISED until an on-metal VIC combined-load spike proves it
+// sustains (plan U2/U3). Guards against an off-metal re-add of an unsustainable
+// default.
+TEST(VideoQualityTest, TenEighttyP60NotAdvertised) {
+    EXPECT_FALSE(IsSupportedMode({1920, 1080, 60}));
+}
+
+// The training-proxy mode is an internal, non-app-controllable encode target: it
+// must never leak into the advertised set (mirrors the raw-dual-recording
+// precedent), so app record/stream validation can never select it.
+TEST(VideoQualityTest, ProxyModeIsInternalNotAdvertised) {
+    EXPECT_TRUE(kProxyVideoMode.IsSet());
+    EXPECT_FALSE(IsSupportedMode(kProxyVideoMode));
+    for (const auto& mode : kSupportedVideoModes) {
+        EXPECT_NE(mode, kProxyVideoMode);
+    }
 }
 
 TEST(VideoQualityTest, EqualityIsComponentwise) {
