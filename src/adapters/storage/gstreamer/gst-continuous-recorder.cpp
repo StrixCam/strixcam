@@ -4,6 +4,7 @@
 #include <gst/video/video.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdlib>
 #include <cstring>
 
 #include "adapters/storage/gstreamer/recorder-launch.hpp"
@@ -69,7 +70,11 @@ auto GstContinuousRecorder::Start(const std::filesystem::path& output_mp4,
     // resolution/fps — independent of the stream and raw-recording branches.
     // (Rationale for the I420 capsfilter + element choice lives in
     // recorder-launch.hpp / BuildRecorderLaunch.)
-    const std::string desc = BuildRecorderLaunch(output_mp4.string(), quality_);
+    // VIC offload ON by default (frees CPU for the shared software encoders);
+    // set SST_DISABLE_VIC=1 to force the full-software path without a rebuild if
+    // VIC misbehaves on a given board.
+    const bool use_vic = std::getenv("SST_DISABLE_VIC") == nullptr;
+    const std::string desc = BuildRecorderLaunch(output_mp4.string(), quality_, use_vic);
 
     GError* err = nullptr;
     pipeline_ = gst_parse_launch(desc.c_str(), &err);

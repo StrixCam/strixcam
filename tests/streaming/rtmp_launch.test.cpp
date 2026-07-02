@@ -71,9 +71,10 @@ TEST(RtmpLaunchTest, VicOffloadUsesNvvidconv) {
 
     const auto vic = BuildRtmpLaunch(MakeConfig(), /*use_vic=*/true);
     EXPECT_TRUE(Contains(vic, "nvvidconv"));
-    EXPECT_FALSE(Contains(vic, "videoconvert"));
-    EXPECT_FALSE(Contains(vic, "videoscale"));
-    EXPECT_TRUE(Contains(vic, "videorate"));  // fps stays software
+    EXPECT_TRUE(Contains(vic, "format=BGRx"));   // cheap repack for nvvidconv
+    EXPECT_TRUE(Contains(vic, "videoconvert"));  // the repack only
+    EXPECT_FALSE(Contains(vic, "videoscale"));   // scale moved to VIC
+    EXPECT_TRUE(Contains(vic, "videorate"));     // fps stays software
     EXPECT_TRUE(Contains(vic, "width=1280"));
     EXPECT_TRUE(Contains(vic, "height=720"));
     EXPECT_TRUE(Contains(vic, "framerate=30/1"));

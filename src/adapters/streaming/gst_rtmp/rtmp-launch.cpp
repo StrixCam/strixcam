@@ -15,12 +15,15 @@ auto BuildRtmpLocation(const sst::streaming::PlatformStreamConfig& cfg) -> std::
 }
 
 auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg, bool use_vic) -> std::string {
-    // Scale + colour-convert to I420: software (videoconvert ! videoscale, the
-    // proven default) or VIC hardware (nvvidconv, U2) to free CPU for the shared
-    // software x264 encoders. videorate stays software either way (VIC does not
-    // resample framerate). x264enc consumes system-memory I420 in both.
+    // Scale + BGR→I420 colour-convert: full software (videoconvert ! videoscale,
+    // proven default) or VIC-offloaded (U2). The appsrc source is packed BGR,
+    // which nvvidconv rejects directly (JP7.2), so a cheap videoconvert repacks
+    // BGR→BGRx and VIC does the BGRx→I420 convert + scale; videorate stays
+    // software. x264enc consumes system-memory I420 in both. SST_DISABLE_VIC=1
+    // forces software at runtime without a rebuild.
     const std::string convert_scale =
-        use_vic ? fmt::format("nvvidconv ! video/x-raw,format=I420,width={w},height={h} "
+        use_vic ? fmt::format("videoconvert ! video/x-raw,format=BGRx "
+                              "! nvvidconv ! video/x-raw,format=I420,width={w},height={h} "
                               "! videorate ! video/x-raw,framerate={fps}/1",
                               fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
                               fmt::arg("fps", cfg.framerate))

@@ -9,25 +9,32 @@ auto BuildRecorderLaunch(const std::string& output_mp4, const sst::common::Video
     const int framerate = quality.IsSet() ? quality.fps : kRecorderDefaultFramerate;
     const int key_int_max = framerate * 2;
 
-    // Scale + colour-convert (NV12/BGR → I420) is the expensive per-frame CPU
-    // cost on this branch. `use_vic` moves it onto the Jetson VIC (`nvvidconv`,
-    // hardware) so the CPU is freed for the software x264 encoders; `nvvidconv`
-    // does NOT resample framerate, so `videorate` (cheap) stays in software. The
-    // software path (`videoconvert ! videoscale`) is the proven default and the
-    // fallback when VIC caps fail to negotiate on-device. Either way the frame
-    // reaches x264enc as system-memory I420 (x264enc is a sysmem consumer; VIC
-    // does the sysmem→VIC→sysmem hop internally). See U2 in the capture-transfer
-    // plan — VIC frees CPU but does NOT raise the encode ceiling.
+    // Scale + BGR→I420 colour-convert is the expensive per-frame CPU cost on this
+    // branch. `use_vic` moves the heavy part onto the Jetson VIC (`nvvidconv`,
+    // hardware): the appsrc source is packed BGR (postprocess output), which
+    // nvvidconv does NOT accept directly (verified on JP7.2 — a bare
+    // `BGR ! nvvidconv` errors), so a cheap software `videoconvert` repacks
+    // BGR→BGRx (24→32-bit, no colour math) and VIC then does the BGRx→I420
+    // convert + scale. That frees the YUV matrix + resample (the bulk) to
+    // hardware while only a light repack stays on CPU. `videorate` (cheap) stays
+    // software — nvvidconv does not resample framerate. The full-software path
+    // (`videoconvert ! videoscale`, BGR→I420 on CPU) is the proven fallback. Set
+    // SST_DISABLE_VIC=1 to force it at runtime without a rebuild. Either way
+    // x264enc receives system-memory I420. VIC frees CPU but does NOT raise the
+    // encode ceiling (see U2).
     std::string format_caps;
     if (use_vic) {
         format_caps =
             quality.IsSet()
                 ? fmt::format(
+                      "videoconvert ! video/x-raw,format=BGRx ! "
                       "nvvidconv ! video/x-raw,format=I420,width={w},height={h} ! "
                       "videorate ! video/x-raw,framerate={fps}/1",
                       fmt::arg("w", quality.width), fmt::arg("h", quality.height),
                       fmt::arg("fps", quality.fps))
-                : std::string{"nvvidconv ! video/x-raw,format=I420"};
+                : std::string{
+                      "videoconvert ! video/x-raw,format=BGRx ! "
+                      "nvvidconv ! video/x-raw,format=I420"};
     } else {
         format_caps =
             quality.IsSet()

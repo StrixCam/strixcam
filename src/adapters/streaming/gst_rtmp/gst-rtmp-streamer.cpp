@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -67,7 +68,9 @@ GstRtmpStreamer::~GstRtmpStreamer() {
 }
 
 auto GstRtmpStreamer::BuildAndPlayLocked() -> bool {
-    const std::string launch = BuildRtmpLaunch(config_);
+    // VIC offload ON by default; SST_DISABLE_VIC=1 forces software at runtime.
+    const bool use_vic = std::getenv("SST_DISABLE_VIC") == nullptr;
+    const std::string launch = BuildRtmpLaunch(config_, use_vic);
     GError* err = nullptr;
     pipeline_ = gst_parse_launch(launch.c_str(), &err);
     if (err != nullptr) {
