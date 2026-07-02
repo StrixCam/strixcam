@@ -1,6 +1,5 @@
 #include "adapters/streaming/gst_rtmp/gst-rtmp-streamer.hpp"
 
-#include <fmt/format.h>
 #include <gst/app/gstappsrc.h>
 #include <spdlog/spdlog.h>
 
@@ -10,13 +9,13 @@
 #include <string>
 #include <thread>
 
+#include "adapters/streaming/gst_rtmp/rtmp-launch.hpp"
+#include "domain/common/models/pixel-format.hpp"
 #include "domain/streaming/models/formatter/_fmt.hpp"  // IWYU pragma: keep
 
 namespace sst::adapters::streaming {
 
 namespace {
-
-constexpr const char* kAppsrcName = "src";
 
 // How long the watcher blocks on the GStreamer bus per tick waiting for an
 // uplink error before looping to re-check watching_.
@@ -35,44 +34,26 @@ auto FrameByteSize(const sst::capture::Frame& frame) -> std::size_t {
     return total;
 }
 
-auto BuildLocation(const sst::streaming::PlatformStreamConfig& cfg) -> std::string {
-    // rtmpsink expects "<url>/<key>" — most ingest endpoints accept the key
-    // as the last path segment. RTMPS is the same element, just different
-    // URL scheme; PlatformStreamType only affects how we build it.
-    if (cfg.url.empty()) {
-        return cfg.stream_key;
+auto GstFormatFor(sst::common::PixelFormat fmt) -> const char* {
+    switch (fmt) {
+        case sst::common::PixelFormat::BGR8:
+            return "BGR";
+        case sst::common::PixelFormat::RGB8:
+            return "RGB";
+        case sst::common::PixelFormat::BGRA8:
+            return "BGRA";
+        case sst::common::PixelFormat::RGBA8:
+            return "RGBA";
+        case sst::common::PixelFormat::GRAY8:
+            return "GRAY8";
+        case sst::common::PixelFormat::NV12:
+            return "NV12";
+        case sst::common::PixelFormat::I420:
+            return "I420";
+        case sst::common::PixelFormat::YUYV:
+            return "YUY2";
     }
-    if (cfg.url.back() == '/') {
-        return cfg.url + cfg.stream_key;
-    }
-    return cfg.url + "/" + cfg.stream_key;
-}
-
-auto BuildLaunch(const sst::streaming::PlatformStreamConfig& cfg) -> std::string {
-    // Software H.264 (the Orin Nano has no NVENC): x264enc reads system memory,
-    // so the nvvidconv→NVMM hop is dropped. rtmp2sink replaces the deprecated
-    // rtmpsink — it takes a clean location URL (no embedded " live=1"). The
-    // uplink queue is leaky-downstream + non-blocking so a stalled RTMP socket
-    // can never back-pressure the capture/encode path. x264enc bitrate is in
-    // kbit/s. do-timestamp=true on the appsrc supplies valid PTS (x264enc
-    // requires it). flvmux is named so U9 can attach a silent AAC audio pad
-    // (platforms like YouTube require an audio track). A pad-blocking bus-error
-    // reconnect is handled in U9 (rtmp2sink has no auto-reconnect).
-    return fmt::format(
-        "flvmux name=mux streamable=true ! rtmp2sink location=\"{loc}\" sync=false "
-        "appsrc name={src} is-live=true format=time do-timestamp=true "
-        "  caps=\"video/x-raw,format=BGR,width={w},height={h},framerate={fps}/1\" "
-        " ! videoconvert "
-        " ! x264enc speed-preset=ultrafast tune=zerolatency bitrate={brk} key-int-max={gik} "
-        " ! h264parse config-interval=-1 "
-        " ! queue leaky=downstream max-size-buffers=3 ! mux.video "
-        // Silent AAC track — YouTube et al. reject video-only FLV. Both pads must
-        // produce timestamped buffers or flvmux stalls (is-live + do-timestamp).
-        "audiotestsrc is-live=true wave=silence do-timestamp=true "
-        " ! audioconvert ! voaacenc ! aacparse ! queue ! mux.audio ",
-        fmt::arg("src", kAppsrcName), fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
-        fmt::arg("fps", cfg.framerate), fmt::arg("brk", cfg.bitrate_kbps),
-        fmt::arg("gik", cfg.framerate * 2), fmt::arg("loc", BuildLocation(cfg)));
+    return "BGR";
 }
 
 }  // namespace
@@ -86,7 +67,7 @@ GstRtmpStreamer::~GstRtmpStreamer() {
 }
 
 auto GstRtmpStreamer::BuildAndPlayLocked() -> bool {
-    const std::string launch = BuildLaunch(config_);
+    const std::string launch = BuildRtmpLaunch(config_);
     GError* err = nullptr;
     pipeline_ = gst_parse_launch(launch.c_str(), &err);
     if (err != nullptr) {
@@ -98,12 +79,15 @@ auto GstRtmpStreamer::BuildAndPlayLocked() -> bool {
     if (pipeline_ == nullptr) {
         return false;
     }
-    appsrc_ = gst_bin_get_by_name(GST_BIN(pipeline_), kAppsrcName);
+    appsrc_ = gst_bin_get_by_name(GST_BIN(pipeline_), kRtmpAppsrcName);
     if (appsrc_ == nullptr) {
         spdlog::error("GstRtmpStreamer: appsrc not found");
         Teardown();
         return false;
     }
+    // Fresh pipeline: input caps must be re-derived from the next frame (its real
+    // geometry/format), which videoscale/videorate then conform to config_.
+    caps_set_ = false;
     if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
         spdlog::error("GstRtmpStreamer: PLAYING transition failed");
         Teardown();
@@ -254,6 +238,19 @@ auto GstRtmpStreamer::Push(const sst::capture::Frame& frame) -> void {
         std::unique_lock lock(mtx_, std::try_to_lock);
         if (!lock.owns_lock() || !running_ || appsrc_ == nullptr) {
             return;
+        }
+        if (!caps_set_) {
+            // Input caps describe the SOURCE frame (postprocess output) — its real
+            // pixel geometry/format. The launch string's videoscale/videorate then
+            // conform it to config_'s requested stream resolution/fps.
+            GstCaps* caps = gst_caps_new_simple(
+                "video/x-raw", "format", G_TYPE_STRING, GstFormatFor(frame.format), "width",
+                G_TYPE_INT, static_cast<int>(frame.geometry.width), "height", G_TYPE_INT,
+                static_cast<int>(frame.geometry.height), "framerate", GST_TYPE_FRACTION,
+                config_.framerate, 1, nullptr);
+            gst_app_src_set_caps(GST_APP_SRC(appsrc_), caps);
+            gst_caps_unref(caps);
+            caps_set_ = true;
         }
         src = appsrc_;
         gst_object_ref(src);

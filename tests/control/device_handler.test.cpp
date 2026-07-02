@@ -12,6 +12,7 @@
 #include "app/control/ports/wifi-manager.hpp"
 #include "app/control/services/handlers/device.handler.hpp"
 #include "bluetooth.pb.h"
+#include "domain/common/models/video-quality.hpp"
 #include "domain/config/models/device.hpp"
 
 // Same git-describe stamp the handler reports; guarded for non-CMake builds.
@@ -100,6 +101,29 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     // The reboot command surface (U7) bumped kProtocolVersion to 3; the app gates
     // Reboot on an exact version match, so guard against a downward regression.
     EXPECT_GE(resp.device_info().protocol_version(), 3U);
+}
+
+// U8/R16: GetDeviceInfo advertises the concrete record/stream modes the encode
+// pipeline can deliver, so the app offers only real options. The advertised set
+// is exactly kSupportedVideoModes (the single source of truth also used to
+// validate app-requested quality).
+TEST(DeviceHandlerTest, DeviceInfoAdvertisesSupportedModes) {
+    FakeStats stats;
+    DeviceHandler handler(
+        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
+        NoWifi, [] { return false; });
+
+    auto resp = handler.Handle(DeviceInfoCommand());
+
+    ASSERT_EQ(static_cast<std::size_t>(resp.device_info().supported_modes_size()),
+              sst::common::kSupportedVideoModes.size());
+    for (std::size_t i = 0; i < sst::common::kSupportedVideoModes.size(); ++i) {
+        const auto& expected = sst::common::kSupportedVideoModes.at(i);
+        const auto& wire = resp.device_info().supported_modes(static_cast<int>(i));
+        EXPECT_EQ(static_cast<std::int32_t>(wire.width()), expected.width);
+        EXPECT_EQ(static_cast<std::int32_t>(wire.height()), expected.height);
+        EXPECT_EQ(static_cast<std::int32_t>(wire.fps()), expected.fps);
+    }
 }
 
 // is_recording / is_streaming / is_raw_capturing reflect the injected providers,

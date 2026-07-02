@@ -37,7 +37,8 @@ class RecordingService final : public IRecordingService, public sst::buffer::IFr
 
     // IRecordingService
     auto StartRecording(const std::string& video_output_path,
-                        const std::string& thumbnail_output_path) -> bool override;
+                        const std::string& thumbnail_output_path,
+                        const sst::common::VideoQuality& quality) -> bool override;
     auto Pause() -> bool override;
     auto Resume() -> bool override;
     auto Stop() -> StopRecordingResult override;

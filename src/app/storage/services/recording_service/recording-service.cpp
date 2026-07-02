@@ -60,7 +60,8 @@ RecordingService::~RecordingService() {
 }
 
 auto RecordingService::StartRecording(const std::string& video_output_path,
-                                      const std::string& thumbnail_output_path) -> bool {
+                                      const std::string& thumbnail_output_path,
+                                      const sst::common::VideoQuality& quality) -> bool {
     std::lock_guard lock(mtx_);
     if (state_ != RecordingState::kIdle) {
         spdlog::warn("RecordingService::StartRecording rejected: state={}", state_);
@@ -108,7 +109,7 @@ auto RecordingService::StartRecording(const std::string& video_output_path,
         std::filesystem::create_directories(video_path_.parent_path(), mkdir_ec);
     }
 
-    if (!recorder_->Start(video_path_)) {
+    if (!recorder_->Start(video_path_, quality)) {
         spdlog::error("RecordingService::StartRecording: recorder failed to start ({})",
                       video_path_.string());
         video_path_.clear();
@@ -179,8 +180,16 @@ auto RecordingService::CurrentState() const -> RecordingState {
 }
 
 auto RecordingService::Push(const sst::capture::Frame& frame) -> void {
-    std::lock_guard lock(mtx_);
-    if (state_ == RecordingState::kIdle) {
+    // try_to_lock, NOT a blocking lock_guard: Push runs on the shared pipeline
+    // fan-out (ConsumerLoop) thread, which also feeds the live stream sink right
+    // after this. Stop() holds mtx_ for the whole finalize wait (up to
+    // kFinalizeTimeoutSeconds while mp4mux flushes the moov). A blocking lock
+    // here would freeze the fan-out — and thus the live RTMP/RTSP stream — for
+    // that entire window. Dropping a frame while a lifecycle op holds the lock
+    // (Stop is the only long one, and recording is ending then anyway) is the
+    // correct trade — mirrors GstRtmpStreamer::Push's non-blocking discipline.
+    std::unique_lock lock(mtx_, std::try_to_lock);
+    if (!lock.owns_lock() || state_ == RecordingState::kIdle) {
         return;
     }
     // Keep the most recent frame for the finalization thumbnail.

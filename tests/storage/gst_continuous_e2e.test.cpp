@@ -19,7 +19,7 @@ TEST(GstContinuousE2E, EncodesSinglePlayableMp4) {
     fs::remove(out);
 
     sst::adapters::storage::GstContinuousRecorder recorder;
-    ASSERT_TRUE(recorder.Start(out)) << "NVENC pipeline did not start (expected off-device)";
+    ASSERT_TRUE(recorder.Start(out, {})) << "NVENC pipeline did not start (expected off-device)";
 
     constexpr int kWidth = 1280;
     constexpr int kHeight = 720;

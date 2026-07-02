@@ -1,30 +1,23 @@
 #include "adapters/storage/gstreamer/gst-continuous-recorder.hpp"
 
-#include <fmt/format.h>
 #include <gst/app/gstappsrc.h>
 #include <gst/video/video.h>
 #include <spdlog/spdlog.h>
 
 #include <cstring>
 
+#include "adapters/storage/gstreamer/recorder-launch.hpp"
 #include "domain/common/models/pixel-format.hpp"
 
 namespace sst::adapters::storage {
 
 namespace {
 
-constexpr const char* kAppsrcName = "src";
-constexpr const char* kEncoderName = "enc";
-constexpr int kFramerate = 30;
-// Software H.264 (x264enc) tuning. The Orin Nano has no NVENC, so encode runs on
-// CPU; ultrafast + zerolatency keeps it within the dual-camera CPU budget. Dial
-// kBitrateKbps / capture resolution down if on-device CPU measurement (M0)
-// shows three concurrent encodes don't sustain.
-constexpr int kBitrateKbps = 8000;
-constexpr int kKeyIntMax = kFramerate * 2;
 // Bound the wait for mp4mux to flush its moov atom on Stop() so a stuck pipeline
-// can't hang shutdown indefinitely.
-constexpr int kFinalizeTimeoutSeconds = 5;
+// can't hang shutdown indefinitely. Generous enough to drain a small residual
+// backlog on a slow software encode (the leaky pre-encoder queue caps how large
+// that backlog can get); a too-short wait leaves an unfinalized, unplayable MP4.
+constexpr int kFinalizeTimeoutSeconds = 10;
 
 auto GstFormatFor(sst::common::PixelFormat fmt) -> const char* {
     switch (fmt) {
@@ -58,32 +51,25 @@ GstContinuousRecorder::~GstContinuousRecorder() {
     }
 }
 
-auto GstContinuousRecorder::Start(const std::filesystem::path& output_mp4) -> bool {
+auto GstContinuousRecorder::Start(const std::filesystem::path& output_mp4,
+                                  const sst::common::VideoQuality& quality) -> bool {
     std::lock_guard lock(mtx_);
     if (running_) {
         return false;
     }
+    quality_ = quality;
 
     // Software H.264 encode chain. The Orin Nano has no NVENC (nvv4l2h264enc
     // does not resolve on this silicon), so encode runs on CPU via x264enc;
     // x264enc reads system memory, so the nvvidconv/NVMM hop is dropped. The
     // x264enc element lives in gstreamer1.0-plugins-ugly — gst_parse_launch
     // resolves elements at runtime, so a missing plugin fails here (logged), not
-    // at container build time. config-interval=-1 makes h264parse repeat
-    // SPS/PPS so the MP4 is seekable/decodable from any keyframe.
-    //
-    // The video/x-raw,format=I420 capsfilter forces 4:2:0 chroma BEFORE x264enc.
-    // Without it, BGR/RGB input leads x264enc to encode 4:4:4 (High 4:4:4,
-    // profile_idc 244), which Android and most hardware decoders cannot play
-    // ("unsupported codec"). 4:2:0 is the universally decodable subsampling.
-    const std::string desc = fmt::format(
-        "appsrc name={src} is-live=true format=time do-timestamp=true ! "
-        "videoconvert ! video/x-raw,format=I420 ! "
-        "x264enc name={enc} speed-preset=ultrafast tune=zerolatency "
-        "bitrate={kbps} key-int-max={gik} ! "
-        "h264parse config-interval=-1 ! mp4mux ! filesink location={loc}",
-        fmt::arg("src", kAppsrcName), fmt::arg("enc", kEncoderName), fmt::arg("kbps", kBitrateKbps),
-        fmt::arg("gik", kKeyIntMax), fmt::arg("loc", output_mp4.string()));
+    // at container build time. When the app pins a record quality, a per-branch
+    // videoscale/videorate scales the source frame to the requested
+    // resolution/fps — independent of the stream and raw-recording branches.
+    // (Rationale for the I420 capsfilter + element choice lives in
+    // recorder-launch.hpp / BuildRecorderLaunch.)
+    const std::string desc = BuildRecorderLaunch(output_mp4.string(), quality_);
 
     GError* err = nullptr;
     pipeline_ = gst_parse_launch(desc.c_str(), &err);
@@ -97,8 +83,8 @@ auto GstContinuousRecorder::Start(const std::filesystem::path& output_mp4) -> bo
         return false;
     }
 
-    appsrc_ = gst_bin_get_by_name(GST_BIN(pipeline_), kAppsrcName);
-    encoder_ = gst_bin_get_by_name(GST_BIN(pipeline_), kEncoderName);
+    appsrc_ = gst_bin_get_by_name(GST_BIN(pipeline_), kRecorderAppsrcName);
+    encoder_ = gst_bin_get_by_name(GST_BIN(pipeline_), kRecorderEncoderName);
     if (appsrc_ == nullptr) {
         spdlog::error("GstContinuousRecorder: appsrc not found");
         Teardown();
@@ -178,11 +164,16 @@ auto GstContinuousRecorder::Push(const sst::capture::Frame& frame) -> void {
         return;
     }
     if (!caps_set_) {
+        // Input caps describe the SOURCE frame (postprocess output) — its real
+        // pixel geometry, at a nominal source framerate. The launch string's
+        // videoscale/videorate then conform it to the app-requested record
+        // resolution/fps; do-timestamp supplies the running-time PTS.
+        const int source_framerate = quality_.IsSet() ? quality_.fps : kRecorderDefaultFramerate;
         GstCaps* caps =
             gst_caps_new_simple("video/x-raw", "format", G_TYPE_STRING, GstFormatFor(frame.format),
                                 "width", G_TYPE_INT, static_cast<int>(frame.geometry.width),
                                 "height", G_TYPE_INT, static_cast<int>(frame.geometry.height),
-                                "framerate", GST_TYPE_FRACTION, kFramerate, 1, nullptr);
+                                "framerate", GST_TYPE_FRACTION, source_framerate, 1, nullptr);
         gst_app_src_set_caps(GST_APP_SRC(appsrc_), caps);
         gst_caps_unref(caps);
         caps_set_ = true;
