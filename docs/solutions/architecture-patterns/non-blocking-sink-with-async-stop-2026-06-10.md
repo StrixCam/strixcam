@@ -1,6 +1,7 @@
 ---
 title: "Non-blocking sink with an async Stop: try_to_lock the producer, swap state out under the lock and drain outside it"
 date: 2026-06-10
+last_updated: 2026-07-01
 category: architecture-patterns
 module: adapters
 problem_type: architecture_pattern
@@ -10,6 +11,7 @@ applies_when:
   - "A high-rate producer thread and a control thread share an adapter's state (GStreamer sinks/streamers, recorders, any IFrameSink with start/stop)"
   - "A port contract says the producer (Push/PushCamera) must never block the capture/encode path"
   - "Stop/reconnect must join threads or run a blocking GStreamer state change while the pipeline is still pushing"
+  - "A lifecycle op holds the producer's mutex across a slow finalize (mp4mux moov flush, thread join, GST_STATE_NULL teardown)"
 tags:
   - concurrency
   - data-race
@@ -18,9 +20,15 @@ tags:
   - try_to_lock
   - gstreamer
   - non-blocking
+  - recorder
+  - mp4
+  - moov
+  - finalize
+  - fan-out
 related_components:
   - filesystem-raw-capture-sink
   - gst-rtmp-streamer
+  - recording-service
   - pipeline-orchestrator
 ---
 
@@ -112,6 +120,20 @@ reconnect. Rule 1 (`try_to_lock` in `Push`, drop the frame while the uplink is d
 is nowhere to send it anyway) decouples them; the reconnect also got capped exponential
 backoff so a permanently-down endpoint can't spin into a rebuild storm.
 
+**`RecordingService::Push` — the finalize freeze (2026-07-01).** This is the same stall
+as the streamer, on the recorder this doc already named as an apply-here target — and it
+still shipped a blocking `lock_guard`. `RecordingService::Push` runs on the shared
+`ConsumerLoop` fan-out thread (the very next thing that thread does is feed the live stream
+sink), and `Stop()` holds `mtx_` for the **entire** `mp4mux` moov-flush finalize wait
+(`gst_bus_timed_pop_filtered`, `kFinalizeTimeoutSeconds`, widened 5s→10s when a leaky
+pre-encoder queue was added). So every stop-recording froze the live RTMP/RTSP stream for
+up to 10s. Fixed with Rule 1 — `try_to_lock` in `Push`, drop the frame (recording is ending
+anyway), mirroring `GstRtmpStreamer::Push`. (Rule 2 wasn't enough on its own here: `Stop`'s
+slow work *is* the finalize wait, which must stay under the lock so a concurrent `Push`
+can't feed a half-torn-down muxer — so the producer side must be the non-blocking one.)
+The finalize-timeout → corrupt-`moov` seam is also how a too-slow software encode ruins a
+file; see the software-encode-ceiling note under `tooling-decisions/`.
+
 ## Prevention
 
 - The container test suite tears down single-threaded (pipeline destroyed before the sink),
@@ -121,6 +143,13 @@ backoff so a permanently-down endpoint can't spin into a rebuild storm.
 - Treat "must not block the hot path" and "Stop mutates shared state" as a paired
   constraint: whenever both are true, reach for `try_to_lock` producer + swap-out-then-drain
   Stop, not a bare atomic and not a held-across-teardown mutex.
+- **Naming a target isn't auditing it.** This doc listed "the continuous recorder" under
+  *When to Apply* on 2026-06-10, yet `RecordingService::Push` still shipped a blocking
+  `lock_guard` and froze the live stream on 2026-07-01. Turn the list into an executed
+  check: `grep` every `IFrameSink` / `IRawCaptureSink` / `IPlatformStreamer` `Push`/
+  `PushCamera` for a bare `std::lock_guard` (as opposed to `std::unique_lock` +
+  `std::try_to_lock`), and confirm each one's `Stop`/reconnect can't hold that mutex across
+  a slow op. A producer that shares a fan-out thread with another live sink is the acute case.
 
 ## Related Issues
 
