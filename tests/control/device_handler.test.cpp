@@ -109,9 +109,7 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
 // validate app-requested quality).
 TEST(DeviceHandlerTest, DeviceInfoAdvertisesSupportedModes) {
     FakeStats stats;
-    DeviceHandler handler(
-        MakeDevice(), stats, [] { return false; }, [] { return false; }, [] { return false; },
-        NoWifi, [] { return false; });
+    DeviceHandler handler(MakeDevice(), stats, {});  // device-info ignores the telemetry providers
 
     auto resp = handler.Handle(DeviceInfoCommand());
 
