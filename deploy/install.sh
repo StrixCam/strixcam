@@ -321,6 +321,22 @@ ensure_setup() {
   fi
   systemctl enable "$SERVICE" >/dev/null 2>&1 || true
 
+  # Headless boot: the camera is a headless appliance controlled only over
+  # BLE/WiFi-Direct — a desktop session on the Jetson just burns CPU + RAM the
+  # encode/AI budget needs. Default to the non-graphical target. This is a
+  # reversible runtime switch (NOT a reflash): revert any time with
+  #   sudo systemctl set-default graphical.target && sudo reboot
+  # The service is WantedBy=multi-user.target (see embedded_unit), so it still
+  # starts headless. Only switch when currently graphical, so re-runs are quiet.
+  if command -v systemctl >/dev/null 2>&1; then
+    _cur_target="$(systemctl get-default 2>/dev/null || echo "")"
+    if [ "$_cur_target" != "multi-user.target" ]; then
+      log "Setup: setting default boot target -> multi-user.target (headless; revert with 'systemctl set-default graphical.target') ..."
+      systemctl set-default multi-user.target >/dev/null 2>&1 || true
+      changed="yes"
+    fi
+  fi
+
   # Reboot privilege: the firmware runs as the unprivileged SERVICE_USER and
   # serves the BLE RebootCommand by exec'ing `systemctl reboot`, which logind
   # gates behind polkit. Grant exactly that action (and reboot with other
