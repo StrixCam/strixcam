@@ -59,6 +59,21 @@ auto GStreamerAdapter::CreatePipeline() -> std::string {
     const std::string isp_tuning =
         (isp_env != nullptr) ? isp_env : "tnr-mode=2 tnr-strength=0.5 ee-mode=1 ee-strength=0.4";
 
+    // Downstream frame-rate cap. The IMX477 only offers 1080p at 60fps (no 1080p30
+    // sensor mode), so the sensor is driven at camera_config_.fps, but the whole
+    // CPU-side pipeline — NV12->BGR postprocess (per camera), record x264, preview
+    // x264 and the raw proxy — pays per delivered frame. At 60fps x2 cameras that
+    // saturates the 6-core Orin Nano and every encoder starves (0-byte record,
+    // blank preview). videorate drops to the target rate right after capture so the
+    // expensive stages only see 30fps. Env-tunable so it can be raised on-device
+    // once headroom is measured; never exceeds the sensor rate.
+    const char* fps_env = std::getenv("SST_PIPELINE_FPS");
+    int pipeline_fps = (fps_env != nullptr) ? std::atoi(fps_env) : 30;
+    if (pipeline_fps <= 0 || pipeline_fps > camera_config_.fps) {
+        pipeline_fps = camera_config_.fps;
+    }
+    const std::string out_fps = std::to_string(pipeline_fps);
+
     std::string gst_pipeline;
     switch (*model_version) {
         case 1:
@@ -67,7 +82,9 @@ auto GStreamerAdapter::CreatePipeline() -> std::string {
                            ",framerate=" + fps + "/1,format=NV12" +
                            " ! nvvidconv"
                            " ! video/x-raw,format=" +
-                           format + " ! appsink name=" + gst_sink_name_ + " sync=false";
+                           format + " ! videorate drop-only=true max-rate=" + out_fps +
+                           " ! video/x-raw,framerate=" + out_fps + "/1" +
+                           " ! appsink name=" + gst_sink_name_ + " sync=false";
             break;
         default:
             spdlog::error("GStreamerAdapter: unsupported device model '{}' (v{})", device_model_,
@@ -365,6 +382,7 @@ auto GStreamerAdapter::Capture() -> std::optional<Frame> {
     GstSample* captureGstSample = nullptr;
     GstSample* last = nullptr;
 
+    // Drain any backlog non-blocking, keeping only the newest (latest wins).
     while ((captureGstSample = gst_app_sink_try_pull_sample(appsink, 0)) != nullptr) {
         if (last != nullptr) {
             gst_sample_unref(last);
@@ -372,9 +390,18 @@ auto GStreamerAdapter::Capture() -> std::optional<Frame> {
         last = captureGstSample;
     }
 
+    // No backlog: BLOCK for the next frame rather than returning the cached one.
+    // Returning last_frame_ here made the producer loop spin at CPU speed between
+    // real frames — re-materializing (deep-copy) the same frame and pegging a core
+    // per camera, starving the consumer + encoders (0-byte record, blank preview).
+    // A bounded blocking pull paces the loop to the capture cadence; on timeout
+    // return nullopt so the producer idles briefly instead of hot-looping.
     if (last == nullptr) {
-        std::lock_guard<std::mutex> lastFrameLock(last_frame_mtx_);
-        return last_frame_;
+        constexpr GstClockTime kCaptureBlockTimeout = 200 * GST_MSECOND;
+        last = gst_app_sink_try_pull_sample(appsink, kCaptureBlockTimeout);
+        if (last == nullptr) {
+            return std::nullopt;
+        }
     }
 
     auto sample =
