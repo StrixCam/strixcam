@@ -137,3 +137,10 @@ state whether or not the prior session was torn down. `P2P_GROUP_REMOVE *`,
   invisible to the next `Start()` and a second dnsmasq could be forked. A
   `pkill`/pidfile sweep before fork would close this; in-process repeats and
   graceful restarts are already covered.
+
+## Related
+
+- `docs/solutions/integration-issues/wifi-direct-reform-kills-argus-capture-needs-watchdog-2026-07-03.md`
+  — the *second* blast radius of this same `StartP2pGroupOwner` radio reform: on
+  this single-radio device the reform also disrupts CSI/VI and kills the Argus
+  camera capture pipeline. Same trigger site, different subsystem.
