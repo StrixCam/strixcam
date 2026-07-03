@@ -636,6 +636,38 @@ TEST(PipelineOrchestratorTest, SideBySideCompositesBothCamerasToStream) {
     EXPECT_EQ(std::get<3>(record_sink.Snapshot()).width, kOutputDims.width);
 }
 
+// Cadence follows the selection: with camera 1 selected, the consumer blocks on
+// camera 1, so the stream keeps flowing camera-1 frames even when camera 0 is
+// fully stalled (dead). Under the old hardcoded cam0 cadence a stalled cam0 would
+// pace the whole loop off its pop-timeout regardless of the selection.
+TEST(PipelineOrchestratorTest, CadenceFollowsSelectionSoSelectedCameraStreamsWhenOtherStalls) {
+    constexpr std::uint64_t kCam1IdBase = 1000;
+    ManualCameraState camera_state;
+    camera_state.Set(1);  // select camera 1
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims, /*stall=*/true, 0),
+                   std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims, /*stall=*/false, kCam1IdBase),
+                   std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<ManualDecision>(camera_state),
+        record_sink, sink, FastConfig());
+
+    ASSERT_TRUE(orchestrator.Start());
+    constexpr auto kFlowTimeout = std::chrono::seconds(5);
+    constexpr auto kPollInterval = std::chrono::milliseconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (std::chrono::steady_clock::now() < deadline && std::get<0>(sink.Snapshot()) == 0) {
+        std::this_thread::sleep_for(kPollInterval);
+    }
+    orchestrator.Stop();
+
+    const auto [pushes, last_id, format, geom] = sink.Snapshot();
+    EXPECT_GT(pushes, 0);             // stream flowed even though camera 0 is dead
+    EXPECT_GE(last_id, kCam1IdBase);  // and the streamed frames are camera 1's
+}
+
 // Side-by-side pane order is POSITIONAL: camera 0 is always the left pane, even
 // when camera 1 is the selected main feed. Changing the selection must not swap
 // the panes. cam1 uses a high frame_id base so a composite whose left pane came

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <optional>
 #include <vector>
 
@@ -31,6 +32,15 @@ class IDecision {
 
     virtual auto Decide(const std::vector<std::optional<sst::processing::FrameBundle>>& cameras)
         -> std::optional<CameraChoice> = 0;
+
+    // The camera the consumer should BLOCK on to pace its loop each tick (the
+    // "cadence" camera) — the one this decision most wants a guaranteed-fresh
+    // frame from. Every other camera is sampled non-blocking (a stale/missing
+    // frame there is tolerable). Defaults to camera 0; ManualDecision returns the
+    // user-selected camera so the blocking pop follows the selection and the
+    // chosen camera is never phase-empty (a non-cadence selection was what made
+    // the preview flicker). The orchestrator clamps an out-of-range value to 0.
+    [[nodiscard]] virtual auto PreferredCadenceCamera() const -> std::size_t { return 0; }
 };
 
 }  // namespace sst::decision

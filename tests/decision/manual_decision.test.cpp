@@ -64,6 +64,17 @@ TEST(ManualDecisionTest, FallsBackToCameraZeroWhenSelectionOutOfRange) {
     EXPECT_EQ(choice->crop.width, 1920U);
 }
 
+TEST(ManualDecisionTest, PreferredCadenceCameraFollowsSelection) {
+    ManualCameraState state;
+    ManualDecision decision(state);
+    // The consumer blocks on this camera to pace its loop; it must track the
+    // user's selection so the selected camera is never phase-empty.
+    state.Set(0);
+    EXPECT_EQ(decision.PreferredCadenceCamera(), 0U);
+    state.Set(1);
+    EXPECT_EQ(decision.PreferredCadenceCamera(), 1U);
+}
+
 TEST(ManualDecisionTest, NulloptWhenNoCameraHasAFrame) {
     ManualCameraState state;
     ManualDecision decision(state);

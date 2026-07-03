@@ -8,6 +8,12 @@ namespace sst::decision {
 
 ManualDecision::ManualDecision(const ManualCameraState& state) : state_(state) {}
 
+auto ManualDecision::PreferredCadenceCamera() const -> std::size_t {
+    // Block the consumer on the user-selected camera so it is never phase-empty;
+    // an out-of-range selection is clamped by the orchestrator.
+    return static_cast<std::size_t>(state_.Get());
+}
+
 auto ManualDecision::Decide(
     const std::vector<std::optional<sst::processing::FrameBundle>>& cameras)
     -> std::optional<CameraChoice> {
