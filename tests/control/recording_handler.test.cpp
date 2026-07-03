@@ -10,6 +10,7 @@
 
 #include "app/control/services/handlers/recording.handler.hpp"
 #include "app/overlay/ports/overlay-timeline-recorder.hpp"
+#include "app/raw_capture/ports/raw-capture-sink.hpp"
 #include "app/session/ports/session-cleanup.hpp"
 #include "app/session/services/session_manager/session-manager.hpp"
 #include "app/storage/ports/recording-service.hpp"
@@ -91,6 +92,34 @@ class FakeTimeline final : public sst::overlay::IOverlayTimelineRecorder {
 };
 
 // Zero clock — timeline anchor is irrelevant to recording-lifecycle assertions.
+// Fake training-proxy sink: counts the handler's Start/Stop calls and can be set
+// to fail Start (to prove proxy failure is non-fatal to the match record, U5).
+class FakeProxy final : public sst::raw_capture::IRawCaptureSink {
+   public:
+    auto Start(const std::string& capture_group_id) -> bool override {
+        ++starts;
+        last_group = capture_group_id;
+        capturing_ = start_ok;
+        return start_ok;
+    }
+    auto PushCamera(std::uint32_t, const sst::capture::Frame&) -> void override {}
+    auto Stop() -> bool override {
+        ++stops;
+        const bool was = capturing_;
+        capturing_ = false;
+        return was;
+    }
+    [[nodiscard]] auto IsCapturing() const -> bool override { return capturing_; }
+
+    bool start_ok{true};
+    int starts{0};
+    int stops{0};
+    std::string last_group;
+
+   private:
+    bool capturing_{false};
+};
+
 auto ZeroClock() -> std::uint64_t { return 0; }
 
 // Empty output paths keep the test off the filesystem (PrepareOutputDirs is a
@@ -129,12 +158,19 @@ auto StartCmdWithQuality(const sst::common::VideoQuality& mode) -> sst_cam::Comm
     return cmd;
 }
 
+auto StartCmdWithGroup(const std::string& group_id) -> sst_cam::Command {
+    auto cmd = Cmd(sst_cam::RECORDING_START);
+    cmd.mutable_recording_control()->set_capture_group_id(group_id);
+    return cmd;
+}
+
 TEST(RecordingHandlerTest, StartInReadyPhaseStartsRecorderAndTransitions) {
     FakeCleanup cleanup;
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     FakeTimeline timeline;
-    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
     AdvanceToReady(session_mgr);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
@@ -150,7 +186,8 @@ TEST(RecordingHandlerTest, StartBeforeReadyRejectedWithoutTouchingRecorder) {
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     FakeTimeline timeline;
-    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
     AdvanceToConfigured(session_mgr);  // config present, but phase != Ready
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
@@ -167,7 +204,8 @@ TEST(RecordingHandlerTest, SupportedRecordQualityForwarded) {
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     FakeTimeline timeline;
-    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
     AdvanceToReady(session_mgr);
 
     const sst::common::VideoQuality kMode{1920, 1080, 30};  // advertised mode
@@ -183,7 +221,8 @@ TEST(RecordingHandlerTest, UnsupportedRecordQualityFallsBackToDefault) {
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     FakeTimeline timeline;
-    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
     AdvanceToReady(session_mgr);
 
     const sst::common::VideoQuality k4K{3840, 2160, 30};  // not advertised
@@ -198,7 +237,8 @@ TEST(RecordingHandlerTest, MissingRecordQualityIsUnset) {
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     FakeTimeline timeline;
-    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
     AdvanceToReady(session_mgr);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
@@ -211,7 +251,8 @@ TEST(RecordingHandlerTest, StartWithNoSessionConfigErrors) {
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     FakeTimeline timeline;
-    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
     ASSERT_TRUE(session_mgr.OnConnect());
     ASSERT_TRUE(session_mgr.OnWifiReady());  // WifiReady, no config yet
 
@@ -228,7 +269,8 @@ TEST(RecordingHandlerTest, StartRolledBackWhenRecorderStartsButSmRejects) {
     FakeRecorder recorder;
     recorder.start_ok = false;
     FakeTimeline timeline;
-    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
     AdvanceToReady(session_mgr);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
@@ -242,7 +284,8 @@ TEST(RecordingHandlerTest, StopStopsRecorderAndReturnsToReady) {
     SessionManager session_mgr(cleanup);
     FakeRecorder recorder;
     FakeTimeline timeline;
-    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
     AdvanceToReady(session_mgr);
     ASSERT_EQ(handler.Handle(Cmd(sst_cam::RECORDING_START)).status(), sst_cam::ResponseStatus::OK);
 
@@ -258,11 +301,82 @@ TEST(RecordingHandlerTest, PauseWhileNotRecordingErrors) {
     FakeRecorder recorder;
     recorder.pause_ok = false;  // recorder reports it isn't recording
     FakeTimeline timeline;
-    RecordingHandler handler(session_mgr, recorder, timeline, ZeroClock);
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
     AdvanceToReady(session_mgr);
 
     auto resp = handler.Handle(Cmd(sst_cam::RECORDING_PAUSE));
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::ERROR);
+}
+
+// U5 / AE1: a record START carrying a capture_group_id couples the training proxy
+// to the match — it starts alongside the recorder with that group id.
+TEST(RecordingHandlerTest, StartWithGroupIdCouplesProxy) {
+    FakeCleanup cleanup;
+    SessionManager session_mgr(cleanup);
+    FakeRecorder recorder;
+    FakeTimeline timeline;
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
+    AdvanceToReady(session_mgr);
+
+    auto resp = handler.Handle(StartCmdWithGroup("grp-42"));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(recorder.start_calls, 1);
+    EXPECT_EQ(proxy.starts, 1);
+    EXPECT_EQ(proxy.last_group, "grp-42");
+    EXPECT_TRUE(proxy.IsCapturing());
+}
+
+// A record START with NO capture_group_id records normally but does not start a
+// proxy (backward-compatible with pre-coupling apps).
+TEST(RecordingHandlerTest, StartWithoutGroupIdDoesNotStartProxy) {
+    FakeCleanup cleanup;
+    SessionManager session_mgr(cleanup);
+    FakeRecorder recorder;
+    FakeTimeline timeline;
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
+    AdvanceToReady(session_mgr);
+
+    ASSERT_EQ(handler.Handle(Cmd(sst_cam::RECORDING_START)).status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(recorder.start_calls, 1);
+    EXPECT_EQ(proxy.starts, 0);
+}
+
+// STOP stops the coupled proxy alongside the recorder.
+TEST(RecordingHandlerTest, StopStopsCoupledProxy) {
+    FakeCleanup cleanup;
+    SessionManager session_mgr(cleanup);
+    FakeRecorder recorder;
+    FakeTimeline timeline;
+    FakeProxy proxy;
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
+    AdvanceToReady(session_mgr);
+    ASSERT_EQ(handler.Handle(StartCmdWithGroup("g")).status(), sst_cam::ResponseStatus::OK);
+
+    auto resp = handler.Handle(Cmd(sst_cam::RECORDING_STOP));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_GE(proxy.stops, 1);
+    EXPECT_FALSE(proxy.IsCapturing());
+}
+
+// Proxy-start failure is NON-FATAL: the match record still starts (training
+// footage is best-effort).
+TEST(RecordingHandlerTest, ProxyStartFailureDoesNotFailRecord) {
+    FakeCleanup cleanup;
+    SessionManager session_mgr(cleanup);
+    FakeRecorder recorder;
+    FakeTimeline timeline;
+    FakeProxy proxy;
+    proxy.start_ok = false;  // proxy pipeline refuses to start
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock);
+    AdvanceToReady(session_mgr);
+
+    auto resp = handler.Handle(StartCmdWithGroup("g"));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);  // record unaffected
+    EXPECT_EQ(recorder.start_calls, 1);
+    EXPECT_EQ(session_mgr.Phase(), SessionPhase::kRecording);
 }
 
 }  // namespace

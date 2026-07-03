@@ -1,5 +1,7 @@
 #include "app/control/services/handlers/recording.handler.hpp"
 
+#include <spdlog/spdlog.h>
+
 #include <utility>
 
 #include "app/control/services/handlers/quality-mapping.hpp"
@@ -9,8 +11,13 @@ namespace sst::control {
 
 RecordingHandler::RecordingHandler(sst::session::ISessionManager& session,
                                    sst::storage::IRecordingService& recording,
-                                   sst::overlay::IOverlayTimelineRecorder& timeline, Clock now_ms)
-    : session_(session), recording_(recording), timeline_(timeline), now_ms_(std::move(now_ms)) {}
+                                   sst::overlay::IOverlayTimelineRecorder& timeline,
+                                   sst::raw_capture::IRawCaptureSink& proxy, Clock now_ms)
+    : session_(session),
+      recording_(recording),
+      timeline_(timeline),
+      proxy_(proxy),
+      now_ms_(std::move(now_ms)) {}
 
 auto RecordingHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kRecordingControl};
@@ -56,11 +63,27 @@ auto RecordingHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
             // Begin capturing the overlay timeline beside the L1 MP4 (#6 F6b),
             // anchored at the overlay clock so the burn (F6c) can realign it.
             timeline_.Start(state.config->video_output_path, now_ms_ ? now_ms_() : 0);
+            // Couple the training proxy to the match record lifecycle (U5): when
+            // the app minted a capture_group_id, spin up the per-camera proxy
+            // alongside the recording. Best-effort — a proxy failure must NOT fail
+            // the match record (training footage is optional), so log and proceed.
+            const auto& group_id = cmd.recording_control().capture_group_id();
+            if (cmd.recording_control().has_capture_group_id() && !group_id.empty()) {
+                if (!proxy_.Start(group_id)) {
+                    spdlog::warn(
+                        "RecordingHandler: training proxy failed to start for group {} "
+                        "(record continues without it)",
+                        group_id);
+                }
+            }
             resp.set_status(sst_cam::ResponseStatus::OK);
             return resp;
         }
         case sst_cam::RECORDING_STOP: {
             const auto result = recording_.Stop();
+            // Stop the coupled training proxy (U5) — idempotent, a no-op if it was
+            // never started (e.g. no capture_group_id on START).
+            proxy_.Stop();
             // Flush the overlay timeline next to the L1 MP4 (#6 F6b).
             timeline_.Stop();
             session_.OnRecordingStop();

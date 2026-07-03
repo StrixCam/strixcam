@@ -83,6 +83,21 @@ auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id) -> boo
         return false;
     }
 
+    // Group-id collision guard: reject a reused capture_group_id rather than
+    // truncate-overwrite a prior group's (possibly not-yet-downloaded) proxy
+    // files. The app mints UUIDs so a collision means a retry/reconnect resend —
+    // fail loudly instead of silently destroying training footage.
+    for (std::uint32_t i = 0; i < camera_count_; ++i) {
+        const auto name =
+            sst::raw_capture::raw_capture_naming::FileName(sst::raw_capture::RawCaptureIdentity{
+                .capture_group_id = capture_group_id, .camera_index = i});
+        if (std::filesystem::exists(video_dir_ / name)) {
+            spdlog::error("RawCaptureSink::Start: group {} already has files on disk — refusing",
+                          capture_group_id);
+            return false;
+        }
+    }
+
     std::vector<std::unique_ptr<CameraWriter>> writers;
     writers.reserve(camera_count_);
     for (std::uint32_t i = 0; i < camera_count_; ++i) {

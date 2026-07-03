@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <type_traits>
@@ -89,6 +90,17 @@ TEST(RawCaptureSinkTest, PushWhenNotCapturingIsNoOp) {
     sink.PushCamera(0, MakeFrame(0x33));                 // no Start(): harmless no-op
     sink.PushCamera(kOutOfRangeCamera, MakeFrame(0x33));  // out-of-range index
     EXPECT_FALSE(sink.Stop());                            // nothing to stop
+}
+
+// U5 collision guard: a reused capture_group_id whose files already exist on disk
+// is refused (rather than truncate-overwriting a prior, maybe-undownloaded group).
+// The guard runs before any pipeline is built, so this is container-safe.
+TEST(RawCaptureSinkTest, StartRejectsReusedGroupWithExistingFiles) {
+    TempDir dir("collide");
+    FilesystemRawCaptureSink sink(dir.path(), 2);
+    { std::ofstream(ProxyPath(dir.path(), 0)) << 'x'; }  // pre-existing cam-0 proxy
+    EXPECT_FALSE(sink.Start("grp-1"));
+    EXPECT_FALSE(sink.IsCapturing());
 }
 
 // ---- On-device (RawCaptureSinkE2E): real GStreamer encode pipeline ----------

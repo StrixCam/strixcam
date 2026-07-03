@@ -6,6 +6,7 @@
 
 #include "app/control/ports/handler.hpp"
 #include "app/overlay/ports/overlay-timeline-recorder.hpp"
+#include "app/raw_capture/ports/raw-capture-sink.hpp"
 #include "app/session/ports/session-manager.hpp"
 #include "app/storage/ports/recording-service.hpp"
 #include "bluetooth.pb.h"
@@ -25,7 +26,8 @@ class RecordingHandler final : public ICommandHandler {
 
     RecordingHandler(sst::session::ISessionManager& session,
                      sst::storage::IRecordingService& recording,
-                     sst::overlay::IOverlayTimelineRecorder& timeline, Clock now_ms);
+                     sst::overlay::IOverlayTimelineRecorder& timeline,
+                     sst::raw_capture::IRawCaptureSink& proxy, Clock now_ms);
 
     [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
@@ -34,6 +36,7 @@ class RecordingHandler final : public ICommandHandler {
     sst::session::ISessionManager& session_;
     sst::storage::IRecordingService& recording_;
     sst::overlay::IOverlayTimelineRecorder& timeline_;
+    sst::raw_capture::IRawCaptureSink& proxy_;
     Clock now_ms_;
 };
 

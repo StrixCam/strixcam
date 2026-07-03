@@ -196,9 +196,17 @@ auto RunFirmware() -> int {
         uplink_manager.Apply(boot_cfg);
     }).detach();
 
+    // Training-proxy sink — per-camera H.264 proxy, taps both materialized camera
+    // chains, coupled to the match record lifecycle (RecordingHandler drives
+    // Start/Stop; SessionCleanup force-stops it on disconnect). Constructed here,
+    // ahead of both SessionCleanup and the pipeline that pushes into it, so both
+    // can reference it and DeviceHandler can report its IsCapturing() state.
+    sst::adapters::raw_capture::FilesystemRawCaptureSink raw_capture_sink(
+        cfg.storage.video.value_or(sst::paths::kVideoRootFallback), /*camera_count=*/2);
+
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
-    sst::session::SessionCleanup cleanup(recording_service, streaming_service, wifi_manager,
-                                         dhcp_server);
+    sst::session::SessionCleanup cleanup(recording_service, streaming_service, raw_capture_sink,
+                                         wifi_manager, dhcp_server);
     sst::session::SessionManager session_manager(cleanup);
 
     // ── Overlay (scene -> Cairo/Pango RGBA -> caching sink) ────────────
@@ -257,14 +265,6 @@ auto RunFirmware() -> int {
     // ── System stats (telemetry source) ────────────────────────────────
     sst::adapters::control::ProcSystemStats system_stats(video_root);
 
-    // Raw dual-camera capture sink — taps both materialized camera chains,
-    // independent of the final recording. Writes per-camera raw files under the
-    // video root. Constructed here (ahead of the pipeline that pushes into it)
-    // so DeviceHandler can report its IsCapturing() state as is_raw_capturing
-    // telemetry.
-    sst::adapters::raw_capture::FilesystemRawCaptureSink raw_capture_sink(
-        cfg.storage.video.value_or(sst::paths::kVideoRootFallback), /*camera_count=*/2);
-
     // ── Control plane: dispatcher + per-concern handlers ───────────────
     sst::control::CommandDispatcher dispatcher;
 
@@ -299,7 +299,7 @@ auto RunFirmware() -> int {
     dispatcher.Register(
         std::make_shared<sst::control::MatchStateHandler>(session_manager, NowEpochMs));
     dispatcher.Register(std::make_shared<sst::control::RecordingHandler>(
-        session_manager, recording_service, overlay_timeline, NowMs));
+        session_manager, recording_service, overlay_timeline, raw_capture_sink, NowMs));
     dispatcher.Register(
         std::make_shared<sst::control::StreamingHandler>(streaming_service, &uplink_probe));
     dispatcher.Register(std::make_shared<sst::control::DownloadHandler>(
