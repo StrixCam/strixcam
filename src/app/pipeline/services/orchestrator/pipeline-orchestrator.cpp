@@ -129,16 +129,31 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
         // nothing else ever restarts it — the producer would otherwise spin
         // Capture() (nullopt) on a NULL pipeline forever, so preview goes blank
         // and recording produces 0-byte files. Detect the stopped pipeline and
-        // re-Start it, backing off between failed attempts (the radio may still
-        // be settling) instead of hot-looping gst_parse_launch.
+        // re-init it, backing off between failed attempts (the radio may still be
+        // settling) instead of hot-looping gst_parse_launch.
         if (!capture.IsRunning()) {
-            capture.Stop();  // idempotent — ensure a clean teardown before re-Start
-            capture.Start();
+            {
+                // Serialize re-init: a radio reform kills both cameras at once, and
+                // two concurrent nvarguscamerasrc re-acquisitions race the shared
+                // nvargus session. Restart() is Stop()+Start() (idempotent).
+                std::lock_guard restart_lock(restart_mtx_);
+                capture.Restart();
+            }
+            if (!running_) {
+                break;  // shutdown raced the restart — exit now, don't Capture/backoff
+            }
             if (!capture.IsRunning()) {
                 spdlog::warn(
                     "PipelineOrchestrator: camera {} capture down; restart failed, retrying in {}ms",
                     camera_index, config_.capture_restart_backoff.count());
-                std::this_thread::sleep_for(config_.capture_restart_backoff);
+                // Interruptible backoff: sleep in short slices so Stop() (running_
+                // -> false) aborts the wait promptly instead of holding the join
+                // for the full period.
+                constexpr auto kBackoffSlice = std::chrono::milliseconds(50);
+                for (std::chrono::milliseconds waited{0};
+                     waited < config_.capture_restart_backoff && running_; waited += kBackoffSlice) {
+                    std::this_thread::sleep_for(kBackoffSlice);
+                }
                 continue;
             }
             spdlog::info("PipelineOrchestrator: camera {} capture restarted after failure",

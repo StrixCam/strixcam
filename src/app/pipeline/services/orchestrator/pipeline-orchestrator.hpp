@@ -155,6 +155,15 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     std::vector<std::thread> producer_threads_;
     std::thread consumer_thread_;
 
+    // Serializes capture-pipeline restarts across producer threads. The
+    // ProducerLoop watchdog re-inits Argus (gst_parse_launch of nvarguscamerasrc)
+    // on the producer thread; startup does the same init serially on the main
+    // thread. A shared radio-reform event kills both cameras at once, so without
+    // this lock both producers would re-acquire the process-wide nvargus session
+    // concurrently — the one concurrency the serialized startup deliberately
+    // avoids. Held only around Restart(); the rest of the loop stays lock-free.
+    std::mutex restart_mtx_;
+
     // Latest final frame for on-demand snapshots (thumbnail). Guarded by its own
     // mutex so GrabLatest() (BLE thread) never contends with Start/Stop. The
     // stored Frame owns its pixels (postprocessor MakeOwnedFrame), so a value

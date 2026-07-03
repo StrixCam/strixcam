@@ -72,11 +72,26 @@ class FakeCapture final : public ICaptureFrame {
     explicit FakeCapture(Dims dims, bool stall = false)
         : width_(dims.width), height_(dims.height), stall_(stall) {}
 
-    auto Start() -> void override { running_ = true; }
+    auto Start() -> void override {
+        running_ = true;
+        start_calls_.fetch_add(1);
+    }
     auto Stop() -> void override { running_ = false; }
     [[nodiscard]] auto IsRunning() const -> bool override { return running_; }
 
+    // Simulate the on-device failure the watchdog exists for: after `die_after`
+    // frames the pipeline dies once (mirrors HandleBusMessages()->Stop() on an
+    // Argus ERROR — IsRunning() flips false, Capture() returns nothing) and stays
+    // dead until something calls Start()/Restart() again. One-shot so a successful
+    // restart runs clean forever after.
+    auto SetDieAfter(std::uint64_t die_after) -> void { die_after_ = die_after; }
+    auto StartCalls() const -> int { return start_calls_.load(); }
+
     auto Capture() -> std::optional<Frame> override {
+        if (running_ && die_after_ > 0 && !has_died_ && next_id_.load() >= die_after_) {
+            has_died_ = true;
+            running_ = false;  // pipeline death — watchdog must Restart() to recover
+        }
         if (!running_ || stall_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(kIdlePollMs));
             return std::nullopt;
@@ -96,6 +111,9 @@ class FakeCapture final : public ICaptureFrame {
     std::uint32_t width_{kCam0Dims.width};
     std::uint32_t height_{kCam0Dims.height};
     bool stall_{false};
+    std::uint64_t die_after_{0};  // 0 means never die
+    std::atomic<bool> has_died_{false};
+    std::atomic<int> start_calls_{0};
     std::atomic<bool> running_{false};
     std::atomic<std::uint64_t> next_id_{0};
 };
@@ -302,6 +320,40 @@ TEST(PipelineOrchestratorTest, EndToEndFlowProducesPostprocessedFrames) {
     // F6a: the recorder branch receives the same post-processed frames as the
     // stream branch (clean here — no overlay source wired in this test).
     EXPECT_GT(std::get<0>(record_sink.Snapshot()), 0);
+}
+
+// Watchdog: a capture pipeline that dies mid-run (Argus INVALID_SETTINGS on the
+// WiFi-Direct radio reform → HandleBusMessages()->Stop()) must be restarted by
+// the producer, and frames must resume reaching the sink. Without the watchdog
+// the producer spins Capture()->nullopt on the dead pipeline forever (blank
+// preview, 0-byte recording).
+TEST(PipelineOrchestratorTest, WatchdogRestartsDeadCaptureAndFramesResume) {
+    auto capture_owner = std::make_unique<FakeCapture>(kCam0Dims);
+    auto* capture = capture_owner.get();
+    capture->SetDieAfter(3);  // die once after 3 frames, then recover on Restart()
+
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        OneCamera(std::move(capture_owner), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig());
+
+    ASSERT_TRUE(orchestrator.Start());
+    // ~400ms: dies ~frame 3 (~100ms), watchdog Restart()s, frames resume for the
+    // remainder — well past the 3-frame death point.
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        400));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    orchestrator.Stop();
+
+    // Start() ran at least twice: once at orchestrator Start(), once via the
+    // watchdog's Restart() after the death.
+    EXPECT_GE(capture->StartCalls(), 2);
+    // Frames resumed after recovery: more reached the sink than the 3 produced
+    // before the pipeline died.
+    auto [pushes, last_id, last_format, last_geom] = sink.Snapshot();
+    EXPECT_GT(pushes, 3);
+    EXPECT_GT(last_id, 3U);
 }
 
 // U3: both cameras run, but the static decision routes only camera 0 to
