@@ -10,7 +10,7 @@ namespace sst::adapters::storage {
 // quality (VideoQuality::IsSet() == false). 30 fps / 8 Mbit/s is the software
 // x264 baseline sized to the dual-camera CPU budget on the Orin Nano.
 inline constexpr int kRecorderDefaultFramerate = 30;
-inline constexpr int kRecorderBitrateKbps = 8000;
+inline constexpr int kRecorderBitrateKbps = 14000;
 
 // Bound on the leaky pre-encoder queue (~0.5s at 60fps). Drop-oldest under
 // encode overload keeps the encoder realtime so the MP4 always finalizes a valid

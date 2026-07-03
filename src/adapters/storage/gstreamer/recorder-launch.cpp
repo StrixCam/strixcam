@@ -2,6 +2,9 @@
 
 #include <fmt/format.h>
 
+#include <cstdlib>
+#include <string>
+
 namespace sst::adapters::storage {
 
 auto BuildRecorderLaunch(const std::string& output_mp4, const sst::common::VideoQuality& quality,
@@ -46,6 +49,17 @@ auto BuildRecorderLaunch(const std::string& output_mp4, const sst::common::Video
                 : std::string{"videoconvert ! video/x-raw,format=I420"};
     }
 
+    // Record-encode quality is env-tunable so it can be dialed on-device without
+    // a rebuild — the "cheap camera" look is mostly x264 ultrafast starved at
+    // 8 Mbps. Bitrate is a pure quality lever (no CPU cost); a slower preset costs
+    // CPU on the shared software encoder, so it stays overridable + is validated on
+    // metal (must still sustain 30fps or the leaky queue drops frames). tune stays
+    // zerolatency so Stop finalizes cleanly (no big reorder buffer to drain).
+    const char* preset_env = std::getenv("SST_X264_PRESET");
+    const std::string preset = (preset_env != nullptr) ? preset_env : "ultrafast";
+    const char* br_env = std::getenv("SST_REC_BITRATE_KBPS");
+    const int bitrate = (br_env != nullptr) ? std::atoi(br_env) : kRecorderBitrateKbps;
+
     // A leaky (drop-oldest) queue sits between the scaler and the software
     // encoder so a transient encode overload drops frames instead of backing up
     // the appsrc unbounded — otherwise a slow encode (e.g. under full-pipeline
@@ -57,12 +71,12 @@ auto BuildRecorderLaunch(const std::string& output_mp4, const sst::common::Video
         "appsrc name={src} is-live=true format=time do-timestamp=true ! "
         "{caps} ! "
         "queue leaky=downstream max-size-buffers={qbuf} max-size-time=0 max-size-bytes=0 ! "
-        "x264enc name={enc} speed-preset=ultrafast tune=zerolatency "
+        "x264enc name={enc} speed-preset={preset} tune=zerolatency "
         "bitrate={kbps} key-int-max={gik} ! "
         "h264parse config-interval=-1 ! mp4mux ! filesink location={loc}",
         fmt::arg("src", kRecorderAppsrcName), fmt::arg("enc", kRecorderEncoderName),
         fmt::arg("caps", format_caps), fmt::arg("qbuf", kRecorderQueueMaxBuffers),
-        fmt::arg("kbps", kRecorderBitrateKbps), fmt::arg("gik", key_int_max),
+        fmt::arg("preset", preset), fmt::arg("kbps", bitrate), fmt::arg("gik", key_int_max),
         fmt::arg("loc", output_mp4));
 }
 
