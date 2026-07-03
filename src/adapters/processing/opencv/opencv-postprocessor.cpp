@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <optional>
@@ -14,6 +15,10 @@
 #include "domain/processing/models/postprocess-config.hpp"
 
 namespace sst::adapters::processing {
+
+// Below this delta a tuning parameter is treated as its identity value and the
+// (CPU-costing) op is skipped — the common case where sliders sit at default.
+constexpr float kTuningEpsilon = 0.001F;
 
 OpenCvPostprocessor::OpenCvPostprocessor(sst::processing::PostprocessConfig config,
                                          const sst::processing::ColorCalibrationState* calibration,
@@ -95,6 +100,21 @@ auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
                               config_.color_correction.b_gain, config_.color_correction.enabled};
     if (wb.enabled) {
         cv::multiply(resized, cv::Scalar(wb.b, wb.g, wb.r), resized);
+        // Saturation: lerp between the frame and its greyscale (1.0 = unchanged,
+        // 0 = greyscale, >1 = more vivid). Fixes the ArduCAM's washed-out look.
+        if (std::fabs(wb.saturation - 1.0F) > kTuningEpsilon) {
+            cv::Mat grey;
+            cv::cvtColor(resized, grey, cv::COLOR_BGR2GRAY);
+            cv::cvtColor(grey, grey, cv::COLOR_GRAY2BGR);
+            cv::addWeighted(resized, wb.saturation, grey, 1.0 - wb.saturation, 0.0, resized);
+        }
+        // Contrast (scaled around mid-grey) + brightness (additive). convertTo
+        // saturates to uint8, so out-of-range values clip rather than wrap.
+        if (std::fabs(wb.contrast - 1.0F) > kTuningEpsilon ||
+            std::fabs(wb.brightness) > kTuningEpsilon) {
+            const double beta = (128.0 * (1.0 - wb.contrast)) + (wb.brightness * 255.0);
+            resized.convertTo(resized, -1, wb.contrast, beta);
+        }
     }
 
     cv::Mat final_mat;

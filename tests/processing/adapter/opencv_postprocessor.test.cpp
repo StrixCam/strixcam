@@ -196,6 +196,26 @@ TEST(OpenCvPostprocessorTest, LiveCalibrationStateOverridesConfigAndUpdates) {
     const auto* p2 = out2->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
     EXPECT_GT(p2[0], p[0]);  // B restored on the next frame
 }
+
+// Saturation = 0 collapses a colored frame to greyscale (B≈G≈R); the WB gains
+// stay at identity so only saturation acts.
+TEST(OpenCvPostprocessorTest, SaturationZeroProducesGreyscale) {
+    auto src = MakeNv12Frame(64, 64, 76, 84, 255);  // red-ish (BT.601: Y=76,U=84,V=255)
+    sst::processing::ColorCalibrationState calib({.r = 1.0F,
+                                                  .g = 1.0F,
+                                                  .b = 1.0F,
+                                                  .enabled = true,
+                                                  .saturation = 0.0F,
+                                                  .contrast = 1.0F,
+                                                  .brightness = 0.0F});
+    OpenCvPostprocessor post{PostprocessConfig{.output_width = 32, .output_height = 32}, &calib};
+
+    auto out = post.Process(src, CropRect{0, 0, 64, 64});
+    ASSERT_TRUE(out.has_value());
+    const auto* p = out->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
+    EXPECT_NEAR(p[0], p[1], 6);  // B≈G
+    EXPECT_NEAR(p[1], p[2], 6);  // G≈R → grey
+}
 // NOLINTEND(readability-magic-numbers)
 
 }  // namespace sst::adapters::processing

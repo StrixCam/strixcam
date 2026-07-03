@@ -393,7 +393,13 @@ auto RunFirmware() -> int {
     // SetCameraCalibration handler writes it, so slider drags retune the preview
     // live. Must outlive the postprocessor (moved into the pipeline below).
     sst::processing::ColorCalibrationState calibration_state(
-        {.r = wb.r_gain, .g = wb.g_gain, .b = wb.b_gain, .enabled = wb.enabled});
+        {.r = wb.r_gain,
+         .g = wb.g_gain,
+         .b = wb.b_gain,
+         .enabled = wb.enabled,
+         .saturation = env_gain("SST_SATURATION", 1.0F),
+         .contrast = env_gain("SST_CONTRAST", 1.0F),
+         .brightness = env_gain("SST_BRIGHTNESS", 0.0F)});
     // Latest pre-correction frame average — auto-white-balance reads it to compute
     // grey-world gains. Must outlive the postprocessor (moved into the pipeline).
     static sst::processing::FrameColorStats frame_color_stats;

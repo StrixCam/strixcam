@@ -30,11 +30,16 @@ auto AutoWhiteBalanceHandler::Handle(const sst_cam::Command& /*cmd*/) -> sst_cam
     // Grey-world normalized to green: gains that pull R and B onto G, so a neutral
     // target (white/grey) renders neutral. Green is the reference (gain 1.0) — never
     // boosted, which would tint the whole frame green. Guard a dark/no-sample frame.
-    sst::processing::ColorCalibrationState::Gains gains = calibration_.Get();  // fall back to current
+    // Start from the current state so saturation/contrast/brightness are preserved
+    // — auto-WB only touches the R/G/B gains.
+    sst::processing::ColorCalibrationState::Gains gains = calibration_.Get();
     const bool usable = means.valid && means.g > kMinUsableMean && means.r > kMinUsableMean &&
                         means.b > kMinUsableMean;
     if (usable) {
-        gains = {Clamp(means.g / means.r), 1.0F, Clamp(means.g / means.b), true};
+        gains.r = Clamp(means.g / means.r);
+        gains.g = 1.0F;
+        gains.b = Clamp(means.g / means.b);
+        gains.enabled = true;
         calibration_.Set(gains);
         spdlog::info(
             "Auto WB: frame means B={:.1f} G={:.1f} R={:.1f} -> gains R={:.3f} G={:.3f} B={:.3f}",
@@ -49,6 +54,9 @@ auto AutoWhiteBalanceHandler::Handle(const sst_cam::Command& /*cmd*/) -> sst_cam
     payload->set_g_gain(gains.g);
     payload->set_b_gain(gains.b);
     payload->set_enabled(gains.enabled);
+    payload->set_saturation(gains.saturation);
+    payload->set_contrast(gains.contrast);
+    payload->set_brightness(gains.brightness);
     resp.set_status(sst_cam::ResponseStatus::OK);
     return resp;
 }
