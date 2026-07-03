@@ -2,7 +2,7 @@
 
 namespace sst::control {
 
-RawCaptureHandler::RawCaptureHandler(sst::storage::IRawCaptureSink& sink) : sink_(sink) {}
+RawCaptureHandler::RawCaptureHandler(sst::raw_capture::IRawCaptureSink& sink) : sink_(sink) {}
 
 auto RawCaptureHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kRawCapture};

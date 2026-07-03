@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -145,6 +146,9 @@ TEST(StreamingE2E, RtmpStreamerStartsAndPushesAgainstLocalIngest) {
     // Requires an RTMP listener on localhost:1935/live (e.g. nginx-rtmp).
     // On-device CI should provision one; in the dev container this fails at
     // PLAYING transition because `rtmpsink` can't connect.
+    // Software scale/convert path: VIC (nvvidconv) is the on-device default (U2)
+    // but doesn't resolve in the qemu container; VIC is validated on-device.
+    setenv("SST_DISABLE_VIC", "1", /*overwrite=*/1);
     GstRtmpStreamer streamer;
     sst::streaming::PlatformStreamConfig cfg;
     cfg.stream_id = kLocalIngestStreamId;

@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <vector>
 
@@ -18,6 +19,10 @@ TEST(GstContinuousE2E, EncodesSinglePlayableMp4) {
     const fs::path out = fs::temp_directory_path() / "sst_e2e_continuous.mp4";
     fs::remove(out);
 
+    // Force the software scale/convert path: VIC (nvvidconv) is the on-device
+    // default (U2) but does not resolve in the qemu container, so this encode/mux
+    // E2E runs on the software path here. VIC is validated on-device separately.
+    setenv("SST_DISABLE_VIC", "1", /*overwrite=*/1);
     sst::adapters::storage::GstContinuousRecorder recorder;
     ASSERT_TRUE(recorder.Start(out, {})) << "NVENC pipeline did not start (expected off-device)";
 

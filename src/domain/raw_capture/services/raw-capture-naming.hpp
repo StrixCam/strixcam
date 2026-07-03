@@ -4,25 +4,27 @@
 #include <string>
 #include <string_view>
 
-#include "domain/storage/models/raw-capture-identity.hpp"
+#include "domain/raw_capture/models/raw-capture-identity.hpp"
 
 // On-disk naming convention for raw dual-camera capture files, shared by the
 // writer (raw-capture sink) and the enumerator (download server) so the two
 // never drift on the format.
 //
-// Layout:  raw__<capture_group_id>__cam<N>.nv12
+// Layout:  raw__<capture_group_id>__cam<N>.mp4
 //
-// The `raw__` prefix marks a raw file (final-match recordings are `.mp4`), the
-// middle segment is the app-minted capture_group_id, and the `__cam<N>` suffix
-// is the physical sensor index. Frames are concatenated NV12 planes (the demo's
-// fixed capture geometry); no per-frame header. Double-underscore delimiters
-// keep parsing unambiguous as long as the group id contains no `__` (app mints
-// UUIDs, which do not).
-namespace sst::storage::raw_capture_naming {
+// The `raw__` prefix + flat-at-video-root location marks a per-camera training
+// proxy (final-match recordings are `.mp4` too, but live in per-match subdirs
+// WITHOUT this prefix — the prefix, not the extension, is the discriminator).
+// The middle segment is the app-minted capture_group_id, and the `__cam<N>`
+// suffix is the physical sensor index. Each file is a small H.264 MP4 (the
+// training proxy — 854x480@15, see proxy-launch); one per camera. Double-
+// underscore delimiters keep parsing unambiguous as long as the group id
+// contains no `__` (app mints UUIDs, which do not).
+namespace sst::raw_capture::raw_capture_naming {
 
 inline constexpr std::string_view kPrefix = "raw__";
 inline constexpr std::string_view kCameraMarker = "__cam";
-inline constexpr std::string_view kExtension = ".nv12";
+inline constexpr std::string_view kExtension = ".mp4";
 
 // `id` names a capture identity; this is a public API referenced outside this
 // module (writer + download server), so the parameter name is part of the
@@ -70,4 +72,4 @@ inline auto ParseFileName(std::string_view file_name) -> std::optional<RawCaptur
     return RawCaptureIdentity{.capture_group_id = std::string(group), .camera_index = camera_index};
 }
 
-}  // namespace sst::storage::raw_capture_naming
+}  // namespace sst::raw_capture::raw_capture_naming

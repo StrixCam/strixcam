@@ -26,7 +26,7 @@ PipelineOrchestrator::PipelineOrchestrator(
     // are distinct sinks
     sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
     // NOLINTEND(bugprone-easily-swappable-parameters)
-    PipelineConfig config, sst::storage::IRawCaptureSink* raw_sink,
+    PipelineConfig config, sst::raw_capture::IRawCaptureSink* raw_sink,
     sst::overlay::IOverlayFrameSource* overlay_source,
     sst::processing::IFrameCompositor* compositor,
     sst::streaming::PreviewLayoutState* preview_layout)

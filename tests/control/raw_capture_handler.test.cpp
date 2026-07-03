@@ -4,7 +4,7 @@
 #include <string>
 
 #include "app/control/services/handlers/raw-capture.handler.hpp"
-#include "app/storage/ports/raw-capture-sink.hpp"
+#include "app/raw_capture/ports/raw-capture-sink.hpp"
 #include "bluetooth.pb.h"
 #include "domain/capture/models/frame.hpp"
 
@@ -14,7 +14,7 @@ using sst::control::RawCaptureHandler;
 
 // Records the handler's calls into the sink and lets a test force Start/Stop
 // failure.
-class FakeRawSink final : public sst::storage::IRawCaptureSink {
+class FakeRawSink final : public sst::raw_capture::IRawCaptureSink {
    public:
     auto Start(const std::string& capture_group_id) -> bool override {
         ++starts;

@@ -33,7 +33,7 @@
 #include "adapters/storage/gstreamer/gst-continuous-recorder.hpp"
 #include "adapters/storage/opencv/opencv-jpeg-encoder.hpp"
 #include "adapters/storage/opencv/opencv-thumbnail-writer.hpp"
-#include "adapters/storage/raw_capture/filesystem-raw-capture-sink.hpp"
+#include "adapters/raw_capture/filesystem-raw-capture-sink.hpp"
 #include "adapters/streaming/gst_rtmp/gst-rtmp-streamer.hpp"
 #include "adapters/streaming/gst_rtsp/gst-rtsp-app-stream-server.hpp"
 #include "app/config/services/config_loader/config-loader.hpp"
@@ -262,7 +262,7 @@ auto RunFirmware() -> int {
     // video root. Constructed here (ahead of the pipeline that pushes into it)
     // so DeviceHandler can report its IsCapturing() state as is_raw_capturing
     // telemetry.
-    sst::adapters::storage::FilesystemRawCaptureSink raw_capture_sink(
+    sst::adapters::raw_capture::FilesystemRawCaptureSink raw_capture_sink(
         cfg.storage.video.value_or(sst::paths::kVideoRootFallback), /*camera_count=*/2);
 
     // ── Control plane: dispatcher + per-concern handlers ───────────────

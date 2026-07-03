@@ -3,7 +3,7 @@
 #include <vector>
 
 #include "app/control/ports/handler.hpp"
-#include "app/storage/ports/raw-capture-sink.hpp"
+#include "app/raw_capture/ports/raw-capture-sink.hpp"
 #include "bluetooth.pb.h"
 
 namespace sst::control {
@@ -16,13 +16,13 @@ namespace sst::control {
 // treated as START. Runs concurrently with final recording + streaming.
 class RawCaptureHandler final : public ICommandHandler {
    public:
-    explicit RawCaptureHandler(sst::storage::IRawCaptureSink& sink);
+    explicit RawCaptureHandler(sst::raw_capture::IRawCaptureSink& sink);
 
     [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
 
    private:
-    sst::storage::IRawCaptureSink& sink_;
+    sst::raw_capture::IRawCaptureSink& sink_;
 };
 
 }  // namespace sst::control
