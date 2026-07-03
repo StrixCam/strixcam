@@ -31,9 +31,11 @@ using sst::capture::Frame;
 // quality must never reach it. The sink's Start takes only a capture_group_id;
 // pinned at compile time so a future signature change that adds a quality knob to
 // the raw path fails the build.
-static_assert(std::is_same_v<decltype(&sst::raw_capture::IRawCaptureSink::Start),
-                             bool (sst::raw_capture::IRawCaptureSink::*)(const std::string&)>,
-              "raw capture Start must remain quality-free (R17)");
+static_assert(
+    std::is_same_v<decltype(&sst::raw_capture::IRawCaptureSink::Start),
+                   bool (sst::raw_capture::IRawCaptureSink::*)(const std::string&,
+                                                              const std::filesystem::path&)>,
+    "raw capture Start takes a group id + output dir, no quality knob (R17)");
 
 // A unique temp directory per test, removed on destruction.
 class TempDir {
@@ -79,7 +81,7 @@ auto ProxyPath(const std::filesystem::path& dir, std::uint32_t camera_index) -> 
 TEST(RawCaptureSinkTest, EmptyGroupIdRejected) {
     TempDir dir("empty");
     FilesystemRawCaptureSink sink(dir.path(), 2);
-    EXPECT_FALSE(sink.Start(""));  // rejected before any GStreamer work
+    EXPECT_FALSE(sink.Start("", dir.path()));  // rejected before any GStreamer work
     EXPECT_FALSE(sink.IsCapturing());
 }
 
@@ -99,7 +101,7 @@ TEST(RawCaptureSinkTest, StartRejectsReusedGroupWithExistingFiles) {
     TempDir dir("collide");
     FilesystemRawCaptureSink sink(dir.path(), 2);
     { std::ofstream(ProxyPath(dir.path(), 0)) << 'x'; }  // pre-existing cam-0 proxy
-    EXPECT_FALSE(sink.Start("grp-1"));
+    EXPECT_FALSE(sink.Start("grp-1", dir.path()));
     EXPECT_FALSE(sink.IsCapturing());
 }
 
@@ -112,7 +114,7 @@ TEST(RawCaptureSinkE2E, StartPushStopWritesBothProxyFiles) {
     TempDir dir("both");
     FilesystemRawCaptureSink sink(dir.path(), kCameraCount);
 
-    ASSERT_TRUE(sink.Start("grp-1"));
+    ASSERT_TRUE(sink.Start("grp-1", dir.path()));
     EXPECT_TRUE(sink.IsCapturing());
 
     for (int i = 0; i < kFramesPerCamera; ++i) {
@@ -131,15 +133,15 @@ TEST(RawCaptureSinkE2E, StartPushStopWritesBothProxyFiles) {
 TEST(RawCaptureSinkE2E, StartWhileCapturingIsRejected) {
     TempDir dir("twice");
     FilesystemRawCaptureSink sink(dir.path(), 2);
-    ASSERT_TRUE(sink.Start("g"));
-    EXPECT_FALSE(sink.Start("g2"));  // already capturing
+    ASSERT_TRUE(sink.Start("g", dir.path()));
+    EXPECT_FALSE(sink.Start("g2", dir.path()));  // already capturing
     sink.Stop();
 }
 
 TEST(RawCaptureSinkE2E, StopIsIdempotentlySafe) {
     TempDir dir("stop2");
     FilesystemRawCaptureSink sink(dir.path(), 2);
-    ASSERT_TRUE(sink.Start("g"));
+    ASSERT_TRUE(sink.Start("g", dir.path()));
     EXPECT_TRUE(sink.Stop());
     EXPECT_FALSE(sink.Stop());  // second stop is a no-op false
 }

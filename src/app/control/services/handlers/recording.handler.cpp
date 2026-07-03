@@ -69,7 +69,9 @@ auto RecordingHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
             // the match record (training footage is optional), so log and proceed.
             const auto& group_id = cmd.recording_control().capture_group_id();
             if (cmd.recording_control().has_capture_group_id() && !group_id.empty()) {
-                if (!proxy_.Start(group_id)) {
+                // Write the proxy pair into the SAME per-match dir as the final
+                // MP4 + timeline (video_output_path), not the video root.
+                if (!proxy_.Start(group_id, state.config->video_output_path)) {
                     spdlog::warn(
                         "RecordingHandler: training proxy failed to start for group {} "
                         "(record continues without it)",

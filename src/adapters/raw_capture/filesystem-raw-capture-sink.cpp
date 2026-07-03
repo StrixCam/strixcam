@@ -64,7 +64,8 @@ FilesystemRawCaptureSink::~FilesystemRawCaptureSink() {
     }
 }
 
-auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id) -> bool {
+auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id,
+                                     const std::filesystem::path& output_dir) -> bool {
     std::lock_guard lock(mtx_);
     if (capturing_.load()) {
         spdlog::warn("RawCaptureSink::Start: already capturing");
@@ -75,11 +76,15 @@ auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id) -> boo
         return false;
     }
 
+    // Write the proxy pair INTO the per-match dir (SessionConfig.video_output_path)
+    // so it sits beside the final <match>.mp4 + timeline.json. Empty => fall back
+    // to the construction-time root.
+    const std::filesystem::path dir = output_dir.empty() ? video_dir_ : output_dir;
+
     std::error_code err;
-    std::filesystem::create_directories(video_dir_, err);
+    std::filesystem::create_directories(dir, err);
     if (err) {
-        spdlog::error("RawCaptureSink::Start: cannot create {}: {}", video_dir_.string(),
-                      err.message());
+        spdlog::error("RawCaptureSink::Start: cannot create {}: {}", dir.string(), err.message());
         return false;
     }
 
@@ -91,7 +96,7 @@ auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id) -> boo
         const auto name =
             sst::raw_capture::raw_capture_naming::FileName(sst::raw_capture::RawCaptureIdentity{
                 .capture_group_id = capture_group_id, .camera_index = i});
-        if (std::filesystem::exists(video_dir_ / name)) {
+        if (std::filesystem::exists(dir / name)) {
             spdlog::error("RawCaptureSink::Start: group {} already has files on disk — refusing",
                           capture_group_id);
             return false;
@@ -104,7 +109,7 @@ auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id) -> boo
         const auto name =
             sst::raw_capture::raw_capture_naming::FileName(sst::raw_capture::RawCaptureIdentity{
                 .capture_group_id = capture_group_id, .camera_index = i});
-        const auto path = video_dir_ / name;
+        const auto path = dir / name;
 
         const std::string desc = BuildProxyLaunch(path.string(), use_vic_);
         GError* gerr = nullptr;

@@ -29,7 +29,9 @@ auto RawCaptureHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandR
                 resp.set_error_message("raw capture start: missing capture_group_id");
                 return resp;
             }
-            if (!sink_.Start(raw.capture_group_id())) {
+            // Standalone (retired) trigger: no per-match dir, fall back to the
+            // sink's construction-time root.
+            if (!sink_.Start(raw.capture_group_id(), {})) {
                 resp.set_status(sst_cam::ResponseStatus::ERROR);
                 resp.set_error_message("raw capture failed to start (already capturing or I/O)");
                 return resp;

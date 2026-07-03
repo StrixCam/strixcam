@@ -45,10 +45,13 @@ auto ProxyRetention::Sweep(
         return 0;
     }
 
-    // Group the flat raw__<group>__cam<N>.mp4 files by capture_group_id.
+    // Group the raw__<group>__cam<N>.mp4 files by capture_group_id. Recursive:
+    // proxies live inside each per-match dir (beside the final MP4), not flat at
+    // the root, so the sweep must descend to find them.
     std::map<std::string, Group> groups;
     std::uint64_t total = 0;
-    for (fs::directory_iterator it(video_dir_, err), end; !err && it != end; it.increment(err)) {
+    for (fs::recursive_directory_iterator it(video_dir_, err), end; !err && it != end;
+         it.increment(err)) {
         if (!it->is_regular_file(err)) {
             continue;
         }

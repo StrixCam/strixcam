@@ -96,9 +96,11 @@ class FakeTimeline final : public sst::overlay::IOverlayTimelineRecorder {
 // to fail Start (to prove proxy failure is non-fatal to the match record, U5).
 class FakeProxy final : public sst::raw_capture::IRawCaptureSink {
    public:
-    auto Start(const std::string& capture_group_id) -> bool override {
+    auto Start(const std::string& capture_group_id,
+               const std::filesystem::path& output_dir) -> bool override {
         ++starts;
         last_group = capture_group_id;
+        last_dir = output_dir;
         capturing_ = start_ok;
         return start_ok;
     }
@@ -115,6 +117,7 @@ class FakeProxy final : public sst::raw_capture::IRawCaptureSink {
     int starts{0};
     int stops{0};
     std::string last_group;
+    std::filesystem::path last_dir;
 
    private:
     bool capturing_{false};
