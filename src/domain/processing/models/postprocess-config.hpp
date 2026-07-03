@@ -10,12 +10,16 @@ namespace sst::processing {
 inline constexpr std::uint32_t kDefaultOutputWidth{1280};
 inline constexpr std::uint32_t kDefaultOutputHeight{720};
 
-// Mild diagonal WB gains (green NOT boosted — a G boost tints the whole frame
-// green). Cuts the R/B excess that drives the magenta. Deliberately conservative
-// so highlights don't flip green; dial in per scene via SST_WB_{R,G,B}GAIN.
-inline constexpr float kDefaultRGain{0.82F};
-inline constexpr float kDefaultGGain{1.0F};
+// Shipping defaults, dialed in on-device against the ArduCAM RBPCV3 IMX477.
+// WB gains neutralize the magenta; the tone values fix the washed-out look.
+// Override any of them at boot via SST_WB_{R,G,B}GAIN / SST_SATURATION /
+// SST_CONTRAST / SST_BRIGHTNESS.
+inline constexpr float kDefaultRGain{0.86F};
+inline constexpr float kDefaultGGain{0.94F};
 inline constexpr float kDefaultBGain{0.84F};
+inline constexpr float kDefaultSaturation{1.10F};
+inline constexpr float kDefaultContrast{1.20F};
+inline constexpr float kDefaultBrightness{-0.05F};
 
 // Per-channel white-balance correction applied post-demosaic (BGR). The ArduCAM
 // RBPCV3 IMX477 ships a heavy magenta cast (green ~40% of R/B) baked into the

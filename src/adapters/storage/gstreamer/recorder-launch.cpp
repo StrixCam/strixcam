@@ -55,8 +55,11 @@ auto BuildRecorderLaunch(const std::string& output_mp4, const sst::common::Video
     // CPU on the shared software encoder, so it stays overridable + is validated on
     // metal (must still sustain 30fps or the leaky queue drops frames). tune stays
     // zerolatency so Stop finalizes cleanly (no big reorder buffer to drain).
+    // superfast is the validated default: it holds 1080p30 under the full
+    // pipeline load (2× capture + preview + stream) where veryfast+ drop frames,
+    // and looks markedly better than ultrafast. Override with SST_X264_PRESET.
     const char* preset_env = std::getenv("SST_X264_PRESET");
-    const std::string preset = (preset_env != nullptr) ? preset_env : "ultrafast";
+    const std::string preset = (preset_env != nullptr) ? preset_env : "superfast";
     const char* br_env = std::getenv("SST_REC_BITRATE_KBPS");
     const int bitrate = (br_env != nullptr) ? std::atoi(br_env) : kRecorderBitrateKbps;
 

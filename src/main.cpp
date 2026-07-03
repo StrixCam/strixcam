@@ -397,9 +397,9 @@ auto RunFirmware() -> int {
          .g = wb.g_gain,
          .b = wb.b_gain,
          .enabled = wb.enabled,
-         .saturation = env_gain("SST_SATURATION", 1.0F),
-         .contrast = env_gain("SST_CONTRAST", 1.0F),
-         .brightness = env_gain("SST_BRIGHTNESS", 0.0F)});
+         .saturation = env_gain("SST_SATURATION", sst::processing::kDefaultSaturation),
+         .contrast = env_gain("SST_CONTRAST", sst::processing::kDefaultContrast),
+         .brightness = env_gain("SST_BRIGHTNESS", sst::processing::kDefaultBrightness)});
     // Latest pre-correction frame average — auto-white-balance reads it to compute
     // grey-world gains. Must outlive the postprocessor (moved into the pipeline).
     static sst::processing::FrameColorStats frame_color_stats;
