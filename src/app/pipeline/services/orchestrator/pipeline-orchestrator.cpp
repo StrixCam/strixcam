@@ -147,33 +147,15 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
 }
 
 auto PipelineOrchestrator::ConsumerLoop() -> void {
-    // Most-recent bundle per camera, carried across ticks. A camera that produced
-    // no NEW frame this tick reuses its last one so a manually-selected output
-    // camera stays selected instead of flickering back to the cadence camera when
-    // its non-blocking TryPop happens to land on an empty slot. FrameBundle copy is
-    // shallow (frames share their owner via shared_ptr), so retaining is cheap.
-    std::vector<std::optional<sst::processing::FrameBundle>> retained(cameras_.size());
     while (running_) {
-        // Block ONLY on the cadence camera so the loop paces at capture rate (never
-        // spins, never stalls waiting on a second camera); sample the others
-        // non-blocking. Blocking on every camera slowed/stalled the loop when one
-        // lagged — the retained cache below is what actually kills the flicker.
+        // Block on the cadence camera so the loop runs at capture rate; sample every
+        // other camera non-blocking. Each tick consumes the latest bundle from each
+        // slot — unchosen ones are dropped (aged out) here.
         std::vector<std::optional<sst::processing::FrameBundle>> latest(cameras_.size());
         latest[kCadenceCamera] = slots_[kCadenceCamera]->Pop(config_.consumer_pop_timeout);
         for (std::size_t i = 0; i < cameras_.size(); ++i) {
             if (i != kCadenceCamera) {
                 latest[i] = slots_[i]->TryPop();
-            }
-        }
-
-        // Carry each camera's most recent frame forward: refresh the cache from a
-        // new frame, else fall back to the last one. The selected output camera is
-        // therefore always present for the decision → no 0<->1 flicker.
-        for (std::size_t i = 0; i < cameras_.size(); ++i) {
-            if (latest[i].has_value()) {
-                retained[i] = latest[i];
-            } else {
-                latest[i] = retained[i];
             }
         }
 
