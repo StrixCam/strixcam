@@ -306,7 +306,10 @@ ensure_setup() {
   #            WiFi-Direct group owner talks to wpa_supplicant over that socket;
   #            without netdev the service gets EACCES ("Permission denied") and
   #            WiFi preview fails.
-  for _grp in video render netdev; do
+  #   i2c    — motorized-focus VCM (/dev/i2c-9, /dev/i2c-10 at chip 0x0c). The
+  #            firmware drives the ArduCAM lens focus over i2c-dev; without i2c
+  #            the non-root service gets EACCES opening the bus and focus is dead.
+  for _grp in video render netdev i2c; do
     if getent group "$_grp" >/dev/null 2>&1; then
       usermod -aG "$_grp" "$SERVICE_USER" 2>/dev/null || true
     fi

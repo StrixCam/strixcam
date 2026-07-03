@@ -37,8 +37,11 @@
 #include "adapters/storage/gstreamer/gst-continuous-recorder.hpp"
 #include "adapters/storage/opencv/opencv-jpeg-encoder.hpp"
 #include "adapters/storage/opencv/opencv-thumbnail-writer.hpp"
+#include "adapters/focus/i2c-focuser.hpp"
 #include "adapters/raw_capture/filesystem-raw-capture-sink.hpp"
 #include "adapters/raw_capture/proxy-retention.hpp"
+#include "app/control/services/handlers/camera-focus.handler.hpp"
+#include "domain/focus/models/focus-state.hpp"
 #include "adapters/streaming/gst_rtmp/gst-rtmp-streamer.hpp"
 #include "adapters/streaming/gst_rtsp/gst-rtsp-app-stream-server.hpp"
 #include "app/config/services/config_loader/config-loader.hpp"
@@ -59,7 +62,9 @@
 #include "app/control/services/handlers/thumbnail.handler.hpp"
 #include "app/control/services/handlers/wifi-direct.handler.hpp"
 #include "app/control/services/telemetry_probe/telemetry-probe.hpp"
-#include "app/decision/services/static_decision/static-decision.hpp"
+#include "app/control/services/handlers/active-camera.handler.hpp"
+#include "app/decision/services/manual_decision/manual-decision.hpp"
+#include "domain/decision/models/manual-camera-state.hpp"
 #include "app/network/services/download_server/download-server.hpp"
 #include "app/network/services/uplink-manager/uplink-manager.hpp"
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
@@ -400,12 +405,20 @@ auto RunFirmware() -> int {
          .saturation = env_gain("SST_SATURATION", sst::processing::kDefaultSaturation),
          .contrast = env_gain("SST_CONTRAST", sst::processing::kDefaultContrast),
          .brightness = env_gain("SST_BRIGHTNESS", sst::processing::kDefaultBrightness)});
+    // Motorized-focus VCM driver + shared per-camera focus mode/position (U8/U9).
+    // Must outlive the handlers + the AF loop below.
+    static sst::adapters::focus::I2cFocuser focuser;
+    static sst::focus::FocusState focus_state;
+
     // Latest pre-correction frame average — auto-white-balance reads it to compute
     // grey-world gains. Must outlive the postprocessor (moved into the pipeline).
     static sst::processing::FrameColorStats frame_color_stats;
     auto postprocessor = std::make_unique<sst::adapters::processing::OpenCvPostprocessor>(
         postproc_cfg, &calibration_state, &frame_color_stats);
-    auto decision = std::make_unique<sst::decision::StaticDecision>();
+    // Manual tracking: the user picks the output camera (ManualCameraState);
+    // ManualDecision reads it each tick. Becomes the override once AI decision lands.
+    static sst::decision::ManualCameraState manual_camera_state;
+    auto decision = std::make_unique<sst::decision::ManualDecision>(manual_camera_state);
 
     // #6 F6d dual preview: the SetPreviewLayout handler flips this shared state;
     // the pipeline consumer reads it each tick and composites cam0 | cam1 (clean)
@@ -428,6 +441,8 @@ auto RunFirmware() -> int {
         std::make_shared<sst::control::CameraCalibrationHandler>(calibration_state));
     dispatcher.Register(std::make_shared<sst::control::AutoWhiteBalanceHandler>(frame_color_stats,
                                                                                 calibration_state));
+    dispatcher.Register(std::make_shared<sst::control::CameraFocusHandler>(focuser, focus_state));
+    dispatcher.Register(std::make_shared<sst::control::ActiveCameraHandler>(manual_camera_state));
     dispatcher.Register(
         std::make_shared<sst::control::NetworkHandler>(uplink_manager, uplink_store, cfg.uplink));
     // Reboot: `systemctl reboot` requires the sst-cam service user to be
