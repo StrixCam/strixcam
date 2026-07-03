@@ -165,4 +165,15 @@ auto DownloadServer::ValidateToken(const std::string& token) -> std::optional<fs
     return entry->second.path;
 }
 
+auto DownloadServer::IsTokened(const fs::path& file) const -> bool {
+    const auto now = clock_();
+    std::lock_guard lock(mtx_);
+    for (const auto& [_, entry] : tokens_) {
+        if (entry.expires_at_unix > now && entry.path == file) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace sst::network

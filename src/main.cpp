@@ -34,6 +34,7 @@
 #include "adapters/storage/opencv/opencv-jpeg-encoder.hpp"
 #include "adapters/storage/opencv/opencv-thumbnail-writer.hpp"
 #include "adapters/raw_capture/filesystem-raw-capture-sink.hpp"
+#include "adapters/raw_capture/proxy-retention.hpp"
 #include "adapters/streaming/gst_rtmp/gst-rtmp-streamer.hpp"
 #include "adapters/streaming/gst_rtsp/gst-rtsp-app-stream-server.hpp"
 #include "app/config/services/config_loader/config-loader.hpp"
@@ -226,6 +227,24 @@ auto RunFirmware() -> int {
 
     // ── Downloads ──────────────────────────────────────────────────────
     sst::network::DownloadServer download_server(video_root, thumbnail_root, NowUnixSeconds);
+
+    // Training-proxy retention (U7): a detached periodic sweep bounds total proxy
+    // footage (the raw__*.mp4 pairs accumulate one per match). Delete-oldest,
+    // protected against the actively-writing group (mtime grace inside Sweep) and
+    // any file with a live download token. Off-thread so it never blocks the BLE
+    // surface; a no-op when proxy_max_total_bytes is unset.
+    static sst::adapters::raw_capture::ProxyRetention proxy_retention(
+        video_root, cfg.storage.proxy_max_total_bytes.value_or(0));
+    if (cfg.storage.proxy_max_total_bytes) {
+        std::thread([&download_server] {
+            for (;;) {
+                std::this_thread::sleep_for(std::chrono::minutes(5));
+                proxy_retention.Sweep([&download_server](const std::filesystem::path& file) {
+                    return download_server.IsTokened(file);
+                });
+            }
+        }).detach();
+    }
     // The HTTP server hands out token-gated byte ranges. Bind on all interfaces
     // (0.0.0.0) rather than the GO IP: that address only exists once a WiFi
     // Direct session is up, and INADDR_ANY still accepts connections on it when

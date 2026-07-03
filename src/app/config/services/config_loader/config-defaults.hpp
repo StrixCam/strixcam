@@ -58,7 +58,8 @@ inline constexpr std::string_view kStorageJson = R"({
   "log": "/var/log/sst/cam/",
   "video": "/var/lib/sst/cam/videos/",
   "snapshots": "/var/lib/sst/cam/snapshots/",
-  "thumbnails": "/var/lib/sst/cam/thumbnails/"
+  "thumbnails": "/var/lib/sst/cam/thumbnails/",
+  "proxy_max_total_bytes": 5368709120
 }
 )";
 
