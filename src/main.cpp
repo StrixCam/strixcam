@@ -27,6 +27,8 @@
 #include "adapters/overlay/timeline/filesystem-overlay-timeline-recorder.hpp"
 #include "adapters/overlay/timeline/overlay-timeline-loader.hpp"
 #include "adapters/processing/opencv/opencv-postprocessor.hpp"
+#include "app/control/services/handlers/camera-calibration.handler.hpp"
+#include "domain/processing/models/color-calibration-state.hpp"
 #include "adapters/processing/opencv/opencv-preprocessor.hpp"
 #include "adapters/processing/opencv/opencv-side-by-side-compositor.hpp"
 #include "adapters/storage/filesystem/filesystem-disk-guard.hpp"
@@ -384,8 +386,14 @@ auto RunFirmware() -> int {
     wb.b_gain = env_gain("SST_WB_BGAIN", wb.b_gain);
     spdlog::info("Postprocess WB correction: enabled={} R={:.2f} G={:.2f} B={:.2f}", wb.enabled,
                  wb.r_gain, wb.g_gain, wb.b_gain);
-    auto postprocessor =
-        std::make_unique<sst::adapters::processing::OpenCvPostprocessor>(postproc_cfg);
+    // Live WB calibration state (diagnostic Calibration screen). Seeded from the
+    // resolved default/env gains; the postprocessor samples it each frame and the
+    // SetCameraCalibration handler writes it, so slider drags retune the preview
+    // live. Must outlive the postprocessor (moved into the pipeline below).
+    sst::processing::ColorCalibrationState calibration_state(
+        {.r = wb.r_gain, .g = wb.g_gain, .b = wb.b_gain, .enabled = wb.enabled});
+    auto postprocessor = std::make_unique<sst::adapters::processing::OpenCvPostprocessor>(
+        postproc_cfg, &calibration_state);
     auto decision = std::make_unique<sst::decision::StaticDecision>();
 
     // #6 F6d dual preview: the SetPreviewLayout handler flips this shared state;
@@ -405,6 +413,8 @@ auto RunFirmware() -> int {
     dispatcher.Register(std::make_shared<sst::control::PreviewLayoutHandler>(
         preview_layout_state, sst::runtime_defaults::kOverlayWidth,
         sst::runtime_defaults::kOverlayHeight));
+    dispatcher.Register(
+        std::make_shared<sst::control::CameraCalibrationHandler>(calibration_state));
     dispatcher.Register(
         std::make_shared<sst::control::NetworkHandler>(uplink_manager, uplink_store, cfg.uplink));
     // Reboot: `systemctl reboot` requires the sst-cam service user to be

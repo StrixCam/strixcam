@@ -6,6 +6,7 @@
 #include "adapters/processing/opencv/opencv-postprocessor.hpp"
 #include "domain/capture/models/frame.hpp"
 #include "domain/common/models/pixel-format.hpp"
+#include "domain/processing/models/color-calibration-state.hpp"
 #include "domain/processing/models/crop-rect.hpp"
 #include "domain/processing/models/postprocess-config.hpp"
 
@@ -171,6 +172,29 @@ TEST(OpenCvPostprocessorTest, ColorCorrectionAppliesPerChannelGain) {
     EXPECT_NEAR(pon[0], poff[0] / 2, 4);  // B halved
     EXPECT_NEAR(pon[2], poff[2] / 2, 4);  // R halved
     EXPECT_NEAR(pon[1], poff[1], 3);      // G untouched (gain 1.0)
+}
+
+// The live calibration state (diagnostic sliders) overrides config gains and a
+// mid-run Set() is reflected on the next frame — the mechanism the app relies on
+// to retune the preview live.
+TEST(OpenCvPostprocessorTest, LiveCalibrationStateOverridesConfigAndUpdates) {
+    auto src = MakeNv12Frame(64, 64, 128, 128, 128);
+    sst::processing::ColorCalibrationState calib(
+        {.r = 0.5F, .g = 1.0F, .b = 0.5F, .enabled = true});
+    OpenCvPostprocessor post{PostprocessConfig{.output_width = 32, .output_height = 32}, &calib};
+
+    auto out = post.Process(src, CropRect{0, 0, 64, 64});
+    ASSERT_TRUE(out.has_value());
+    const auto* p = out->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
+    EXPECT_LT(p[0], 80);   // B halved from ~128
+    EXPECT_LT(p[2], 80);   // R halved
+    EXPECT_GT(p[1], 110);  // G ~unchanged
+
+    calib.Set({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = true});  // sliders back to identity
+    auto out2 = post.Process(src, CropRect{0, 0, 64, 64});
+    ASSERT_TRUE(out2.has_value());
+    const auto* p2 = out2->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
+    EXPECT_GT(p2[0], p[0]);  // B restored on the next frame
 }
 // NOLINTEND(readability-magic-numbers)
 

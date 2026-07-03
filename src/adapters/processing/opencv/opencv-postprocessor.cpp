@@ -15,8 +15,9 @@
 
 namespace sst::adapters::processing {
 
-OpenCvPostprocessor::OpenCvPostprocessor(sst::processing::PostprocessConfig config)
-    : config_(config) {}
+OpenCvPostprocessor::OpenCvPostprocessor(sst::processing::PostprocessConfig config,
+                                         const sst::processing::ColorCalibrationState* calibration)
+    : config_(config), calibration_(calibration) {}
 
 auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
                                   const sst::processing::CropRect& crop)
@@ -75,10 +76,15 @@ auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
     // cast at the ISP tuning level we can't reach on JetPack 7.2). Applied on the
     // downscaled BGR — cheap, and before any RGB/GRAY convert so every output
     // format inherits neutral color. uint8 multiply saturates, so gains>1 clip
-    // rather than wrap. Scalar is BGR order.
-    if (config_.color_correction.enabled) {
-        const auto& cc = config_.color_correction;
-        cv::multiply(resized, cv::Scalar(cc.b_gain, cc.g_gain, cc.r_gain), resized);
+    // rather than wrap. Scalar is BGR order. Live gains from the calibration state
+    // (diagnostic sliders) win over the static config when wired.
+    const auto wb = (calibration_ != nullptr)
+                        ? calibration_->Get()
+                        : sst::processing::ColorCalibrationState::Gains{
+                              config_.color_correction.r_gain, config_.color_correction.g_gain,
+                              config_.color_correction.b_gain, config_.color_correction.enabled};
+    if (wb.enabled) {
+        cv::multiply(resized, cv::Scalar(wb.b, wb.g, wb.r), resized);
     }
 
     cv::Mat final_mat;
