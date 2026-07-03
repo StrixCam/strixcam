@@ -12,12 +12,6 @@
 
 namespace sst::pipeline {
 
-namespace {
-// The consumer waits on this camera's slot to pace the loop. Camera 0 is the
-// statically-chosen camera, so pacing on it matches the demo's cadence.
-constexpr std::size_t kCadenceCamera = 0;
-}  // namespace
-
 PipelineOrchestrator::PipelineOrchestrator(
     std::vector<CameraChain> cameras,
     std::unique_ptr<sst::processing::IPostprocessor> postprocessor,
@@ -152,12 +146,17 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
         // Block on the cadence camera so the loop runs at capture rate; sample
         // every other camera non-blocking. Each tick consumes the latest bundle
         // from each slot — unchosen ones are dropped (aged out) here.
+        // Block-pop EVERY camera (bounded) so the chosen camera is reliably present
+        // each tick. Previously only camera 0 was blocking-popped and the others
+        // were TryPop'd (non-blocking, and TryPop CONSUMES the slot) — so whenever
+        // the selected output was a non-cadence camera and its slot was momentarily
+        // empty that tick, the decision fell back to another camera, flickering the
+        // output 0<->1. Both sensors run at the same rate, so waiting for each adds
+        // no meaningful latency; a genuinely stalled camera times out to nullopt and
+        // the decision's own fallback covers it (still no spin — Pop blocks).
         std::vector<std::optional<sst::processing::FrameBundle>> latest(cameras_.size());
-        latest[kCadenceCamera] = slots_[kCadenceCamera]->Pop(config_.consumer_pop_timeout);
         for (std::size_t i = 0; i < cameras_.size(); ++i) {
-            if (i != kCadenceCamera) {
-                latest[i] = slots_[i]->TryPop();
-            }
+            latest[i] = slots_[i]->Pop(config_.consumer_pop_timeout);
         }
 
         auto choice = decision_->Decide(latest);
