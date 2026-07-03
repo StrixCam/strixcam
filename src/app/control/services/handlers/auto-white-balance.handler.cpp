@@ -13,6 +13,18 @@ constexpr float kMaxGain = 1.7F;
 // Below this channel mean the frame is too dark to trust a grey-world estimate.
 constexpr float kMinUsableMean = 4.0F;
 
+// Auto-tone targets. Brightness aims the post-WB luma at a slightly-below-mid
+// level (headroom against blowout); contrast stretches a flat frame toward a
+// target spread; saturation is a fixed mild boost (the ArduCAM renders
+// consistently washed, and a content-derived saturation is unreliable).
+constexpr float kTargetLuma = 118.0F;
+constexpr float kTargetSpread = 52.0F;
+constexpr float kAutoSaturation = 1.25F;
+constexpr float kMinBrightness = -0.30F;
+constexpr float kMaxBrightness = 0.30F;
+constexpr float kMinContrast = 0.90F;
+constexpr float kMaxContrast = 1.50F;
+
 auto Clamp(float gain) -> float { return std::clamp(gain, kMinGain, kMaxGain); }
 }  // namespace
 
@@ -36,16 +48,35 @@ auto AutoWhiteBalanceHandler::Handle(const sst_cam::Command& /*cmd*/) -> sst_cam
     const bool usable = means.valid && means.g > kMinUsableMean && means.r > kMinUsableMean &&
                         means.b > kMinUsableMean;
     if (usable) {
+        // White balance: grey-world normalized to green.
         gains.r = Clamp(means.g / means.r);
         gains.g = 1.0F;
         gains.b = Clamp(means.g / means.b);
         gains.enabled = true;
+
+        // Saturation: fixed mild boost (the module renders washed).
+        gains.saturation = kAutoSaturation;
+
+        // Contrast: stretch a flat frame toward the target spread.
+        gains.contrast = (means.spread > 1.0F)
+                             ? std::clamp(kTargetSpread / means.spread, kMinContrast, kMaxContrast)
+                             : 1.0F;
+
+        // Brightness: aim the POST-WB luma (R/B are cut by the gains) at the
+        // target. Additive fraction of full range.
+        const float post_luma = (0.299F * gains.r * means.r) + (0.587F * means.g) +
+                                (0.114F * gains.b * means.b);
+        gains.brightness =
+            std::clamp((kTargetLuma - post_luma) / 255.0F, kMinBrightness, kMaxBrightness);
+
         calibration_.Set(gains);
         spdlog::info(
-            "Auto WB: frame means B={:.1f} G={:.1f} R={:.1f} -> gains R={:.3f} G={:.3f} B={:.3f}",
-            means.b, means.g, means.r, gains.r, gains.g, gains.b);
+            "Auto color: means B={:.1f} G={:.1f} R={:.1f} spread={:.1f} -> R={:.3f} G={:.3f} "
+            "B={:.3f} sat={:.2f} con={:.2f} bri={:.2f}",
+            means.b, means.g, means.r, means.spread, gains.r, gains.g, gains.b, gains.saturation,
+            gains.contrast, gains.brightness);
     } else {
-        spdlog::warn("Auto WB: frame too dark / no sample — keeping current gains");
+        spdlog::warn("Auto color: frame too dark / no sample — keeping current values");
     }
 
     sst_cam::CommandResponse resp;

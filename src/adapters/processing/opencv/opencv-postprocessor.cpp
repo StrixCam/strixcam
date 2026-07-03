@@ -82,9 +82,12 @@ auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
     // before the gain means the auto-WB handler sees the raw cast, not an
     // already-corrected frame. cv::mean returns Scalar(B,G,R).
     if (frame_stats_ != nullptr) {
-        const cv::Scalar mean = cv::mean(resized);
+        cv::Scalar mean;
+        cv::Scalar stddev;
+        cv::meanStdDev(resized, mean, stddev);
+        const auto spread = static_cast<float>((stddev[0] + stddev[1] + stddev[2]) / 3.0);
         frame_stats_->Set(static_cast<float>(mean[0]), static_cast<float>(mean[1]),
-                          static_cast<float>(mean[2]));
+                          static_cast<float>(mean[2]), spread);
     }
 
     // Per-channel white-balance correction (fixes the ArduCAM IMX477 magenta

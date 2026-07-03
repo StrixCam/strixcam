@@ -19,7 +19,7 @@ auto AutoWbCommand() -> sst_cam::Command {
 
 TEST(AutoWhiteBalanceHandlerTest, ComputesGreyWorldGainsFromMagentaFrame) {
     FrameColorStats stats;
-    stats.Set(100.0F, 40.0F, 100.0F);  // B, G, R — magenta (R=B=2.5×G)
+    stats.Set(100.0F, 40.0F, 100.0F, 50.0F);  // B, G, R, spread — magenta (R=B=2.5×G)
     ColorCalibrationState calib({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = false});
     AutoWhiteBalanceHandler handler(stats, calib);
 
@@ -32,16 +32,21 @@ TEST(AutoWhiteBalanceHandlerTest, ComputesGreyWorldGainsFromMagentaFrame) {
     EXPECT_FLOAT_EQ(resp.camera_calibration().g_gain(), 1.0F);
     EXPECT_NEAR(resp.camera_calibration().b_gain(), 0.4F, 0.01F);
     EXPECT_TRUE(resp.camera_calibration().enabled());
+    // Auto also sets tone: fixed saturation boost, and contrast/brightness in range.
+    EXPECT_FLOAT_EQ(resp.camera_calibration().saturation(), 1.25F);
+    EXPECT_GE(resp.camera_calibration().contrast(), 0.9F);
+    EXPECT_LE(resp.camera_calibration().contrast(), 1.5F);
 
     // Applied live to the shared state.
     const auto gains = calib.Get();
     EXPECT_NEAR(gains.r, 0.4F, 0.01F);
     EXPECT_TRUE(gains.enabled);
+    EXPECT_FLOAT_EQ(gains.saturation, 1.25F);
 }
 
 TEST(AutoWhiteBalanceHandlerTest, ClampsExtremeGainToSliderRange) {
     FrameColorStats stats;
-    stats.Set(100.0F, 40.0F, 400.0F);  // R hugely dominant → gR = 0.1 → clamp 0.3
+    stats.Set(100.0F, 40.0F, 400.0F, 50.0F);  // R hugely dominant → gR = 0.1 → clamp 0.3
     ColorCalibrationState calib({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = false});
     AutoWhiteBalanceHandler handler(stats, calib);
 
