@@ -9,6 +9,7 @@
 #include <gst/video/video.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <utility>
@@ -48,10 +49,20 @@ auto GStreamerAdapter::CreatePipeline() -> std::string {
         return {};
     }
 
+    // ISP tuning: hardware temporal-noise-reduction + edge-enhancement to fight
+    // low-light grain (the ArduCAM module's stock .nito has NR mistuned, and JP7.2
+    // blocks retuning). TNR/EE run in the ISP — no CPU cost. Cleaning the noise
+    // also sharpens the H.264 output: x264 ultrafast stops spending bits on random
+    // noise. One env var overrides the whole fragment so it can be dialed on-device
+    // without a rebuild (e.g. lower TNR if fast motion smears).
+    const char* isp_env = std::getenv("SST_ISP_TUNING");
+    const std::string isp_tuning =
+        (isp_env != nullptr) ? isp_env : "tnr-mode=2 tnr-strength=0.6 ee-mode=1 ee-strength=0.4";
+
     std::string gst_pipeline;
     switch (*model_version) {
         case 1:
-            gst_pipeline = "nvarguscamerasrc sensor-id=" + sensor_id +
+            gst_pipeline = "nvarguscamerasrc sensor-id=" + sensor_id + " " + isp_tuning +
                            " ! video/x-raw(memory:NVMM),width=" + width + ",height=" + height +
                            ",framerate=" + fps + "/1,format=NV12" +
                            " ! nvvidconv"
