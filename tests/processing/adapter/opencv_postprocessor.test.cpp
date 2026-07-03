@@ -101,7 +101,10 @@ TEST(OpenCvPostprocessorTest, RespectsSourceStride) {
 }
 
 TEST(OpenCvPostprocessorTest, OutputFrameOwnsBuffer) {
-    OpenCvPostprocessor post{PostprocessConfig{.output_width = 16, .output_height = 16}};
+    // Ownership/brightness test — disable the WB correction so the ~200 grey it
+    // feeds stays ~200 on every channel (correction would cut B/R below 150).
+    OpenCvPostprocessor post{PostprocessConfig{
+        .output_width = 16, .output_height = 16, .color_correction = {.enabled = false}}};
     auto out = [&] {
         auto src = MakeNv12Frame(64, 64, 200, 128, 128);
         return post.Process(src, CropRect{0, 0, 32, 32});
@@ -144,6 +147,31 @@ TEST(OpenCvPostprocessorTest, MetadataPropagated) {
     }
     EXPECT_EQ(out->frame_id, src.frame_id);
     EXPECT_EQ(out->captured_at, src.captured_at);
+}
+// U10: neutral grey NV12 (Y=U=V=128) demosaics to ~(128,128,128) BGR. The
+// default magenta-correction gains (B=0.66, G=1.59, R=0.65) must pull B and R
+// down and push G up — proving the per-channel white-balance gain is applied and
+// that disabling it leaves color untouched.
+TEST(OpenCvPostprocessorTest, ColorCorrectionAppliesPerChannelGain) {
+    auto src = MakeNv12Frame(64, 64, 128, 128, 128);
+
+    PostprocessConfig off{.output_width = 32, .output_height = 32};
+    off.color_correction.enabled = false;
+    PostprocessConfig on{.output_width = 32, .output_height = 32};  // enabled by default
+
+    auto out_off = OpenCvPostprocessor{off}.Process(src, CropRect{0, 0, 64, 64});
+    auto out_on = OpenCvPostprocessor{on}.Process(src, CropRect{0, 0, 64, 64});
+    ASSERT_TRUE(out_off.has_value());
+    ASSERT_TRUE(out_on.has_value());
+
+    const auto* poff = out_off->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
+    const auto* pon = out_on->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
+
+    EXPECT_LT(pon[0], poff[0]);  // B cut
+    EXPECT_GT(pon[1], poff[1]);  // G boosted
+    EXPECT_LT(pon[2], poff[2]);  // R cut
+    EXPECT_GT(pon[1], 150);      // G clearly above neutral 128
+    EXPECT_LT(pon[0], 110);      // B clearly below neutral 128
 }
 // NOLINTEND(readability-magic-numbers)
 

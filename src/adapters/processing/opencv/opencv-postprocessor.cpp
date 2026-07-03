@@ -71,6 +71,16 @@ auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
         cv::Size{static_cast<int>(config_.output_width), static_cast<int>(config_.output_height)},
         0, 0, cv::INTER_LINEAR);
 
+    // Per-channel white-balance correction (fixes the ArduCAM IMX477 magenta
+    // cast at the ISP tuning level we can't reach on JetPack 7.2). Applied on the
+    // downscaled BGR — cheap, and before any RGB/GRAY convert so every output
+    // format inherits neutral color. uint8 multiply saturates, so gains>1 clip
+    // rather than wrap. Scalar is BGR order.
+    if (config_.color_correction.enabled) {
+        const auto& cc = config_.color_correction;
+        cv::multiply(resized, cv::Scalar(cc.b_gain, cc.g_gain, cc.r_gain), resized);
+    }
+
     cv::Mat final_mat;
     switch (config_.output_format) {
         case sst::common::PixelFormat::BGR8:
