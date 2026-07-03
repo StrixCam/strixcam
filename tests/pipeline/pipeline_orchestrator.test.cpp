@@ -12,6 +12,7 @@
 
 #include "app/buffer/ports/frame-sink.hpp"
 #include "app/capture/ports/frame-src.hpp"
+#include "app/decision/services/manual_decision/manual-decision.hpp"
 #include "app/decision/services/static_decision/static-decision.hpp"
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
 #include "app/processing/ports/frame-compositor.hpp"
@@ -27,6 +28,8 @@ namespace {
 using sst::buffer::IFrameSink;
 using sst::capture::Frame;
 using sst::capture::ICaptureFrame;
+using sst::decision::ManualCameraState;
+using sst::decision::ManualDecision;
 using sst::decision::StaticDecision;
 using sst::pipeline::CameraChain;
 using sst::pipeline::PipelineConfig;
@@ -69,8 +72,10 @@ class FakeCapture final : public ICaptureFrame {
     // Per-camera geometry lets dual-camera tests tell which camera's frame
     // reached postprocess. `stall` makes Capture() always return nullopt (the
     // camera produces nothing) without stopping the producer thread.
-    explicit FakeCapture(Dims dims, bool stall = false)
-        : width_(dims.width), height_(dims.height), stall_(stall) {}
+    // id_base offsets this camera's frame_id sequence so a test can tell which
+    // camera a composited pane came from (frame_ids otherwise overlap at 0).
+    explicit FakeCapture(Dims dims, bool stall = false, std::uint64_t id_base = 0)
+        : width_(dims.width), height_(dims.height), stall_(stall), next_id_(id_base) {}
 
     auto Start() -> void override {
         running_ = true;
@@ -208,6 +213,10 @@ class FakeCompositor final : public sst::processing::IFrameCompositor {
     auto LastRightGeometry() const -> sst::capture::FrameGeometry {
         std::lock_guard lock(mtx_);
         return last_right_geometry;
+    }
+    auto LastLeftId() const -> std::uint64_t {
+        std::lock_guard lock(mtx_);
+        return last_left_id;
     }
 
    private:
@@ -625,6 +634,45 @@ TEST(PipelineOrchestratorTest, SideBySideCompositesBothCamerasToStream) {
     EXPECT_EQ(std::get<3>(sink.Snapshot()).width, kCompositeDims.width);
     // The recorder still got the clean single (postprocessed cam0) frame.
     EXPECT_EQ(std::get<3>(record_sink.Snapshot()).width, kOutputDims.width);
+}
+
+// Side-by-side pane order is POSITIONAL: camera 0 is always the left pane, even
+// when camera 1 is the selected main feed. Changing the selection must not swap
+// the panes. cam1 uses a high frame_id base so a composite whose left pane came
+// from cam0 is provable by id.
+TEST(PipelineOrchestratorTest, SideBySideKeepsCameraZeroLeftWhenCameraOneSelected) {
+    constexpr std::uint64_t kCam1IdBase = 1000;
+    FakeCompositor compositor;
+    sst::streaming::PreviewLayoutState layout;
+    layout.Set(sst::streaming::PreviewLayout::kSideBySide);
+    ManualCameraState camera_state;
+    camera_state.Set(1);  // select camera 1 as the main feed
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims, false, 0),
+                   std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims, false, kCam1IdBase),
+                   std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<ManualDecision>(camera_state),
+        record_sink, sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
+
+    ASSERT_TRUE(orchestrator.Start());
+    constexpr auto kFlowTimeout = std::chrono::seconds(5);
+    constexpr auto kPollInterval = std::chrono::milliseconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (std::chrono::steady_clock::now() < deadline &&
+           (compositor.Calls() == 0 ||
+            std::get<3>(sink.Snapshot()).width != kCompositeDims.width)) {
+        std::this_thread::sleep_for(kPollInterval);
+    }
+    orchestrator.Stop();
+
+    ASSERT_GT(compositor.Calls(), 0);
+    // Left pane frame_id is below cam1's base → it came from camera 0, even
+    // though camera 1 is the selection. Positional order held.
+    EXPECT_LT(compositor.LastLeftId(), kCam1IdBase);
+    EXPECT_EQ(std::get<3>(sink.Snapshot()).width, kCompositeDims.width);
 }
 
 // #6 F6d: SINGLE (default) never invokes the compositor; the stream carries the

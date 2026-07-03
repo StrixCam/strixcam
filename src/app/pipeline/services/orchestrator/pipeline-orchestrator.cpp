@@ -253,10 +253,12 @@ auto PipelineOrchestrator::BuildStreamFrame(
         preview_layout_->Get() == sst::streaming::PreviewLayout::kSideBySide;
 
     if (want_side_by_side) {
-        // Composite the chosen camera (left) with the other camera (right), both
-        // CLEAN — no overlay in the monitoring view. Postprocess the other
-        // camera full-frame; if it has no frame this tick or the composite
-        // fails, fall back to the clean chosen frame (still no overlay).
+        // Composite both cameras CLEAN (no overlay) — a "see both cameras"
+        // monitoring view. The pane order is POSITIONAL: camera 0 is always the
+        // left pane and camera 1 the right, regardless of which one is the
+        // selected main feed. Changing the selection must not swap the panes.
+        // Postprocess the other camera full-frame; if it has no frame this tick
+        // or the composite fails, fall back to the clean chosen frame.
         const std::size_t other_index = chosen_index == 0 ? 1 : 0;
         const auto& other_slot = latest[other_index];
         if (other_slot.has_value()) {
@@ -270,8 +272,13 @@ auto PipelineOrchestrator::BuildStreamFrame(
                     .y = 0,
                     .width = other_slot->source_frame.geometry.width,
                     .height = other_slot->source_frame.geometry.height};
-                if (auto right = postprocessor_->Process(other_slot->source_frame, full_frame)) {
-                    if (auto composite = compositor_->CompositeSideBySide(clean_chosen, *right)) {
+                if (auto other = postprocessor_->Process(other_slot->source_frame, full_frame)) {
+                    // clean_chosen is the selected camera; `other` is the non-
+                    // selected one. Order them by camera index so the lower-index
+                    // camera (0) is always the left pane.
+                    const sst::capture::Frame& left = chosen_index == 0 ? clean_chosen : *other;
+                    const sst::capture::Frame& right = chosen_index == 0 ? *other : clean_chosen;
+                    if (auto composite = compositor_->CompositeSideBySide(left, right)) {
                         return std::move(*composite);
                     }
                 }
