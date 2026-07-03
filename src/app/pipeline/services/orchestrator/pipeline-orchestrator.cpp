@@ -123,6 +123,28 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
     auto& slot = *slots_[camera_index];
 
     while (running_) {
+        // Watchdog: a capture pipeline can die mid-run and stay dead. Argus posts
+        // INVALID_SETTINGS when the WiFi-Direct radio reforms its P2P group on
+        // phone connect; HandleBusMessages()->Stop() tears the pipeline down, and
+        // nothing else ever restarts it — the producer would otherwise spin
+        // Capture() (nullopt) on a NULL pipeline forever, so preview goes blank
+        // and recording produces 0-byte files. Detect the stopped pipeline and
+        // re-Start it, backing off between failed attempts (the radio may still
+        // be settling) instead of hot-looping gst_parse_launch.
+        if (!capture.IsRunning()) {
+            capture.Stop();  // idempotent — ensure a clean teardown before re-Start
+            capture.Start();
+            if (!capture.IsRunning()) {
+                spdlog::warn(
+                    "PipelineOrchestrator: camera {} capture down; restart failed, retrying in {}ms",
+                    camera_index, config_.capture_restart_backoff.count());
+                std::this_thread::sleep_for(config_.capture_restart_backoff);
+                continue;
+            }
+            spdlog::info("PipelineOrchestrator: camera {} capture restarted after failure",
+                         camera_index);
+        }
+
         auto raw = capture.Capture();
         if (!raw) {
             std::this_thread::sleep_for(config_.capture_idle_sleep);

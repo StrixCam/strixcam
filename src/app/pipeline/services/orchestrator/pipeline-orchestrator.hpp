@@ -32,10 +32,18 @@ struct PipelineConfig {
     // Bound on how long the consumer waits for a new bundle from the cadence
     // camera before re-evaluating. Keeps shutdown latency low.
     std::chrono::milliseconds consumer_pop_timeout{kDefaultConsumerPopTimeoutMs};
+    // Backoff a producer waits after a FAILED capture restart before retrying.
+    // A capture pipeline can die mid-run — Argus posts INVALID_SETTINGS when the
+    // WiFi-Direct radio reforms its group, and HandleBusMessages()->Stop() then
+    // leaves it torn down. The producer watchdog re-Starts the dead pipeline;
+    // this backoff keeps a persistently-failing sensor (or a still-settling
+    // radio) from hot-looping gst_parse_launch every few milliseconds.
+    std::chrono::milliseconds capture_restart_backoff{kDefaultCaptureRestartBackoffMs};
 
    private:
     static constexpr int kDefaultCaptureIdleSleepMs = 5;
     static constexpr int kDefaultConsumerPopTimeoutMs = 100;
+    static constexpr int kDefaultCaptureRestartBackoffMs = 500;
 };
 
 // One capture → preprocess chain for a single camera. The orchestrator owns the
