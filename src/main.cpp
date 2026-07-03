@@ -360,7 +360,32 @@ auto RunFirmware() -> int {
         .capture = std::make_unique<sst::capture::GStreamerAdapter>(
             camera_cfg, device_model, sst::runtime_defaults::kCamera1Index),
         .preprocessor = std::make_unique<sst::adapters::processing::OpenCvPreprocessor>()});
-    auto postprocessor = std::make_unique<sst::adapters::processing::OpenCvPostprocessor>();
+    // WB magenta-correction gains are env-tunable so the cast can be dialed in
+    // on-device without a rebuild (a fixed grey-world gain over/under-shoots per
+    // scene). SST_WB_DISABLE turns it off; SST_WB_{R,G,B}GAIN override each gain.
+    sst::processing::PostprocessConfig postproc_cfg;
+    auto& wb = postproc_cfg.color_correction;
+    if (std::getenv("SST_WB_DISABLE") != nullptr) {
+        wb.enabled = false;
+    }
+    const auto env_gain = [](const char* name, float fallback) {
+        const char* value = std::getenv(name);
+        if (value == nullptr) {
+            return fallback;
+        }
+        try {
+            return std::stof(value);
+        } catch (const std::exception&) {
+            return fallback;
+        }
+    };
+    wb.r_gain = env_gain("SST_WB_RGAIN", wb.r_gain);
+    wb.g_gain = env_gain("SST_WB_GGAIN", wb.g_gain);
+    wb.b_gain = env_gain("SST_WB_BGAIN", wb.b_gain);
+    spdlog::info("Postprocess WB correction: enabled={} R={:.2f} G={:.2f} B={:.2f}", wb.enabled,
+                 wb.r_gain, wb.g_gain, wb.b_gain);
+    auto postprocessor =
+        std::make_unique<sst::adapters::processing::OpenCvPostprocessor>(postproc_cfg);
     auto decision = std::make_unique<sst::decision::StaticDecision>();
 
     // #6 F6d dual preview: the SetPreviewLayout handler flips this shared state;
