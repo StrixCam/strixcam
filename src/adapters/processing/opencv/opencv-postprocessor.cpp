@@ -16,8 +16,9 @@
 namespace sst::adapters::processing {
 
 OpenCvPostprocessor::OpenCvPostprocessor(sst::processing::PostprocessConfig config,
-                                         const sst::processing::ColorCalibrationState* calibration)
-    : config_(config), calibration_(calibration) {}
+                                         const sst::processing::ColorCalibrationState* calibration,
+                                         sst::processing::FrameColorStats* frame_stats)
+    : config_(config), calibration_(calibration), frame_stats_(frame_stats) {}
 
 auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
                                   const sst::processing::CropRect& crop)
@@ -71,6 +72,15 @@ auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
         roi, resized,
         cv::Size{static_cast<int>(config_.output_width), static_cast<int>(config_.output_height)},
         0, 0, cv::INTER_LINEAR);
+
+    // Sample the PRE-correction average (BGR) for auto-white-balance. Measuring
+    // before the gain means the auto-WB handler sees the raw cast, not an
+    // already-corrected frame. cv::mean returns Scalar(B,G,R).
+    if (frame_stats_ != nullptr) {
+        const cv::Scalar mean = cv::mean(resized);
+        frame_stats_->Set(static_cast<float>(mean[0]), static_cast<float>(mean[1]),
+                          static_cast<float>(mean[2]));
+    }
 
     // Per-channel white-balance correction (fixes the ArduCAM IMX477 magenta
     // cast at the ISP tuning level we can't reach on JetPack 7.2). Applied on the
