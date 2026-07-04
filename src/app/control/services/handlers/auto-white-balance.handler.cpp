@@ -67,6 +67,7 @@ auto AutoWhiteBalanceHandler::Handle(const sst_cam::Command& /*cmd*/) -> sst_cam
         const float post_luma =
             (0.299F * gains.r * means.r) + (0.587F * means.g) + (0.114F * gains.b * means.b);
         gains.brightness =
+            // NOLINTNEXTLINE(readability-magic-numbers) — 255 = 8-bit channel max
             std::clamp((kTargetLuma - post_luma) / 255.0F, kMinBrightness, kMaxBrightness);
 
         calibration_.Set(gains);

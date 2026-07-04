@@ -19,6 +19,7 @@ namespace sst::adapters::focus {
 class I2cFocuser final : public sst::focus::IFocuser {
    public:
     // camera_index -> I2C bus number. Default is the Orin Nano mapping {10, 9}.
+    // NOLINTNEXTLINE(readability-magic-numbers)
     explicit I2cFocuser(std::array<int, 2> camera_bus = {10, 9});
 
     auto SetFocus(std::uint32_t camera_index, std::uint32_t position) -> bool override;

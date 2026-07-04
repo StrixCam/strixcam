@@ -169,8 +169,8 @@ auto DownloadServer::ValidateToken(const std::string& token) -> std::optional<fs
 auto DownloadServer::IsTokened(const fs::path& file) const -> bool {
     const auto now = clock_();
     std::lock_guard lock(mtx_);
-    return std::ranges::any_of(tokens_, [&](const auto& kv) {
-        return kv.second.expires_at_unix > now && kv.second.path == file;
+    return std::ranges::any_of(tokens_, [&](const auto& token) {
+        return token.second.expires_at_unix > now && token.second.path == file;
     });
 }
 

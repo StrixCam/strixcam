@@ -64,6 +64,8 @@ FilesystemRawCaptureSink::~FilesystemRawCaptureSink() {
     }
 }
 
+// floor-ok: linear per-camera GStreamer proxy setup + validation guards.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id,
                                      const std::filesystem::path& output_dir) -> bool {
     std::lock_guard lock(mtx_);

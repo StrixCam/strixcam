@@ -250,6 +250,8 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
     }
 }
 
+// floor-ok: linear overlay/composite/encode branching per output sink.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 auto PipelineOrchestrator::BuildStreamFrame(
     const sst::capture::Frame& clean_chosen,
     const std::vector<std::optional<sst::processing::FrameBundle>>& latest,

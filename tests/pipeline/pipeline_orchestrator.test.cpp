@@ -90,7 +90,7 @@ class FakeCapture final : public ICaptureFrame {
     // dead until something calls Start()/Restart() again. One-shot so a successful
     // restart runs clean forever after.
     auto SetDieAfter(std::uint64_t die_after) -> void { die_after_ = die_after; }
-    auto StartCalls() const -> int { return start_calls_.load(); }
+    [[nodiscard]] auto StartCalls() const -> int { return start_calls_.load(); }
 
     auto Capture() -> std::optional<Frame> override {
         if (running_ && die_after_ > 0 && !has_died_ && next_id_.load() >= die_after_) {

@@ -9,9 +9,8 @@ namespace {
 using sst::control::CameraCalibrationHandler;
 using sst::processing::ColorCalibrationState;
 
-auto MakeCommand(float red, float green,
-                 float blue,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok: test helper
-                 bool enabled) -> sst_cam::Command {
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters) floor-ok: test helper
+auto MakeCommand(float red, float green, float blue, bool enabled) -> sst_cam::Command {
     sst_cam::Command cmd;
     auto* payload = cmd.mutable_set_camera_calibration();
     payload->set_r_gain(red);
