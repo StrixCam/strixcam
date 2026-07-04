@@ -18,9 +18,10 @@ class OpenCvPostprocessor final : public sst::processing::IPostprocessor {
     // `frame_stats`, when non-null, receives the PRE-correction BGR average each
     // frame — the auto-white-balance handler reads it to compute grey-world gains.
     // Null args => the static config gains / no stats (tests, or no tuning wired).
-    explicit OpenCvPostprocessor(sst::processing::PostprocessConfig config = {},
-                                 const sst::processing::ColorCalibrationState* calibration = nullptr,
-                                 sst::processing::FrameColorStats* frame_stats = nullptr);
+    explicit OpenCvPostprocessor(
+        sst::processing::PostprocessConfig config = {},
+        const sst::processing::ColorCalibrationState* calibration = nullptr,
+        sst::processing::FrameColorStats* frame_stats = nullptr);
     ~OpenCvPostprocessor() override = default;
 
     auto Process(const sst::capture::Frame& source, const sst::processing::CropRect& crop)

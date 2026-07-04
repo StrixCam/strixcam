@@ -27,26 +27,24 @@ auto BuildRecorderLaunch(const std::string& output_mp4, const sst::common::Video
     // encode ceiling (see U2).
     std::string format_caps;
     if (use_vic) {
-        format_caps =
-            quality.IsSet()
-                ? fmt::format(
-                      "videoconvert ! video/x-raw,format=BGRx ! "
-                      "nvvidconv ! video/x-raw,format=I420,width={w},height={h} ! "
-                      "videorate ! video/x-raw,framerate={fps}/1",
-                      fmt::arg("w", quality.width), fmt::arg("h", quality.height),
-                      fmt::arg("fps", quality.fps))
-                : std::string{
-                      "videoconvert ! video/x-raw,format=BGRx ! "
-                      "nvvidconv ! video/x-raw,format=I420"};
+        format_caps = quality.IsSet()
+                          ? fmt::format(
+                                "videoconvert ! video/x-raw,format=BGRx ! "
+                                "nvvidconv ! video/x-raw,format=I420,width={w},height={h} ! "
+                                "videorate ! video/x-raw,framerate={fps}/1",
+                                fmt::arg("w", quality.width), fmt::arg("h", quality.height),
+                                fmt::arg("fps", quality.fps))
+                          : std::string{
+                                "videoconvert ! video/x-raw,format=BGRx ! "
+                                "nvvidconv ! video/x-raw,format=I420"};
     } else {
-        format_caps =
-            quality.IsSet()
-                ? fmt::format(
-                      "videoconvert ! videoscale ! videorate ! "
-                      "video/x-raw,format=I420,width={w},height={h},framerate={fps}/1",
-                      fmt::arg("w", quality.width), fmt::arg("h", quality.height),
-                      fmt::arg("fps", quality.fps))
-                : std::string{"videoconvert ! video/x-raw,format=I420"};
+        format_caps = quality.IsSet()
+                          ? fmt::format(
+                                "videoconvert ! videoscale ! videorate ! "
+                                "video/x-raw,format=I420,width={w},height={h},framerate={fps}/1",
+                                fmt::arg("w", quality.width), fmt::arg("h", quality.height),
+                                fmt::arg("fps", quality.fps))
+                          : std::string{"videoconvert ! video/x-raw,format=I420"};
     }
 
     // Record-encode quality is env-tunable so it can be dialed on-device without

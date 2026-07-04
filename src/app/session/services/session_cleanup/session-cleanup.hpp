@@ -19,8 +19,7 @@ class SessionCleanup final : public ISessionCleanup {
     SessionCleanup(sst::storage::IRecordingService& recording,
                    sst::streaming::IStreamingService& streaming,
                    sst::raw_capture::IRawCaptureSink& proxy, sst::control::IWifiManager& wifi,
-                   sst::control::IDhcpServer& dhcp,
-                   sst::decision::ManualCameraState& camera_state,
+                   sst::control::IDhcpServer& dhcp, sst::decision::ManualCameraState& camera_state,
                    sst::streaming::PreviewLayoutState& layout_state);
 
     auto FinalizeRecording() -> void override;

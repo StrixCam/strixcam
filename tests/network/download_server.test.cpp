@@ -67,8 +67,9 @@ auto WriteRecording(const fs::path& root, const RecordingFile& recording) -> voi
 auto WriteRawFile(const fs::path& root, const std::string& group, std::uint32_t camera_index,
                   const std::string& body) -> void {
     fs::create_directories(root);
-    const auto name = sst::raw_capture::raw_capture_naming::FileName(
-        sst::raw_capture::RawCaptureIdentity{.capture_group_id = group, .camera_index = camera_index});
+    const auto name =
+        sst::raw_capture::raw_capture_naming::FileName(sst::raw_capture::RawCaptureIdentity{
+            .capture_group_id = group, .camera_index = camera_index});
     std::ofstream out(root / name, std::ios::binary);
     out << body;
 }

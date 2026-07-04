@@ -14,8 +14,7 @@ auto ManualDecision::PreferredCadenceCamera() const -> std::size_t {
     return static_cast<std::size_t>(state_.Get());
 }
 
-auto ManualDecision::Decide(
-    const std::vector<std::optional<sst::processing::FrameBundle>>& cameras)
+auto ManualDecision::Decide(const std::vector<std::optional<sst::processing::FrameBundle>>& cameras)
     -> std::optional<CameraChoice> {
     if (cameras.empty()) {
         return std::nullopt;
@@ -46,8 +45,9 @@ auto ManualDecision::Decide(
     }
     return CameraChoice{
         .camera_index = idx,
-        .crop = sst::processing::CropRect{
-            .x = 0, .y = 0, .width = geometry.width, .height = geometry.height},
+        .crop =
+            sst::processing::CropRect{
+                .x = 0, .y = 0, .width = geometry.width, .height = geometry.height},
     };
 }
 

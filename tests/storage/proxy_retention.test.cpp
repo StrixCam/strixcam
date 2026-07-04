@@ -39,8 +39,7 @@ class TempDir {
 // `age_seconds` in the past (so the write-grace doesn't protect old groups).
 void MakeGroup(const fs::path& dir, const std::string& group, std::size_t bytes, int age_seconds) {
     for (std::uint32_t cam = 0; cam < 2; ++cam) {
-        const auto path =
-            dir / naming::FileName({.capture_group_id = group, .camera_index = cam});
+        const auto path = dir / naming::FileName({.capture_group_id = group, .camera_index = cam});
         std::ofstream(path, std::ios::binary) << std::string(bytes, 'x');
         fs::last_write_time(path,
                             fs::file_time_type::clock::now() - std::chrono::seconds(age_seconds));

@@ -22,15 +22,17 @@ auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg, bool use_v
     // software. x264enc consumes system-memory I420 in both. SST_DISABLE_VIC=1
     // forces software at runtime without a rebuild.
     const std::string convert_scale =
-        use_vic ? fmt::format("videoconvert ! video/x-raw,format=BGRx "
-                              "! nvvidconv ! video/x-raw,format=I420,width={w},height={h} "
-                              "! videorate ! video/x-raw,framerate={fps}/1",
-                              fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
-                              fmt::arg("fps", cfg.framerate))
-                : fmt::format("videoconvert ! videoscale ! videorate "
-                              "! video/x-raw,format=I420,width={w},height={h},framerate={fps}/1",
-                              fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
-                              fmt::arg("fps", cfg.framerate));
+        use_vic ? fmt::format(
+                      "videoconvert ! video/x-raw,format=BGRx "
+                      "! nvvidconv ! video/x-raw,format=I420,width={w},height={h} "
+                      "! videorate ! video/x-raw,framerate={fps}/1",
+                      fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
+                      fmt::arg("fps", cfg.framerate))
+                : fmt::format(
+                      "videoconvert ! videoscale ! videorate "
+                      "! video/x-raw,format=I420,width={w},height={h},framerate={fps}/1",
+                      fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
+                      fmt::arg("fps", cfg.framerate));
     // Software H.264 (the Orin Nano has no NVENC): x264enc reads system memory,
     // so the nvvidconv/NVMM hop is dropped. rtmp2sink replaces the deprecated
     // rtmpsink — it takes a clean location URL. The uplink queue is leaky-

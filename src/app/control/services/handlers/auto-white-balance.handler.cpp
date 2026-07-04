@@ -64,8 +64,8 @@ auto AutoWhiteBalanceHandler::Handle(const sst_cam::Command& /*cmd*/) -> sst_cam
 
         // Brightness: aim the POST-WB luma (R/B are cut by the gains) at the
         // target. Additive fraction of full range.
-        const float post_luma = (0.299F * gains.r * means.r) + (0.587F * means.g) +
-                                (0.114F * gains.b * means.b);
+        const float post_luma =
+            (0.299F * gains.r * means.r) + (0.587F * means.g) + (0.114F * gains.b * means.b);
         gains.brightness =
             std::clamp((kTargetLuma - post_luma) / 255.0F, kMinBrightness, kMaxBrightness);
 

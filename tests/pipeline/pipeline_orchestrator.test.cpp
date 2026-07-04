@@ -693,9 +693,9 @@ TEST(PipelineOrchestratorTest, SideBySideKeepsCameraZeroLeftWhenCameraOneSelecte
     constexpr auto kFlowTimeout = std::chrono::seconds(5);
     constexpr auto kPollInterval = std::chrono::milliseconds(10);
     const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
-    while (std::chrono::steady_clock::now() < deadline &&
-           (compositor.Calls() == 0 ||
-            std::get<3>(sink.Snapshot()).width != kCompositeDims.width)) {
+    while (
+        std::chrono::steady_clock::now() < deadline &&
+        (compositor.Calls() == 0 || std::get<3>(sink.Snapshot()).width != kCompositeDims.width)) {
         std::this_thread::sleep_for(kPollInterval);
     }
     orchestrator.Stop();

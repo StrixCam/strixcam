@@ -46,10 +46,11 @@ class ColorCalibrationState {
     }
 
     [[nodiscard]] auto Get() const -> Gains {
-        return {r_.load(std::memory_order_relaxed),          g_.load(std::memory_order_relaxed),
-                b_.load(std::memory_order_relaxed),          enabled_.load(std::memory_order_relaxed),
-                saturation_.load(std::memory_order_relaxed), contrast_.load(std::memory_order_relaxed),
-                brightness_.load(std::memory_order_relaxed)};
+        return {
+            r_.load(std::memory_order_relaxed),          g_.load(std::memory_order_relaxed),
+            b_.load(std::memory_order_relaxed),          enabled_.load(std::memory_order_relaxed),
+            saturation_.load(std::memory_order_relaxed), contrast_.load(std::memory_order_relaxed),
+            brightness_.load(std::memory_order_relaxed)};
     }
 
    private:

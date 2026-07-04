@@ -33,12 +33,14 @@ TEST(RawCaptureNamingTest, ParsesMultiDigitCameraIndex) {
 }
 
 TEST(RawCaptureNamingTest, RejectsNonRawNames) {
-    EXPECT_FALSE(naming::ParseFileName("recording-2026.mp4").has_value());   // final: no raw__ prefix
-    EXPECT_FALSE(naming::ParseFileName("raw__grp__cam0.nv12").has_value());  // wrong ext (proxy is .mp4)
-    EXPECT_FALSE(naming::ParseFileName("grp__cam0.mp4").has_value());        // no prefix
-    EXPECT_FALSE(naming::ParseFileName("raw__grp.mp4").has_value());         // no cam marker
-    EXPECT_FALSE(naming::ParseFileName("raw__grp__camX.mp4").has_value());   // non-numeric index
-    EXPECT_FALSE(naming::ParseFileName("raw____cam0.mp4").has_value());      // empty group
+    EXPECT_FALSE(
+        naming::ParseFileName("recording-2026.mp4").has_value());  // final: no raw__ prefix
+    EXPECT_FALSE(
+        naming::ParseFileName("raw__grp__cam0.nv12").has_value());     // wrong ext (proxy is .mp4)
+    EXPECT_FALSE(naming::ParseFileName("grp__cam0.mp4").has_value());  // no prefix
+    EXPECT_FALSE(naming::ParseFileName("raw__grp.mp4").has_value());   // no cam marker
+    EXPECT_FALSE(naming::ParseFileName("raw__grp__camX.mp4").has_value());  // non-numeric index
+    EXPECT_FALSE(naming::ParseFileName("raw____cam0.mp4").has_value());     // empty group
 }
 
 TEST(RawCaptureNamingTest, GroupIdMayContainSingleUnderscores) {

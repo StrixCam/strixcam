@@ -101,8 +101,8 @@ auto ProxyRetention::Sweep(
         }
         total -= group->bytes;
         freed += group->bytes;
-        spdlog::info("ProxyRetention: evicted proxy group {} ({} bytes) — over the {} byte cap", gid,
-                     group->bytes, max_total_bytes_);
+        spdlog::info("ProxyRetention: evicted proxy group {} ({} bytes) — over the {} byte cap",
+                     gid, group->bytes, max_total_bytes_);
     }
     return freed;
 }

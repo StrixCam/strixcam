@@ -14,14 +14,15 @@ auto BuildProxyLaunch(const std::string& output_mp4, bool use_vic) -> std::strin
     // nvvidconv directly (NV12 is VIC-native); software path uses videoconvert +
     // videoscale. videorate (fps) stays software either way.
     const std::string scale =
-        use_vic ? fmt::format("nvvidconv ! video/x-raw,format=I420,width={w},height={h} "
-                              "! videorate ! video/x-raw,framerate={fps}/1",
-                              fmt::arg("w", mode.width), fmt::arg("h", mode.height),
-                              fmt::arg("fps", mode.fps))
-                : fmt::format("videoconvert ! videoscale ! videorate "
-                              "! video/x-raw,format=I420,width={w},height={h},framerate={fps}/1",
-                              fmt::arg("w", mode.width), fmt::arg("h", mode.height),
-                              fmt::arg("fps", mode.fps));
+        use_vic
+            ? fmt::format(
+                  "nvvidconv ! video/x-raw,format=I420,width={w},height={h} "
+                  "! videorate ! video/x-raw,framerate={fps}/1",
+                  fmt::arg("w", mode.width), fmt::arg("h", mode.height), fmt::arg("fps", mode.fps))
+            : fmt::format(
+                  "videoconvert ! videoscale ! videorate "
+                  "! video/x-raw,format=I420,width={w},height={h},framerate={fps}/1",
+                  fmt::arg("w", mode.width), fmt::arg("h", mode.height), fmt::arg("fps", mode.fps));
 
     return fmt::format(
         "appsrc name={src} is-live=true format=time do-timestamp=true block=false ! "

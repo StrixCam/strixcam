@@ -13,8 +13,8 @@
 namespace sst::adapters::focus {
 
 namespace {
-constexpr int kVcmAddress = 0x0c;      // ArduCAM VCM DAC
-constexpr std::uint32_t kShift = 4U;    // code is a 10-bit value in bits [4..13]
+constexpr int kVcmAddress = 0x0c;     // ArduCAM VCM DAC
+constexpr std::uint32_t kShift = 4U;  // code is a 10-bit value in bits [4..13]
 constexpr std::uint32_t kFocusMask = 0x3ff0U;
 constexpr std::uint32_t kHiShift = 8U;
 constexpr std::uint32_t kHiMask = 0x3fU;
@@ -22,9 +22,7 @@ constexpr std::uint32_t kLoMask = 0xf0U;
 constexpr std::size_t kPayloadBytes = 2;
 }  // namespace
 
-auto I2cFocuser::BusDevicePath(int bus) -> std::string {
-    return "/dev/i2c-" + std::to_string(bus);
-}
+auto I2cFocuser::BusDevicePath(int bus) -> std::string { return "/dev/i2c-" + std::to_string(bus); }
 
 I2cFocuser::I2cFocuser(std::array<int, 2> camera_bus) : camera_bus_(camera_bus) {
     // The VCM is write-only + unprobeable, so "available" just means both camera

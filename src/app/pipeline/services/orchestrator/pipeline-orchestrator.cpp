@@ -139,14 +139,16 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
             }
             if (!capture.IsRunning()) {
                 spdlog::warn(
-                    "PipelineOrchestrator: camera {} capture down; restart failed, retrying in {}ms",
+                    "PipelineOrchestrator: camera {} capture down; restart failed, retrying in "
+                    "{}ms",
                     camera_index, config_.capture_restart_backoff.count());
                 // Interruptible backoff: sleep in short slices so Stop() (running_
                 // -> false) aborts the wait promptly instead of holding the join
                 // for the full period.
                 constexpr auto kBackoffSlice = std::chrono::milliseconds(50);
                 for (std::chrono::milliseconds waited{0};
-                     waited < config_.capture_restart_backoff && running_; waited += kBackoffSlice) {
+                     waited < config_.capture_restart_backoff && running_;
+                     waited += kBackoffSlice) {
                     std::this_thread::sleep_for(kBackoffSlice);
                 }
                 continue;

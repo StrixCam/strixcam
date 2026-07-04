@@ -10,9 +10,9 @@
 #include <unistd.h>
 
 #include <atomic>
-#include <cstdlib>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <thread>

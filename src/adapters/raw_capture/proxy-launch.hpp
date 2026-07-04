@@ -31,7 +31,7 @@ inline constexpr const char* kProxyEncoderName = "enc";
 // framerate). x264enc always receives system-memory I420, behind a
 // `leaky=downstream` queue so a slow software encode drops proxy frames instead
 // of backing up the appsrc unbounded or corrupting the moov.
-[[nodiscard]] auto BuildProxyLaunch(const std::string& output_mp4, bool use_vic = true)
-    -> std::string;
+[[nodiscard]] auto BuildProxyLaunch(const std::string& output_mp4,
+                                    bool use_vic = true) -> std::string;
 
 }  // namespace sst::adapters::raw_capture

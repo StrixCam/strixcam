@@ -31,11 +31,10 @@ using sst::capture::Frame;
 // quality must never reach it. The sink's Start takes only a capture_group_id;
 // pinned at compile time so a future signature change that adds a quality knob to
 // the raw path fails the build.
-static_assert(
-    std::is_same_v<decltype(&sst::raw_capture::IRawCaptureSink::Start),
-                   bool (sst::raw_capture::IRawCaptureSink::*)(const std::string&,
-                                                              const std::filesystem::path&)>,
-    "raw capture Start takes a group id + output dir, no quality knob (R17)");
+static_assert(std::is_same_v<decltype(&sst::raw_capture::IRawCaptureSink::Start),
+                             bool (sst::raw_capture::IRawCaptureSink::*)(
+                                 const std::string&, const std::filesystem::path&)>,
+              "raw capture Start takes a group id + output dir, no quality knob (R17)");
 
 // A unique temp directory per test, removed on destruction.
 class TempDir {
@@ -71,7 +70,8 @@ auto MakeFrame(std::uint8_t fill) -> Frame {
     return frame;
 }
 
-auto ProxyPath(const std::filesystem::path& dir, std::uint32_t camera_index) -> std::filesystem::path {
+auto ProxyPath(const std::filesystem::path& dir,
+               std::uint32_t camera_index) -> std::filesystem::path {
     namespace naming = sst::raw_capture::raw_capture_naming;
     return dir / naming::FileName({.capture_group_id = "grp-1", .camera_index = camera_index});
 }
@@ -89,7 +89,7 @@ TEST(RawCaptureSinkTest, PushWhenNotCapturingIsNoOp) {
     TempDir dir("idle");
     FilesystemRawCaptureSink sink(dir.path(), 2);
     constexpr std::uint32_t kOutOfRangeCamera = 5;
-    sink.PushCamera(0, MakeFrame(0x33));                 // no Start(): harmless no-op
+    sink.PushCamera(0, MakeFrame(0x33));                  // no Start(): harmless no-op
     sink.PushCamera(kOutOfRangeCamera, MakeFrame(0x33));  // out-of-range index
     EXPECT_FALSE(sink.Stop());                            // nothing to stop
 }

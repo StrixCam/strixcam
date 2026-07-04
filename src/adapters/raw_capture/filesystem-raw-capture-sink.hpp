@@ -40,8 +40,8 @@ class FilesystemRawCaptureSink final : public sst::raw_capture::IRawCaptureSink 
     FilesystemRawCaptureSink(FilesystemRawCaptureSink&&) = delete;
     auto operator=(FilesystemRawCaptureSink&&) -> FilesystemRawCaptureSink& = delete;
 
-    auto Start(const std::string& capture_group_id, const std::filesystem::path& output_dir)
-        -> bool override;
+    auto Start(const std::string& capture_group_id,
+               const std::filesystem::path& output_dir) -> bool override;
     auto PushCamera(std::uint32_t camera_index, const sst::capture::Frame& frame) -> void override;
     auto Stop() -> bool override;
     [[nodiscard]] auto IsCapturing() const -> bool override;
