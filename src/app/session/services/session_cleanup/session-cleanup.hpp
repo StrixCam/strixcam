@@ -6,6 +6,8 @@
 #include "app/session/ports/session-cleanup.hpp"
 #include "app/storage/ports/recording-service.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
+#include "domain/decision/models/manual-camera-state.hpp"
+#include "domain/streaming/models/preview-layout.hpp"
 
 namespace sst::session {
 
@@ -17,11 +19,14 @@ class SessionCleanup final : public ISessionCleanup {
     SessionCleanup(sst::storage::IRecordingService& recording,
                    sst::streaming::IStreamingService& streaming,
                    sst::raw_capture::IRawCaptureSink& proxy, sst::control::IWifiManager& wifi,
-                   sst::control::IDhcpServer& dhcp);
+                   sst::control::IDhcpServer& dhcp,
+                   sst::decision::ManualCameraState& camera_state,
+                   sst::streaming::PreviewLayoutState& layout_state);
 
     auto FinalizeRecording() -> void override;
     auto StopStreaming() -> void override;
     auto TeardownWifiDirect() -> void override;
+    auto ResetSelections() -> void override;
 
    private:
     sst::storage::IRecordingService& recording_;
@@ -29,6 +34,8 @@ class SessionCleanup final : public ISessionCleanup {
     sst::raw_capture::IRawCaptureSink& proxy_;
     sst::control::IWifiManager& wifi_;
     sst::control::IDhcpServer& dhcp_;
+    sst::decision::ManualCameraState& camera_state_;
+    sst::streaming::PreviewLayoutState& layout_state_;
 };
 
 }  // namespace sst::session

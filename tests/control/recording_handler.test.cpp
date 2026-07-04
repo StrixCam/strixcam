@@ -73,6 +73,7 @@ class FakeCleanup final : public sst::session::ISessionCleanup {
     auto FinalizeRecording() -> void override {}
     auto StopStreaming() -> void override {}
     auto TeardownWifiDirect() -> void override {}
+    auto ResetSelections() -> void override {}
 };
 
 // No-op overlay timeline — these tests cover recording lifecycle, not timeline

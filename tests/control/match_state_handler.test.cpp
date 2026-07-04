@@ -31,6 +31,7 @@ class FakeCleanup final : public sst::session::ISessionCleanup {
     auto FinalizeRecording() -> void override {}
     auto StopStreaming() -> void override {}
     auto TeardownWifiDirect() -> void override {}
+    auto ResetSelections() -> void override {}
 };
 
 // A session driven up to Configured with the given period length, ready to take

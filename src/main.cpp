@@ -214,9 +214,19 @@ auto RunFirmware() -> int {
     sst::adapters::raw_capture::FilesystemRawCaptureSink raw_capture_sink(
         cfg.storage.video.value_or(sst::paths::kVideoRootFallback), /*camera_count=*/2);
 
+    // Session-scoped UI selections. Declared here, ahead of SessionCleanup, so
+    // it can reset them on disconnect: a reconnect must start from the app's
+    // fresh-UI defaults (camera 0 / single view), else the app shows Left while
+    // the firmware still serves the previous session's camera (mismatch). The
+    // SetActiveCamera / SetPreviewLayout handlers write them; ManualDecision and
+    // the pipeline consumer read them each tick.
+    static sst::decision::ManualCameraState manual_camera_state;
+    sst::streaming::PreviewLayoutState preview_layout_state;
+
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
     sst::session::SessionCleanup cleanup(recording_service, streaming_service, raw_capture_sink,
-                                         wifi_manager, dhcp_server);
+                                         wifi_manager, dhcp_server, manual_camera_state,
+                                         preview_layout_state);
     sst::session::SessionManager session_manager(cleanup);
 
     // ── Overlay (scene -> Cairo/Pango RGBA -> caching sink) ────────────
@@ -415,17 +425,17 @@ auto RunFirmware() -> int {
     static sst::processing::FrameColorStats frame_color_stats;
     auto postprocessor = std::make_unique<sst::adapters::processing::OpenCvPostprocessor>(
         postproc_cfg, &calibration_state, &frame_color_stats);
-    // Manual tracking: the user picks the output camera (ManualCameraState);
-    // ManualDecision reads it each tick. Becomes the override once AI decision lands.
-    static sst::decision::ManualCameraState manual_camera_state;
+    // Manual tracking: ManualDecision reads manual_camera_state (declared above,
+    // near SessionCleanup which resets it on disconnect) each tick. Becomes the
+    // override once AI decision lands.
     auto decision = std::make_unique<sst::decision::ManualDecision>(manual_camera_state);
 
-    // #6 F6d dual preview: the SetPreviewLayout handler flips this shared state;
-    // the pipeline consumer reads it each tick and composites cam0 | cam1 (clean)
-    // into the preview stream via the side-by-side compositor. The composite
-    // targets the same output canvas as the single stream, so the RTSP encoder
-    // caps never change — connected viewers are not dropped on a layout switch.
-    sst::streaming::PreviewLayoutState preview_layout_state;
+    // #6 F6d dual preview: the SetPreviewLayout handler flips preview_layout_state
+    // (declared above, reset on disconnect); the pipeline consumer reads it each
+    // tick and composites cam0 | cam1 (clean) into the preview stream via the
+    // side-by-side compositor. The composite targets the same output canvas as the
+    // single stream, so the RTSP encoder caps never change — connected viewers are
+    // not dropped on a layout switch.
     sst::adapters::processing::OpenCvSideBySideCompositor side_by_side_compositor(
         sst::runtime_defaults::kOverlayWidth, sst::runtime_defaults::kOverlayHeight);
 
