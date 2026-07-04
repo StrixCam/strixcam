@@ -12,12 +12,6 @@
 
 namespace sst::pipeline {
 
-namespace {
-// The consumer waits on this camera's slot to pace the loop. Camera 0 is the
-// statically-chosen camera, so pacing on it matches the demo's cadence.
-constexpr std::size_t kCadenceCamera = 0;
-}  // namespace
-
 PipelineOrchestrator::PipelineOrchestrator(
     std::vector<CameraChain> cameras,
     std::unique_ptr<sst::processing::IPostprocessor> postprocessor,
@@ -26,7 +20,7 @@ PipelineOrchestrator::PipelineOrchestrator(
     // are distinct sinks
     sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
     // NOLINTEND(bugprone-easily-swappable-parameters)
-    PipelineConfig config, sst::storage::IRawCaptureSink* raw_sink,
+    PipelineConfig config, sst::raw_capture::IRawCaptureSink* raw_sink,
     sst::overlay::IOverlayFrameSource* overlay_source,
     sst::processing::IFrameCompositor* compositor,
     sst::streaming::PreviewLayoutState* preview_layout)
@@ -124,6 +118,45 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
     auto& slot = *slots_[camera_index];
 
     while (running_) {
+        // Watchdog: a capture pipeline can die mid-run and stay dead. Argus posts
+        // INVALID_SETTINGS when the WiFi-Direct radio reforms its P2P group on
+        // phone connect; HandleBusMessages()->Stop() tears the pipeline down, and
+        // nothing else ever restarts it — the producer would otherwise spin
+        // Capture() (nullopt) on a NULL pipeline forever, so preview goes blank
+        // and recording produces 0-byte files. Detect the stopped pipeline and
+        // re-init it, backing off between failed attempts (the radio may still be
+        // settling) instead of hot-looping gst_parse_launch.
+        if (!capture.IsRunning()) {
+            {
+                // Serialize re-init: a radio reform kills both cameras at once, and
+                // two concurrent nvarguscamerasrc re-acquisitions race the shared
+                // nvargus session. Restart() is Stop()+Start() (idempotent).
+                std::lock_guard restart_lock(restart_mtx_);
+                capture.Restart();
+            }
+            if (!running_) {
+                break;  // shutdown raced the restart — exit now, don't Capture/backoff
+            }
+            if (!capture.IsRunning()) {
+                spdlog::warn(
+                    "PipelineOrchestrator: camera {} capture down; restart failed, retrying in "
+                    "{}ms",
+                    camera_index, config_.capture_restart_backoff.count());
+                // Interruptible backoff: sleep in short slices so Stop() (running_
+                // -> false) aborts the wait promptly instead of holding the join
+                // for the full period.
+                constexpr auto kBackoffSlice = std::chrono::milliseconds(50);
+                for (std::chrono::milliseconds waited{0};
+                     waited < config_.capture_restart_backoff && running_;
+                     waited += kBackoffSlice) {
+                    std::this_thread::sleep_for(kBackoffSlice);
+                }
+                continue;
+            }
+            spdlog::info("PipelineOrchestrator: camera {} capture restarted after failure",
+                         camera_index);
+        }
+
         auto raw = capture.Capture();
         if (!raw) {
             std::this_thread::sleep_for(config_.capture_idle_sleep);
@@ -149,13 +182,22 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
 
 auto PipelineOrchestrator::ConsumerLoop() -> void {
     while (running_) {
-        // Block on the cadence camera so the loop runs at capture rate; sample
-        // every other camera non-blocking. Each tick consumes the latest bundle
+        // The cadence camera — the one we BLOCK on to pace the loop at capture
+        // rate — follows the decision's preference. ManualDecision returns the
+        // user-selected camera, so the blocking pop moves with the selection and
+        // the chosen camera is never phase-empty (a non-cadence selected camera is
+        // only TryPop'd, so its slot is intermittently empty on a phase miss —
+        // that miss is what made a non-cadence selection flicker). Every other
+        // camera is sampled non-blocking; each tick consumes the latest bundle
         // from each slot — unchosen ones are dropped (aged out) here.
+        std::size_t cadence = decision_->PreferredCadenceCamera();
+        if (cadence >= cameras_.size()) {
+            cadence = 0;
+        }
         std::vector<std::optional<sst::processing::FrameBundle>> latest(cameras_.size());
-        latest[kCadenceCamera] = slots_[kCadenceCamera]->Pop(config_.consumer_pop_timeout);
+        latest[cadence] = slots_[cadence]->Pop(config_.consumer_pop_timeout);
         for (std::size_t i = 0; i < cameras_.size(); ++i) {
-            if (i != kCadenceCamera) {
+            if (i != cadence) {
                 latest[i] = slots_[i]->TryPop();
             }
         }
@@ -208,6 +250,8 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
     }
 }
 
+// floor-ok: linear overlay/composite/encode branching per output sink.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 auto PipelineOrchestrator::BuildStreamFrame(
     const sst::capture::Frame& clean_chosen,
     const std::vector<std::optional<sst::processing::FrameBundle>>& latest,
@@ -217,10 +261,12 @@ auto PipelineOrchestrator::BuildStreamFrame(
         preview_layout_->Get() == sst::streaming::PreviewLayout::kSideBySide;
 
     if (want_side_by_side) {
-        // Composite the chosen camera (left) with the other camera (right), both
-        // CLEAN — no overlay in the monitoring view. Postprocess the other
-        // camera full-frame; if it has no frame this tick or the composite
-        // fails, fall back to the clean chosen frame (still no overlay).
+        // Composite both cameras CLEAN (no overlay) — a "see both cameras"
+        // monitoring view. The pane order is POSITIONAL: camera 0 is always the
+        // left pane and camera 1 the right, regardless of which one is the
+        // selected main feed. Changing the selection must not swap the panes.
+        // Postprocess the other camera full-frame; if it has no frame this tick
+        // or the composite fails, fall back to the clean chosen frame.
         const std::size_t other_index = chosen_index == 0 ? 1 : 0;
         const auto& other_slot = latest[other_index];
         if (other_slot.has_value()) {
@@ -234,8 +280,13 @@ auto PipelineOrchestrator::BuildStreamFrame(
                     .y = 0,
                     .width = other_slot->source_frame.geometry.width,
                     .height = other_slot->source_frame.geometry.height};
-                if (auto right = postprocessor_->Process(other_slot->source_frame, full_frame)) {
-                    if (auto composite = compositor_->CompositeSideBySide(clean_chosen, *right)) {
+                if (auto other = postprocessor_->Process(other_slot->source_frame, full_frame)) {
+                    // clean_chosen is the selected camera; `other` is the non-
+                    // selected one. Order them by camera index so the lower-index
+                    // camera (0) is always the left pane.
+                    const sst::capture::Frame& left = chosen_index == 0 ? clean_chosen : *other;
+                    const sst::capture::Frame& right = chosen_index == 0 ? *other : clean_chosen;
+                    if (auto composite = compositor_->CompositeSideBySide(left, right)) {
                         return std::move(*composite);
                     }
                 }

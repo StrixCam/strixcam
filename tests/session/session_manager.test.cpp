@@ -30,10 +30,12 @@ class FakeCleanup final : public sst::session::ISessionCleanup {
     auto FinalizeRecording() -> void override { finalize_recording = true; }
     auto StopStreaming() -> void override { stop_streaming = true; }
     auto TeardownWifiDirect() -> void override { teardown_wifi = true; }
+    auto ResetSelections() -> void override { reset_selections = true; }
 
     bool finalize_recording{false};
     bool stop_streaming{false};
     bool teardown_wifi{false};
+    bool reset_selections{false};
 };
 
 // Unique temp root per test to keep filesystem state isolated (no shared dirs).
@@ -286,6 +288,10 @@ TEST(SessionManagerTest, DisconnectWhileRecordingFansOutCleanup) {
     EXPECT_TRUE(cleanup.finalize_recording);
     EXPECT_TRUE(cleanup.stop_streaming);
     EXPECT_TRUE(cleanup.teardown_wifi);
+    // Reconnect-mismatch fix: session-scoped UI selections (active camera,
+    // preview layout) are reset on disconnect so the next connection starts at
+    // the app's fresh-UI defaults instead of the last session's camera.
+    EXPECT_TRUE(cleanup.reset_selections);
     EXPECT_EQ(manager.Phase(), SessionPhase::kIdle);
 
     fs::remove_all(root);
@@ -299,6 +305,7 @@ TEST(SessionManagerTest, DisconnectFromIdleIsNoop) {
     EXPECT_FALSE(cleanup.finalize_recording);
     EXPECT_FALSE(cleanup.stop_streaming);
     EXPECT_FALSE(cleanup.teardown_wifi);
+    EXPECT_FALSE(cleanup.reset_selections);
 }
 
 // A fake whose FinalizeRecording throws, so the exception-safety test can prove
@@ -313,10 +320,12 @@ class ThrowingFinalizeCleanup final : public sst::session::ISessionCleanup {
     }
     auto StopStreaming() -> void override { stop_streaming = true; }
     auto TeardownWifiDirect() -> void override { teardown_wifi = true; }
+    auto ResetSelections() -> void override { reset_selections = true; }
 
     bool finalize_attempted{false};
     bool stop_streaming{false};
     bool teardown_wifi{false};
+    bool reset_selections{false};
 };
 
 // A cleanup step that throws must not abort the disconnect: the remaining steps
@@ -335,6 +344,7 @@ TEST(SessionManagerTest, DisconnectCleanupIsExceptionSafe) {
     EXPECT_TRUE(cleanup.finalize_attempted);
     EXPECT_TRUE(cleanup.stop_streaming);              // ran despite the earlier throw
     EXPECT_TRUE(cleanup.teardown_wifi);               // ran despite the earlier throw
+    EXPECT_TRUE(cleanup.reset_selections);            // ran despite the earlier throw
     EXPECT_EQ(manager.Phase(), SessionPhase::kIdle);  // session still reset
 
     fs::remove_all(root);

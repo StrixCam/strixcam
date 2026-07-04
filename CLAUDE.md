@@ -258,7 +258,7 @@ Built and working:
 - [x] **Processing** — `IPreprocessor` / `IPostprocessor` ports + OpenCV adapter (Grayscale / Binary / RGB AI modes; crop + resize + format-convert post). `FrameBundle`, `CropRect`, `ColorMode` (`src/{domain,app,adapters}/processing/`).
 - [x] **Pipeline orchestration** — `PipelineOrchestrator` (`src/app/pipeline/services/orchestrator/`) wires capture → preprocess → materialize → buffer → postprocess → fan-out via two worker threads (`ProducerLoop`/`ConsumerLoop`). Single-camera with an inline full-frame crop today; the `IDecision` seam and second camera are the hardware-demo work.
 - [x] **Storage** — `RecordingService` (`src/app/storage/services/recording_service/`) + GStreamer continuous recorder write MP4s to disk; `DownloadServer` enumerates them and mints TTL download tokens.
-- [x] **Streaming** — `StreamingService` (`src/app/streaming/services/streaming_service/`) fans out to an RTSP app-stream server + RTMP streamer (`src/adapters/streaming/`). RTSP `StartAppStream` has no production caller yet (hardware-demo work).
+- [x] **Streaming** — `StreamingService` (`src/app/streaming/services/streaming_service/`) fans out to an RTSP app-stream server + RTMP streamer (`src/adapters/streaming/`). RTSP `StartAppStream` is started by `WifiDirectHandler::HandleStart` when the WiFi-Direct group forms (the server listens; the x264 encode is instantiated lazily per connected viewer via `media-configure`, so idle costs no encode) and torn down by `SessionCleanup`.
 - [x] **Overlay** — `OverlayHandler`, cairo renderer, GStreamer compositor, proto→domain mapper (`src/{domain,app,adapters}/overlay/`). Built but **not yet wired into the final-frame production path**.
 
 Not started:

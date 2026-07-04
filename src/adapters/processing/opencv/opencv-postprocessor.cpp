@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <cmath>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <optional>
@@ -15,8 +16,14 @@
 
 namespace sst::adapters::processing {
 
-OpenCvPostprocessor::OpenCvPostprocessor(sst::processing::PostprocessConfig config)
-    : config_(config) {}
+// Below this delta a tuning parameter is treated as its identity value and the
+// (CPU-costing) op is skipped — the common case where sliders sit at default.
+constexpr float kTuningEpsilon = 0.001F;
+
+OpenCvPostprocessor::OpenCvPostprocessor(sst::processing::PostprocessConfig config,
+                                         const sst::processing::ColorCalibrationState* calibration,
+                                         sst::processing::FrameColorStats* frame_stats)
+    : config_(config), calibration_(calibration), frame_stats_(frame_stats) {}
 
 auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
                                   const sst::processing::CropRect& crop)
@@ -70,6 +77,52 @@ auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
         roi, resized,
         cv::Size{static_cast<int>(config_.output_width), static_cast<int>(config_.output_height)},
         0, 0, cv::INTER_LINEAR);
+
+    // Sample the PRE-correction average (BGR) for auto-white-balance. Measuring
+    // before the gain means the auto-WB handler sees the raw cast, not an
+    // already-corrected frame. cv::mean returns Scalar(B,G,R).
+    if (frame_stats_ != nullptr) {
+        cv::Scalar mean;
+        cv::Scalar stddev;
+        cv::meanStdDev(resized, mean, stddev);
+        const auto spread = static_cast<float>((stddev[0] + stddev[1] + stddev[2]) / 3.0);
+        frame_stats_->Set(static_cast<float>(mean[0]), static_cast<float>(mean[1]),
+                          static_cast<float>(mean[2]), spread);
+    }
+
+    // Per-channel white-balance correction (fixes the ArduCAM IMX477 magenta
+    // cast at the ISP tuning level we can't reach on JetPack 7.2). Applied on the
+    // downscaled BGR — cheap, and before any RGB/GRAY convert so every output
+    // format inherits neutral color. uint8 multiply saturates, so gains>1 clip
+    // rather than wrap. Scalar is BGR order. Live gains from the calibration state
+    // (diagnostic sliders) win over the static config when wired.
+    const auto white_balance =
+        (calibration_ != nullptr)
+            ? calibration_->Get()
+            : sst::processing::ColorCalibrationState::Gains{
+                  config_.color_correction.r_gain, config_.color_correction.g_gain,
+                  config_.color_correction.b_gain, config_.color_correction.enabled};
+    if (white_balance.enabled) {
+        cv::multiply(resized, cv::Scalar(white_balance.b, white_balance.g, white_balance.r),
+                     resized);
+        // Saturation: lerp between the frame and its greyscale (1.0 = unchanged,
+        // 0 = greyscale, >1 = more vivid). Fixes the ArduCAM's washed-out look.
+        if (std::fabs(white_balance.saturation - 1.0F) > kTuningEpsilon) {
+            cv::Mat grey;
+            cv::cvtColor(resized, grey, cv::COLOR_BGR2GRAY);
+            cv::cvtColor(grey, grey, cv::COLOR_GRAY2BGR);
+            cv::addWeighted(resized, white_balance.saturation, grey, 1.0 - white_balance.saturation,
+                            0.0, resized);
+        }
+        // Contrast (scaled around mid-grey) + brightness (additive). convertTo
+        // saturates to uint8, so out-of-range values clip rather than wrap.
+        if (std::fabs(white_balance.contrast - 1.0F) > kTuningEpsilon ||
+            std::fabs(white_balance.brightness) > kTuningEpsilon) {
+            const double beta =
+                (128.0 * (1.0 - white_balance.contrast)) + (white_balance.brightness * 255.0);
+            resized.convertTo(resized, -1, white_balance.contrast, beta);
+        }
+    }
 
     cv::Mat final_mat;
     switch (config_.output_format) {

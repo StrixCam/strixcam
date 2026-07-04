@@ -12,6 +12,7 @@
 
 #include "app/buffer/ports/frame-sink.hpp"
 #include "app/capture/ports/frame-src.hpp"
+#include "app/decision/services/manual_decision/manual-decision.hpp"
 #include "app/decision/services/static_decision/static-decision.hpp"
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
 #include "app/processing/ports/frame-compositor.hpp"
@@ -27,6 +28,8 @@ namespace {
 using sst::buffer::IFrameSink;
 using sst::capture::Frame;
 using sst::capture::ICaptureFrame;
+using sst::decision::ManualCameraState;
+using sst::decision::ManualDecision;
 using sst::decision::StaticDecision;
 using sst::pipeline::CameraChain;
 using sst::pipeline::PipelineConfig;
@@ -69,14 +72,31 @@ class FakeCapture final : public ICaptureFrame {
     // Per-camera geometry lets dual-camera tests tell which camera's frame
     // reached postprocess. `stall` makes Capture() always return nullopt (the
     // camera produces nothing) without stopping the producer thread.
-    explicit FakeCapture(Dims dims, bool stall = false)
-        : width_(dims.width), height_(dims.height), stall_(stall) {}
+    // id_base offsets this camera's frame_id sequence so a test can tell which
+    // camera a composited pane came from (frame_ids otherwise overlap at 0).
+    explicit FakeCapture(Dims dims, bool stall = false, std::uint64_t id_base = 0)
+        : width_(dims.width), height_(dims.height), stall_(stall), next_id_(id_base) {}
 
-    auto Start() -> void override { running_ = true; }
+    auto Start() -> void override {
+        running_ = true;
+        start_calls_.fetch_add(1);
+    }
     auto Stop() -> void override { running_ = false; }
     [[nodiscard]] auto IsRunning() const -> bool override { return running_; }
 
+    // Simulate the on-device failure the watchdog exists for: after `die_after`
+    // frames the pipeline dies once (mirrors HandleBusMessages()->Stop() on an
+    // Argus ERROR — IsRunning() flips false, Capture() returns nothing) and stays
+    // dead until something calls Start()/Restart() again. One-shot so a successful
+    // restart runs clean forever after.
+    auto SetDieAfter(std::uint64_t die_after) -> void { die_after_ = die_after; }
+    [[nodiscard]] auto StartCalls() const -> int { return start_calls_.load(); }
+
     auto Capture() -> std::optional<Frame> override {
+        if (running_ && die_after_ > 0 && !has_died_ && next_id_.load() >= die_after_) {
+            has_died_ = true;
+            running_ = false;  // pipeline death — watchdog must Restart() to recover
+        }
         if (!running_ || stall_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(kIdlePollMs));
             return std::nullopt;
@@ -96,6 +116,9 @@ class FakeCapture final : public ICaptureFrame {
     std::uint32_t width_{kCam0Dims.width};
     std::uint32_t height_{kCam0Dims.height};
     bool stall_{false};
+    std::uint64_t die_after_{0};  // 0 means never die
+    std::atomic<bool> has_died_{false};
+    std::atomic<int> start_calls_{0};
     std::atomic<bool> running_{false};
     std::atomic<std::uint64_t> next_id_{0};
 };
@@ -190,6 +213,10 @@ class FakeCompositor final : public sst::processing::IFrameCompositor {
     auto LastRightGeometry() const -> sst::capture::FrameGeometry {
         std::lock_guard lock(mtx_);
         return last_right_geometry;
+    }
+    auto LastLeftId() const -> std::uint64_t {
+        std::lock_guard lock(mtx_);
+        return last_left_id;
     }
 
    private:
@@ -302,6 +329,40 @@ TEST(PipelineOrchestratorTest, EndToEndFlowProducesPostprocessedFrames) {
     // F6a: the recorder branch receives the same post-processed frames as the
     // stream branch (clean here — no overlay source wired in this test).
     EXPECT_GT(std::get<0>(record_sink.Snapshot()), 0);
+}
+
+// Watchdog: a capture pipeline that dies mid-run (Argus INVALID_SETTINGS on the
+// WiFi-Direct radio reform → HandleBusMessages()->Stop()) must be restarted by
+// the producer, and frames must resume reaching the sink. Without the watchdog
+// the producer spins Capture()->nullopt on the dead pipeline forever (blank
+// preview, 0-byte recording).
+TEST(PipelineOrchestratorTest, WatchdogRestartsDeadCaptureAndFramesResume) {
+    auto capture_owner = std::make_unique<FakeCapture>(kCam0Dims);
+    auto* capture = capture_owner.get();
+    capture->SetDieAfter(3);  // die once after 3 frames, then recover on Restart()
+
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        OneCamera(std::move(capture_owner), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig());
+
+    ASSERT_TRUE(orchestrator.Start());
+    // ~400ms: dies ~frame 3 (~100ms), watchdog Restart()s, frames resume for the
+    // remainder — well past the 3-frame death point.
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        400));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    orchestrator.Stop();
+
+    // Start() ran at least twice: once at orchestrator Start(), once via the
+    // watchdog's Restart() after the death.
+    EXPECT_GE(capture->StartCalls(), 2);
+    // Frames resumed after recovery: more reached the sink than the 3 produced
+    // before the pipeline died.
+    auto [pushes, last_id, last_format, last_geom] = sink.Snapshot();
+    EXPECT_GT(pushes, 3);
+    EXPECT_GT(last_id, 3U);
 }
 
 // U3: both cameras run, but the static decision routes only camera 0 to
@@ -573,6 +634,77 @@ TEST(PipelineOrchestratorTest, SideBySideCompositesBothCamerasToStream) {
     EXPECT_EQ(std::get<3>(sink.Snapshot()).width, kCompositeDims.width);
     // The recorder still got the clean single (postprocessed cam0) frame.
     EXPECT_EQ(std::get<3>(record_sink.Snapshot()).width, kOutputDims.width);
+}
+
+// Cadence follows the selection: with camera 1 selected, the consumer blocks on
+// camera 1, so the stream keeps flowing camera-1 frames even when camera 0 is
+// fully stalled (dead). Under the old hardcoded cam0 cadence a stalled cam0 would
+// pace the whole loop off its pop-timeout regardless of the selection.
+TEST(PipelineOrchestratorTest, CadenceFollowsSelectionSoSelectedCameraStreamsWhenOtherStalls) {
+    constexpr std::uint64_t kCam1IdBase = 1000;
+    ManualCameraState camera_state;
+    camera_state.Set(1);  // select camera 1
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims, /*stall=*/true, 0),
+                   std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims, /*stall=*/false, kCam1IdBase),
+                   std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<ManualDecision>(camera_state),
+        record_sink, sink, FastConfig());
+
+    ASSERT_TRUE(orchestrator.Start());
+    constexpr auto kFlowTimeout = std::chrono::seconds(5);
+    constexpr auto kPollInterval = std::chrono::milliseconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (std::chrono::steady_clock::now() < deadline && std::get<0>(sink.Snapshot()) == 0) {
+        std::this_thread::sleep_for(kPollInterval);
+    }
+    orchestrator.Stop();
+
+    const auto [pushes, last_id, format, geom] = sink.Snapshot();
+    EXPECT_GT(pushes, 0);             // stream flowed even though camera 0 is dead
+    EXPECT_GE(last_id, kCam1IdBase);  // and the streamed frames are camera 1's
+}
+
+// Side-by-side pane order is POSITIONAL: camera 0 is always the left pane, even
+// when camera 1 is the selected main feed. Changing the selection must not swap
+// the panes. cam1 uses a high frame_id base so a composite whose left pane came
+// from cam0 is provable by id.
+TEST(PipelineOrchestratorTest, SideBySideKeepsCameraZeroLeftWhenCameraOneSelected) {
+    constexpr std::uint64_t kCam1IdBase = 1000;
+    FakeCompositor compositor;
+    sst::streaming::PreviewLayoutState layout;
+    layout.Set(sst::streaming::PreviewLayout::kSideBySide);
+    ManualCameraState camera_state;
+    camera_state.Set(1);  // select camera 1 as the main feed
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims, false, 0),
+                   std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims, false, kCam1IdBase),
+                   std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<ManualDecision>(camera_state),
+        record_sink, sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
+
+    ASSERT_TRUE(orchestrator.Start());
+    constexpr auto kFlowTimeout = std::chrono::seconds(5);
+    constexpr auto kPollInterval = std::chrono::milliseconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (
+        std::chrono::steady_clock::now() < deadline &&
+        (compositor.Calls() == 0 || std::get<3>(sink.Snapshot()).width != kCompositeDims.width)) {
+        std::this_thread::sleep_for(kPollInterval);
+    }
+    orchestrator.Stop();
+
+    ASSERT_GT(compositor.Calls(), 0);
+    // Left pane frame_id is below cam1's base → it came from camera 0, even
+    // though camera 1 is the selection. Positional order held.
+    EXPECT_LT(compositor.LastLeftId(), kCam1IdBase);
+    EXPECT_EQ(std::get<3>(sink.Snapshot()).width, kCompositeDims.width);
 }
 
 // #6 F6d: SINGLE (default) never invokes the compositor; the stream carries the

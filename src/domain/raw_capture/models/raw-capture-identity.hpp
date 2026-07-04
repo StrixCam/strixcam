@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-namespace sst::storage {
+namespace sst::raw_capture {
 
 // Identity of one per-camera raw file in a raw dual-camera capture session.
 // capture_group_id is the app-minted id (per the proto contract) shared by both
@@ -23,4 +23,4 @@ inline auto operator==(const RawCaptureIdentity& a, const RawCaptureIdentity& b)
     return a.capture_group_id == b.capture_group_id && a.camera_index == b.camera_index;
 }
 
-}  // namespace sst::storage
+}  // namespace sst::raw_capture

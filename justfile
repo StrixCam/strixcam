@@ -37,12 +37,12 @@ shell:
 
 # --- build (auto native-or-delegated) -------------------------------------
 
-# Configure + build the debug binary (default).
-build:
+# Configure + build the debug binary (default dev-loop build).
+build-debug-firmware:
     @just _run "cmake --preset debug && cmake --build --preset debug"
 
-# Configure + build the release binary.
-build-release:
+# Configure + build the release binary (the deployable artifact).
+build-release-firmware:
     @just _run "cmake --preset release && cmake --build --preset release"
 
 # Configure + build the test binary (GTest via Conan).
@@ -86,9 +86,9 @@ ci-check:
 # ~/.ssh/config), so you need `ssh`/`scp` on the host PATH and key-based access
 # to the device. Validate here; only push (and let CI mint a tag) once it works.
 #
-# Usage: just deploy-jetson user@jetson.local
-#        just deploy-jetson jetson.local --no-camera   # extra install.sh flags pass through
-deploy-jetson HOST *flags: build-release
+# Usage: just deploy-firmware user@jetson.local
+#        just deploy-firmware jetson.local --no-camera   # extra install.sh flags pass through
+deploy-firmware HOST *flags: build-release-firmware
     @BIN="build/release/bin/sst_cam_firmware"; \
      [ -f "$BIN" ] || { echo "binary not found: $BIN (build-release failed?)" >&2; exit 1; }; \
      command -v scp >/dev/null || { echo "scp not found on host PATH" >&2; exit 1; }; \

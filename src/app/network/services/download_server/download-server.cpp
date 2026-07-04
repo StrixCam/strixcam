@@ -2,13 +2,14 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <chrono>
 #include <system_error>
 #include <utility>
 
 #include "app/network/services/download_server/mp4-duration.hpp"
 #include "domain/common/utils/uuid.hpp"
-#include "domain/storage/services/raw-capture-naming.hpp"
+#include "domain/raw_capture/services/raw-capture-naming.hpp"
 
 namespace sst::network {
 
@@ -16,7 +17,6 @@ namespace fs = std::filesystem;
 
 namespace {
 constexpr const char* kMp4Extension = ".mp4";
-constexpr const char* kRawExtension = ".nv12";
 constexpr const char* kThumbnailExtension = ".jpg";
 
 auto LastWriteUnix(const fs::path& path) -> std::uint64_t {
@@ -51,26 +51,28 @@ auto DownloadServer::Enumerate() const -> std::vector<RecordingSummary> {
             continue;
         }
         const auto ext = path.extension();
+        if (ext != kMp4Extension) {
+            continue;
+        }
         RecordingSummary summary;
-        if (ext == kMp4Extension) {
-            // Final-match recording: is_raw stays false, raw identity unset.
-            summary.recording_id = path.stem().string();
-            summary.thumbnail_id = summary.recording_id;
-            summary.duration_s = ProbeMp4DurationSeconds(path);
-        } else if (ext == kRawExtension) {
-            // Raw dual-camera file: parse identity from the filename so the app
-            // can group the cam-0/cam-1 pair by capture_group_id.
-            const auto identity =
-                sst::storage::raw_capture_naming::ParseFileName(path.filename().string());
-            if (!identity) {
-                continue;  // a .nv12 that isn't a raw-capture file we wrote
-            }
+        // Both the training proxy and the final recording are .mp4 now; the
+        // `raw__<group>__cam<N>` filename prefix (parsed here) is the sole
+        // discriminator — proxies live flat at the video root with that prefix,
+        // final recordings live in per-match subdirs without it.
+        const auto identity =
+            sst::raw_capture::raw_capture_naming::ParseFileName(path.filename().string());
+        if (identity) {
+            // Raw dual-camera training proxy: parse identity so the app can group
+            // the cam-0/cam-1 pair by capture_group_id.
             summary.recording_id = path.stem().string();
             summary.is_raw = true;
             summary.camera_index = identity->camera_index;
             summary.capture_group_id = identity->capture_group_id;
         } else {
-            continue;
+            // Final-match recording: is_raw stays false, raw identity unset.
+            summary.recording_id = path.stem().string();
+            summary.thumbnail_id = summary.recording_id;
+            summary.duration_s = ProbeMp4DurationSeconds(path);
         }
         std::error_code size_ec;
         summary.size_bytes = static_cast<std::uint64_t>(fs::file_size(path, size_ec));
@@ -90,7 +92,7 @@ auto DownloadServer::ResolveRecordingPath(const std::string& recording_id) const
          !err && entry != fs::recursive_directory_iterator(); entry.increment(err)) {
         const fs::path& path = entry->path();
         const auto ext = path.extension();
-        if (entry->is_regular_file(err) && (ext == kMp4Extension || ext == kRawExtension) &&
+        if (entry->is_regular_file(err) && ext == kMp4Extension &&
             path.stem().string() == recording_id) {
             return path;
         }
@@ -162,6 +164,14 @@ auto DownloadServer::ValidateToken(const std::string& token) -> std::optional<fs
         return std::nullopt;
     }
     return entry->second.path;
+}
+
+auto DownloadServer::IsTokened(const fs::path& file) const -> bool {
+    const auto now = clock_();
+    std::lock_guard lock(mtx_);
+    return std::ranges::any_of(tokens_, [&](const auto& token) {
+        return token.second.expires_at_unix > now && token.second.path == file;
+    });
 }
 
 }  // namespace sst::network

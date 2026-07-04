@@ -48,6 +48,7 @@ class FakeCleanup final : public session::ISessionCleanup {
     auto FinalizeRecording() -> void override {}
     auto StopStreaming() -> void override {}
     auto TeardownWifiDirect() -> void override {}
+    auto ResetSelections() -> void override {}
 };
 class FakeWifi final : public control::IWifiManager {
    public:

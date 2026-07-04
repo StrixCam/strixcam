@@ -14,7 +14,25 @@ auto BuildRtmpLocation(const sst::streaming::PlatformStreamConfig& cfg) -> std::
     return cfg.url + "/" + cfg.stream_key;
 }
 
-auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg) -> std::string {
+auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg, bool use_vic) -> std::string {
+    // Scale + BGR→I420 colour-convert: full software (videoconvert ! videoscale,
+    // proven default) or VIC-offloaded (U2). The appsrc source is packed BGR,
+    // which nvvidconv rejects directly (JP7.2), so a cheap videoconvert repacks
+    // BGR→BGRx and VIC does the BGRx→I420 convert + scale; videorate stays
+    // software. x264enc consumes system-memory I420 in both. SST_DISABLE_VIC=1
+    // forces software at runtime without a rebuild.
+    const std::string convert_scale =
+        use_vic ? fmt::format(
+                      "videoconvert ! video/x-raw,format=BGRx "
+                      "! nvvidconv ! video/x-raw,format=I420,width={w},height={h} "
+                      "! videorate ! video/x-raw,framerate={fps}/1",
+                      fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
+                      fmt::arg("fps", cfg.framerate))
+                : fmt::format(
+                      "videoconvert ! videoscale ! videorate "
+                      "! video/x-raw,format=I420,width={w},height={h},framerate={fps}/1",
+                      fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
+                      fmt::arg("fps", cfg.framerate));
     // Software H.264 (the Orin Nano has no NVENC): x264enc reads system memory,
     // so the nvvidconv/NVMM hop is dropped. rtmp2sink replaces the deprecated
     // rtmpsink — it takes a clean location URL. The uplink queue is leaky-
@@ -33,8 +51,7 @@ auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg) -> std::st
     return fmt::format(
         "flvmux name=mux streamable=true ! rtmp2sink location=\"{loc}\" sync=false "
         "appsrc name={src} is-live=true format=time do-timestamp=true "
-        " ! videoconvert ! videoscale ! videorate "
-        " ! video/x-raw,format=I420,width={w},height={h},framerate={fps}/1 "
+        " ! {cs} "
         " ! queue leaky=downstream max-size-buffers={qbuf} max-size-time=0 max-size-bytes=0 "
         " ! x264enc speed-preset=ultrafast tune=zerolatency bitrate={brk} key-int-max={gik} "
         " ! h264parse config-interval=-1 "
@@ -43,10 +60,9 @@ auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg) -> std::st
         // produce timestamped buffers or flvmux stalls (is-live + do-timestamp).
         "audiotestsrc is-live=true wave=silence do-timestamp=true "
         " ! audioconvert ! voaacenc ! aacparse ! queue ! mux.audio ",
-        fmt::arg("src", kRtmpAppsrcName), fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
-        fmt::arg("fps", cfg.framerate), fmt::arg("qbuf", kRtmpPreEncodeQueueBuffers),
-        fmt::arg("brk", cfg.bitrate_kbps), fmt::arg("gik", cfg.framerate * 2),
-        fmt::arg("loc", BuildRtmpLocation(cfg)));
+        fmt::arg("src", kRtmpAppsrcName), fmt::arg("cs", convert_scale),
+        fmt::arg("qbuf", kRtmpPreEncodeQueueBuffers), fmt::arg("brk", cfg.bitrate_kbps),
+        fmt::arg("gik", cfg.framerate * 2), fmt::arg("loc", BuildRtmpLocation(cfg)));
 }
 
 }  // namespace sst::adapters::streaming

@@ -164,6 +164,7 @@ auto SessionManager::OnDisconnect() -> void {
     safe("FinalizeRecording", [this] { cleanup_.FinalizeRecording(); });
     safe("StopStreaming", [this] { cleanup_.StopStreaming(); });
     safe("TeardownWifiDirect", [this] { cleanup_.TeardownWifiDirect(); });
+    safe("ResetSelections", [this] { cleanup_.ResetSelections(); });
 
     std::lock_guard lock(mtx_);
     state_ = SessionState{};  // back to Idle, all session memory cleared (R11)

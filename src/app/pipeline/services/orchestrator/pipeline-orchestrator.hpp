@@ -16,7 +16,7 @@
 #include "app/processing/ports/frame-compositor.hpp"
 #include "app/processing/ports/postprocessor.hpp"
 #include "app/processing/ports/preprocessor.hpp"
-#include "app/storage/ports/raw-capture-sink.hpp"
+#include "app/raw_capture/ports/raw-capture-sink.hpp"
 #include "domain/buffer/services/latest-only-slot.hpp"
 #include "domain/capture/models/frame.hpp"
 #include "domain/processing/models/frame-bundle.hpp"
@@ -32,10 +32,18 @@ struct PipelineConfig {
     // Bound on how long the consumer waits for a new bundle from the cadence
     // camera before re-evaluating. Keeps shutdown latency low.
     std::chrono::milliseconds consumer_pop_timeout{kDefaultConsumerPopTimeoutMs};
+    // Backoff a producer waits after a FAILED capture restart before retrying.
+    // A capture pipeline can die mid-run — Argus posts INVALID_SETTINGS when the
+    // WiFi-Direct radio reforms its group, and HandleBusMessages()->Stop() then
+    // leaves it torn down. The producer watchdog re-Starts the dead pipeline;
+    // this backoff keeps a persistently-failing sensor (or a still-settling
+    // radio) from hot-looping gst_parse_launch every few milliseconds.
+    std::chrono::milliseconds capture_restart_backoff{kDefaultCaptureRestartBackoffMs};
 
    private:
     static constexpr int kDefaultCaptureIdleSleepMs = 5;
     static constexpr int kDefaultConsumerPopTimeoutMs = 100;
+    static constexpr int kDefaultCaptureRestartBackoffMs = 500;
 };
 
 // One capture → preprocess chain for a single camera. The orchestrator owns the
@@ -86,7 +94,7 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
                          sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
                          // NOLINTEND(bugprone-easily-swappable-parameters)
                          PipelineConfig config = PipelineConfig{},
-                         sst::storage::IRawCaptureSink* raw_sink = nullptr,
+                         sst::raw_capture::IRawCaptureSink* raw_sink = nullptr,
                          sst::overlay::IOverlayFrameSource* overlay_source = nullptr,
                          // #6 F6d dual preview: both optional. When set and the
                          // layout is SIDE_BY_SIDE, the consumer postprocesses the
@@ -133,7 +141,7 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     sst::buffer::IFrameSink& record_sink_;  // CLEAN L1 (no overlay)
     sst::buffer::IFrameSink& stream_sink_;  // overlaid (live/broadcast: RTSP + RTMP)
     PipelineConfig config_;
-    sst::storage::IRawCaptureSink* raw_sink_;
+    sst::raw_capture::IRawCaptureSink* raw_sink_;
     sst::overlay::IOverlayFrameSource* overlay_source_;
     sst::processing::IFrameCompositor* compositor_;
     sst::streaming::PreviewLayoutState* preview_layout_;
@@ -146,6 +154,15 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     std::atomic<bool> running_{false};
     std::vector<std::thread> producer_threads_;
     std::thread consumer_thread_;
+
+    // Serializes capture-pipeline restarts across producer threads. The
+    // ProducerLoop watchdog re-inits Argus (gst_parse_launch of nvarguscamerasrc)
+    // on the producer thread; startup does the same init serially on the main
+    // thread. A shared radio-reform event kills both cameras at once, so without
+    // this lock both producers would re-acquire the process-wide nvargus session
+    // concurrently — the one concurrency the serialized startup deliberately
+    // avoids. Held only around Restart(); the rest of the loop stays lock-free.
+    std::mutex restart_mtx_;
 
     // Latest final frame for on-demand snapshots (thumbnail). Guarded by its own
     // mutex so GrabLatest() (BLE thread) never contends with Start/Stop. The

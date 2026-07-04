@@ -19,6 +19,7 @@
 #include "adapters/control/wifi/wpa_supplicant/dnsmasq-dhcp-server.hpp"
 #include "adapters/control/wifi/wpa_supplicant/ip-network-configurator.hpp"
 #include "adapters/control/wifi/wpa_supplicant/wpa-wifi-manager.hpp"
+#include "adapters/focus/i2c-focuser.hpp"
 #include "adapters/network/http/http-download-server.hpp"
 #include "adapters/network/json/json-uplink-store.hpp"
 #include "adapters/overlay/burn/opencv-overlay-burner.hpp"
@@ -29,15 +30,20 @@
 #include "adapters/processing/opencv/opencv-postprocessor.hpp"
 #include "adapters/processing/opencv/opencv-preprocessor.hpp"
 #include "adapters/processing/opencv/opencv-side-by-side-compositor.hpp"
+#include "adapters/raw_capture/filesystem-raw-capture-sink.hpp"
+#include "adapters/raw_capture/proxy-retention.hpp"
 #include "adapters/storage/filesystem/filesystem-disk-guard.hpp"
 #include "adapters/storage/gstreamer/gst-continuous-recorder.hpp"
 #include "adapters/storage/opencv/opencv-jpeg-encoder.hpp"
 #include "adapters/storage/opencv/opencv-thumbnail-writer.hpp"
-#include "adapters/storage/raw_capture/filesystem-raw-capture-sink.hpp"
 #include "adapters/streaming/gst_rtmp/gst-rtmp-streamer.hpp"
 #include "adapters/streaming/gst_rtsp/gst-rtsp-app-stream-server.hpp"
 #include "app/config/services/config_loader/config-loader.hpp"
 #include "app/control/services/dispatcher/command-dispatcher.hpp"
+#include "app/control/services/handlers/active-camera.handler.hpp"
+#include "app/control/services/handlers/auto-white-balance.handler.hpp"
+#include "app/control/services/handlers/camera-calibration.handler.hpp"
+#include "app/control/services/handlers/camera-focus.handler.hpp"
 #include "app/control/services/handlers/device.handler.hpp"
 #include "app/control/services/handlers/download.handler.hpp"
 #include "app/control/services/handlers/export-burn.handler.hpp"
@@ -54,7 +60,7 @@
 #include "app/control/services/handlers/thumbnail.handler.hpp"
 #include "app/control/services/handlers/wifi-direct.handler.hpp"
 #include "app/control/services/telemetry_probe/telemetry-probe.hpp"
-#include "app/decision/services/static_decision/static-decision.hpp"
+#include "app/decision/services/manual_decision/manual-decision.hpp"
 #include "app/network/services/download_server/download-server.hpp"
 #include "app/network/services/uplink-manager/uplink-manager.hpp"
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
@@ -65,6 +71,10 @@
 #include "app/streaming/services/streaming_service/streaming-service.hpp"
 #include "domain/capture/models/camera-config.hpp"
 #include "domain/control/utils/advertised-name.hpp"
+#include "domain/decision/models/manual-camera-state.hpp"
+#include "domain/focus/models/focus-state.hpp"
+#include "domain/processing/models/color-calibration-state.hpp"
+#include "domain/processing/models/frame-color-stats.hpp"
 
 namespace sst::paths {
 
@@ -196,9 +206,27 @@ auto RunFirmware() -> int {
         uplink_manager.Apply(boot_cfg);
     }).detach();
 
+    // Training-proxy sink — per-camera H.264 proxy, taps both materialized camera
+    // chains, coupled to the match record lifecycle (RecordingHandler drives
+    // Start/Stop; SessionCleanup force-stops it on disconnect). Constructed here,
+    // ahead of both SessionCleanup and the pipeline that pushes into it, so both
+    // can reference it and DeviceHandler can report its IsCapturing() state.
+    sst::adapters::raw_capture::FilesystemRawCaptureSink raw_capture_sink(
+        cfg.storage.video.value_or(sst::paths::kVideoRootFallback), /*camera_count=*/2);
+
+    // Session-scoped UI selections. Declared here, ahead of SessionCleanup, so
+    // it can reset them on disconnect: a reconnect must start from the app's
+    // fresh-UI defaults (camera 0 / single view), else the app shows Left while
+    // the firmware still serves the previous session's camera (mismatch). The
+    // SetActiveCamera / SetPreviewLayout handlers write them; ManualDecision and
+    // the pipeline consumer read them each tick.
+    static sst::decision::ManualCameraState manual_camera_state;
+    sst::streaming::PreviewLayoutState preview_layout_state;
+
     // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
-    sst::session::SessionCleanup cleanup(recording_service, streaming_service, wifi_manager,
-                                         dhcp_server);
+    sst::session::SessionCleanup cleanup(recording_service, streaming_service, raw_capture_sink,
+                                         wifi_manager, dhcp_server, manual_camera_state,
+                                         preview_layout_state);
     sst::session::SessionManager session_manager(cleanup);
 
     // ── Overlay (scene -> Cairo/Pango RGBA -> caching sink) ────────────
@@ -218,6 +246,25 @@ auto RunFirmware() -> int {
 
     // ── Downloads ──────────────────────────────────────────────────────
     sst::network::DownloadServer download_server(video_root, thumbnail_root, NowUnixSeconds);
+
+    // Training-proxy retention (U7): a detached periodic sweep bounds total proxy
+    // footage (the raw__*.mp4 pairs accumulate one per match). Delete-oldest,
+    // protected against the actively-writing group (mtime grace inside Sweep) and
+    // any file with a live download token. Off-thread so it never blocks the BLE
+    // surface; a no-op when proxy_max_total_bytes is unset.
+    static sst::adapters::raw_capture::ProxyRetention proxy_retention(
+        video_root, cfg.storage.proxy_max_total_bytes.value_or(0));
+    if (cfg.storage.proxy_max_total_bytes) {
+        std::thread([&download_server] {
+            constexpr std::chrono::minutes kProxySweepInterval{5};
+            for (;;) {
+                std::this_thread::sleep_for(kProxySweepInterval);
+                proxy_retention.Sweep([&download_server](const std::filesystem::path& file) {
+                    return download_server.IsTokened(file);
+                });
+            }
+        }).detach();
+    }
     // The HTTP server hands out token-gated byte ranges. Bind on all interfaces
     // (0.0.0.0) rather than the GO IP: that address only exists once a WiFi
     // Direct session is up, and INADDR_ANY still accepts connections on it when
@@ -257,14 +304,6 @@ auto RunFirmware() -> int {
     // ── System stats (telemetry source) ────────────────────────────────
     sst::adapters::control::ProcSystemStats system_stats(video_root);
 
-    // Raw dual-camera capture sink — taps both materialized camera chains,
-    // independent of the final recording. Writes per-camera raw files under the
-    // video root. Constructed here (ahead of the pipeline that pushes into it)
-    // so DeviceHandler can report its IsCapturing() state as is_raw_capturing
-    // telemetry.
-    sst::adapters::storage::FilesystemRawCaptureSink raw_capture_sink(
-        cfg.storage.video.value_or(sst::paths::kVideoRootFallback), /*camera_count=*/2);
-
     // ── Control plane: dispatcher + per-concern handlers ───────────────
     sst::control::CommandDispatcher dispatcher;
 
@@ -299,7 +338,7 @@ auto RunFirmware() -> int {
     dispatcher.Register(
         std::make_shared<sst::control::MatchStateHandler>(session_manager, NowEpochMs));
     dispatcher.Register(std::make_shared<sst::control::RecordingHandler>(
-        session_manager, recording_service, overlay_timeline, NowMs));
+        session_manager, recording_service, overlay_timeline, raw_capture_sink, NowMs));
     dispatcher.Register(
         std::make_shared<sst::control::StreamingHandler>(streaming_service, &uplink_probe));
     dispatcher.Register(std::make_shared<sst::control::DownloadHandler>(
@@ -341,15 +380,64 @@ auto RunFirmware() -> int {
         .capture = std::make_unique<sst::capture::GStreamerAdapter>(
             camera_cfg, device_model, sst::runtime_defaults::kCamera1Index),
         .preprocessor = std::make_unique<sst::adapters::processing::OpenCvPreprocessor>()});
-    auto postprocessor = std::make_unique<sst::adapters::processing::OpenCvPostprocessor>();
-    auto decision = std::make_unique<sst::decision::StaticDecision>();
+    // WB magenta-correction gains are env-tunable so the cast can be dialed in
+    // on-device without a rebuild (a fixed grey-world gain over/under-shoots per
+    // scene). SST_WB_DISABLE turns it off; SST_WB_{R,G,B}GAIN override each gain.
+    sst::processing::PostprocessConfig postproc_cfg;
+    auto& white_balance = postproc_cfg.color_correction;
+    if (std::getenv("SST_WB_DISABLE") != nullptr) {
+        white_balance.enabled = false;
+    }
+    const auto env_gain = [](const char* name, float fallback) {
+        const char* value = std::getenv(name);
+        if (value == nullptr) {
+            return fallback;
+        }
+        try {
+            return std::stof(value);
+        } catch (const std::exception&) {
+            return fallback;
+        }
+    };
+    white_balance.r_gain = env_gain("SST_WB_RGAIN", white_balance.r_gain);
+    white_balance.g_gain = env_gain("SST_WB_GGAIN", white_balance.g_gain);
+    white_balance.b_gain = env_gain("SST_WB_BGAIN", white_balance.b_gain);
+    spdlog::info("Postprocess WB correction: enabled={} R={:.2f} G={:.2f} B={:.2f}",
+                 white_balance.enabled, white_balance.r_gain, white_balance.g_gain,
+                 white_balance.b_gain);
+    // Live WB calibration state (diagnostic Calibration screen). Seeded from the
+    // resolved default/env gains; the postprocessor samples it each frame and the
+    // SetCameraCalibration handler writes it, so slider drags retune the preview
+    // live. Must outlive the postprocessor (moved into the pipeline below).
+    sst::processing::ColorCalibrationState calibration_state(
+        {.r = white_balance.r_gain,
+         .g = white_balance.g_gain,
+         .b = white_balance.b_gain,
+         .enabled = white_balance.enabled,
+         .saturation = env_gain("SST_SATURATION", sst::processing::kDefaultSaturation),
+         .contrast = env_gain("SST_CONTRAST", sst::processing::kDefaultContrast),
+         .brightness = env_gain("SST_BRIGHTNESS", sst::processing::kDefaultBrightness)});
+    // Motorized-focus VCM driver + shared per-camera focus mode/position (U8/U9).
+    // Must outlive the handlers + the AF loop below.
+    static sst::adapters::focus::I2cFocuser focuser;
+    static sst::focus::FocusState focus_state;
 
-    // #6 F6d dual preview: the SetPreviewLayout handler flips this shared state;
-    // the pipeline consumer reads it each tick and composites cam0 | cam1 (clean)
-    // into the preview stream via the side-by-side compositor. The composite
-    // targets the same output canvas as the single stream, so the RTSP encoder
-    // caps never change — connected viewers are not dropped on a layout switch.
-    sst::streaming::PreviewLayoutState preview_layout_state;
+    // Latest pre-correction frame average — auto-white-balance reads it to compute
+    // grey-world gains. Must outlive the postprocessor (moved into the pipeline).
+    static sst::processing::FrameColorStats frame_color_stats;
+    auto postprocessor = std::make_unique<sst::adapters::processing::OpenCvPostprocessor>(
+        postproc_cfg, &calibration_state, &frame_color_stats);
+    // Manual tracking: ManualDecision reads manual_camera_state (declared above,
+    // near SessionCleanup which resets it on disconnect) each tick. Becomes the
+    // override once AI decision lands.
+    auto decision = std::make_unique<sst::decision::ManualDecision>(manual_camera_state);
+
+    // #6 F6d dual preview: the SetPreviewLayout handler flips preview_layout_state
+    // (declared above, reset on disconnect); the pipeline consumer reads it each
+    // tick and composites cam0 | cam1 (clean) into the preview stream via the
+    // side-by-side compositor. The composite targets the same output canvas as the
+    // single stream, so the RTSP encoder caps never change — connected viewers are
+    // not dropped on a layout switch.
     sst::adapters::processing::OpenCvSideBySideCompositor side_by_side_compositor(
         sst::runtime_defaults::kOverlayWidth, sst::runtime_defaults::kOverlayHeight);
 
@@ -361,6 +449,12 @@ auto RunFirmware() -> int {
     dispatcher.Register(std::make_shared<sst::control::PreviewLayoutHandler>(
         preview_layout_state, sst::runtime_defaults::kOverlayWidth,
         sst::runtime_defaults::kOverlayHeight));
+    dispatcher.Register(
+        std::make_shared<sst::control::CameraCalibrationHandler>(calibration_state));
+    dispatcher.Register(std::make_shared<sst::control::AutoWhiteBalanceHandler>(frame_color_stats,
+                                                                                calibration_state));
+    dispatcher.Register(std::make_shared<sst::control::CameraFocusHandler>(focuser, focus_state));
+    dispatcher.Register(std::make_shared<sst::control::ActiveCameraHandler>(manual_camera_state));
     dispatcher.Register(
         std::make_shared<sst::control::NetworkHandler>(uplink_manager, uplink_store, cfg.uplink));
     // Reboot: `systemctl reboot` requires the sst-cam service user to be

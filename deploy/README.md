@@ -20,14 +20,14 @@ PR/merge.
 
 ```bash
 # One command from the host: cross-build (in the devcontainer) → scp → install.
-just deploy-jetson user@jetson.local
-just deploy-jetson jetson.local --no-camera     # extra install.sh flags pass through
+just deploy-firmware user@jetson.local
+just deploy-firmware jetson.local --no-camera     # extra install.sh flags pass through
 ```
 
 Or by hand:
 
 ```bash
-just build-release                                   # binary → build/release/bin/sst_cam_firmware
+just build-release-firmware                          # binary → build/release/bin/sst_cam_firmware
 scp build/release/bin/sst_cam_firmware deploy/install.sh user@jetson:/tmp/
 ssh -t user@jetson "sudo bash /tmp/install.sh --binary /tmp/sst_cam_firmware"
 ```
@@ -70,8 +70,19 @@ systemctl status sst-cam-firmware
 ## What `install.sh` does
 
 0. **One-time setup (idempotent)** — creates the `sst-cam` user, `/opt/sst-cam/bin`,
-   and installs + enables the systemd unit if any are missing. Re-running is safe.
-   Skip with `--no-setup`.
+   installs + enables the systemd unit, installs a **headless Xorg** unit, and
+   defaults the boot target to `multi-user.target` if any are missing. Re-running
+   is safe. Skip with `--no-setup`.
+   - **Headless boot (GPU kept alive).** The camera is a headless appliance, so
+     setup drops the GNOME desktop to reclaim **~1.6 GB RAM** for the encode/AI
+     budget. It does NOT just `set-default multi-user.target` — that alone breaks
+     the pipeline on JP7.2 (the NVIDIA stack won't init: `NvRmGpuLibOpen failed` /
+     `Cuda status=100` / `EGL failed to initialize` → firmware core-dumps).
+     Instead it installs `xorg-headless.service` — a **bare Xorg** (stock Tegra
+     `xorg.conf`, `AllowEmptyInitialConfiguration`, no monitor needed) that only
+     initialises the GPU/EGL, with `nvargus-daemon` ordered after it. Cameras +
+     `nvvidconv`/VIC work; no desktop loads. Validated on-metal. Revert:
+     `sudo systemctl set-default graphical.target && sudo systemctl disable xorg-headless.service && sudo reboot`.
 1. **Resolves the release** by `--version <tag>` or `--sha256 <hex>` (default `latest`).
 2. **Fails early** (before stopping the service) on a bad download, a non-aarch64
    ELF, a **platform mismatch** (a JetPack-7.2 binary on a non-r39 flash), or a

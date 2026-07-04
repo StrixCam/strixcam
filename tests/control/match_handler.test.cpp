@@ -52,6 +52,7 @@ class FakeCleanup final : public sst::session::ISessionCleanup {
     auto FinalizeRecording() -> void override {}
     auto StopStreaming() -> void override {}
     auto TeardownWifiDirect() -> void override {}
+    auto ResetSelections() -> void override {}
 };
 
 // Overlay canvas size for the test controller; any small square works.

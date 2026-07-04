@@ -39,6 +39,8 @@ INSTALL_DIR="${INSTALL_ROOT}/bin"
 INSTALL_PATH="${INSTALL_DIR}/sst_cam_firmware"
 BACKUP_PATH="${INSTALL_PATH}.bak"
 UNIT_PATH="/etc/systemd/system/${SERVICE}.service"
+XORG_UNIT_PATH="/etc/systemd/system/xorg-headless.service"
+NVARGUS_DROPIN_DIR="/etc/systemd/system/nvargus-daemon.service.d"
 # polkit rule granting SERVICE_USER the logind reboot action (firmware Reboot cmd).
 POLKIT_RULE_PATH="/etc/polkit-1/rules.d/49-sst-cam-reboot.rules"
 # Config dir the firmware reads on boot. MUST match the compiled-in path in
@@ -240,6 +242,31 @@ WantedBy=multi-user.target
 UNIT
 }
 
+# Bare headless Xorg that ONLY initialises the Tegra GPU/EGL so the camera
+# pipeline (nvarguscamerasrc + nvvidconv) works without the GNOME desktop. On
+# JP7.2 the NVIDIA stack does not self-initialise on a fresh multi-user boot —
+# without an X server holding /dev/dri/card0 the firmware hits NvRmGpuLibOpen
+# failed / Cuda status=100 / "EGL failed to initialize! Exiting..." and
+# core-dumps. Uses the stock Tegra /etc/X11/xorg.conf
+# (AllowEmptyInitialConfiguration=true), so it starts with no monitor attached.
+# vt7 keeps it off the login VTs. This is what lets the device run headless and
+# reclaim ~1.6 GB of desktop RAM while keeping the cameras alive.
+embedded_xorg_unit() {
+  cat <<'UNIT'
+[Unit]
+Description=Headless Xorg (Tegra GPU/EGL init for the camera pipeline; no desktop)
+After=nv.service nvpmodel.service systemd-udev-settle.service
+Before=nvargus-daemon.service sst-cam-firmware.service
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xorg :0 -ac -noreset -nolisten tcp vt7
+Restart=on-failure
+RestartSec=2
+[Install]
+WantedBy=multi-user.target
+UNIT
+}
+
 # polkit JS rule granting the unprivileged SERVICE_USER exactly the logind reboot
 # actions — so the firmware's `systemctl reboot` (BLE RebootCommand) is allowed
 # without running the service as root. Unquoted heredoc to interpolate
@@ -279,7 +306,10 @@ ensure_setup() {
   #            WiFi-Direct group owner talks to wpa_supplicant over that socket;
   #            without netdev the service gets EACCES ("Permission denied") and
   #            WiFi preview fails.
-  for _grp in video render netdev; do
+  #   i2c    — motorized-focus VCM (/dev/i2c-9, /dev/i2c-10 at chip 0x0c). The
+  #            firmware drives the ArduCAM lens focus over i2c-dev; without i2c
+  #            the non-root service gets EACCES opening the bus and focus is dead.
+  for _grp in video render netdev i2c; do
     if getent group "$_grp" >/dev/null 2>&1; then
       usermod -aG "$_grp" "$SERVICE_USER" 2>/dev/null || true
     fi
@@ -320,6 +350,33 @@ ensure_setup() {
     changed="yes"
   fi
   systemctl enable "$SERVICE" >/dev/null 2>&1 || true
+
+  # Headless boot WITH the GPU alive: install a bare Xorg (GPU/EGL init only, no
+  # desktop), order nvargus-daemon after it, and default to multi-user.target.
+  # This drops the GNOME desktop (~1.6 GB RAM back for the encode/AI budget) while
+  # keeping nvarguscamerasrc/nvvidconv working. A bare `set-default
+  # multi-user.target` WITHOUT this Xorg breaks the camera pipeline (NvRmGpu /
+  # Cuda status=100 / EGL init failure → firmware core-dumps) — validated
+  # on-metal. Skipped when Xorg is absent (non-Jetson / minimal image). Revert:
+  #   sudo systemctl set-default graphical.target && sudo systemctl disable xorg-headless.service && sudo reboot
+  if command -v systemctl >/dev/null 2>&1 && [ -x /usr/bin/Xorg ]; then
+    if [ ! -f "$XORG_UNIT_PATH" ] || ! embedded_xorg_unit | cmp -s - "$XORG_UNIT_PATH"; then
+      log "Setup: installing headless Xorg unit -> ${XORG_UNIT_PATH} (GPU/EGL init, no desktop) ..."
+      embedded_xorg_unit > "$XORG_UNIT_PATH"
+      mkdir -p "$NVARGUS_DROPIN_DIR"
+      printf '[Unit]\nAfter=xorg-headless.service\nWants=xorg-headless.service\n' \
+        > "${NVARGUS_DROPIN_DIR}/10-after-xorg.conf"
+      systemctl daemon-reload
+      changed="yes"
+    fi
+    systemctl enable xorg-headless.service >/dev/null 2>&1 || true
+    _cur_target="$(systemctl get-default 2>/dev/null || echo "")"
+    if [ "$_cur_target" != "multi-user.target" ]; then
+      log "Setup: setting default boot target -> multi-user.target (headless; GPU via xorg-headless) ..."
+      systemctl set-default multi-user.target >/dev/null 2>&1 || true
+      changed="yes"
+    fi
+  fi
 
   # Reboot privilege: the firmware runs as the unprivileged SERVICE_USER and
   # serves the BLE RebootCommand by exec'ing `systemctl reboot`, which logind

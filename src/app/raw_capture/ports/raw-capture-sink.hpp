@@ -1,11 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 #include "domain/capture/models/frame.hpp"
 
-namespace sst::storage {
+namespace sst::raw_capture {
 
 // Records raw frames from BOTH cameras to per-camera files, independently of the
 // final (cam-0) recording. Driven by RawCaptureControlCommand: Start opens the
@@ -21,10 +22,15 @@ class IRawCaptureSink {
    public:
     virtual ~IRawCaptureSink() = default;
 
-    // Open per-camera files for a new raw session stamped with the app-minted
-    // capture_group_id. Returns false if already capturing or a file can't be
-    // opened. Independent of the final recording — both can run concurrently.
-    virtual auto Start(const std::string& capture_group_id) -> bool = 0;
+    // Open per-camera files for a new proxy session stamped with the app-minted
+    // capture_group_id, written INTO `output_dir` — the per-match directory
+    // (SessionConfig.video_output_path), so the proxy pair sits beside the final
+    // <match>.mp4 + <match>.timeline.json rather than at the video root. An empty
+    // output_dir falls back to the sink's construction-time root. Returns false
+    // if already capturing or a file can't be opened. Independent of the final
+    // recording — both run concurrently.
+    virtual auto Start(const std::string& capture_group_id,
+                       const std::filesystem::path& output_dir) -> bool = 0;
 
     // Enqueue a materialized frame from `camera_index`. Non-blocking: no-ops when
     // not capturing or the index is out of range; drops the oldest queued frame
@@ -39,4 +45,4 @@ class IRawCaptureSink {
     [[nodiscard]] virtual auto IsCapturing() const -> bool = 0;
 };
 
-}  // namespace sst::storage
+}  // namespace sst::raw_capture

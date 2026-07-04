@@ -42,6 +42,11 @@ class DownloadServer {
     // token is unknown or expired.
     auto ValidateToken(const std::string& token) -> std::optional<std::filesystem::path>;
 
+    // True if any currently-live (unexpired) download token points at `file`.
+    // Consulted by proxy retention (U7) so a sweep never deletes a proxy file a
+    // client is mid-download on.
+    [[nodiscard]] auto IsTokened(const std::filesystem::path& file) const -> bool;
+
     // Resolve a recording id to its `<id>.jpg` thumbnail under the thumbnail
     // root. nullopt if no such file exists. Unlike video downloads, thumbnails
     // are served untokened (small, non-sensitive preview frames over the P2P
