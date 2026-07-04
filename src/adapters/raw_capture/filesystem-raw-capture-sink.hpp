@@ -13,7 +13,7 @@
 
 // Forward-declared to keep the GStreamer headers out of this (widely-included)
 // header; the .cpp includes <gst/gst.h>.
-// NOLINTNEXTLINE(bugprone-reserved-identifier) — _GstElement is GStreamer's own struct tag
+// NOLINTNEXTLINE(bugprone-reserved-identifier) floor-ok: _GstElement is GStreamer's own struct tag
 using GstElement = struct _GstElement;
 
 namespace sst::adapters::raw_capture {

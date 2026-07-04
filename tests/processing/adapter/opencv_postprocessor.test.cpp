@@ -166,11 +166,9 @@ TEST(OpenCvPostprocessorTest, ColorCorrectionAppliesPerChannelGain) {
     ASSERT_TRUE(out_off.has_value());
     ASSERT_TRUE(out_on.has_value());
 
-    // floor-ok: ASSERT_TRUE(out_off.has_value()) guards this.
-    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) floor-ok: ASSERT_TRUE(out_off) guards
     const auto* poff = out_off->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
-    // floor-ok: ASSERT_TRUE(out_on.has_value()) guards this.
-    // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) floor-ok: ASSERT_TRUE(out_on) guards
     const auto* pon = out_on->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
 
     EXPECT_NEAR(pon[0], static_cast<double>(poff[0]) / 2, 4);  // B halved
