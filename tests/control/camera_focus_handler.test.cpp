@@ -29,7 +29,9 @@ class FakeFocuser final : public sst::focus::IFocuser {
     bool available_;
 };
 
-auto ManualFocus(std::uint32_t camera, std::uint32_t position) -> sst_cam::Command {
+auto ManualFocus(
+    std::uint32_t camera,  // NOLINT(bugprone-easily-swappable-parameters) floor-ok: test helper
+    std::uint32_t position) -> sst_cam::Command {
     sst_cam::Command cmd;
     auto* payload = cmd.mutable_camera_focus();
     payload->set_mode(sst_cam::CameraFocusMode::FOCUS_MODE_MANUAL);
@@ -65,6 +67,7 @@ TEST(CameraFocusHandlerTest, NoCameraIndexAppliesToBoth) {
     sst_cam::Command cmd;
     auto* payload = cmd.mutable_camera_focus();
     payload->set_mode(sst_cam::CameraFocusMode::FOCUS_MODE_MANUAL);
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident focus position
     payload->set_focus_position(300);
     handler.Handle(cmd);  // no camera_index → both
 

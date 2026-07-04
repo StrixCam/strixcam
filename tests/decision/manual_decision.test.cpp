@@ -14,27 +14,32 @@ using sst::decision::ManualCameraState;
 using sst::decision::ManualDecision;
 using sst::processing::FrameBundle;
 
-auto Bundle(std::uint32_t w, std::uint32_t h) -> FrameBundle {
+auto Bundle(std::uint32_t width, std::uint32_t height) -> FrameBundle {
     FrameBundle bundle;
-    bundle.source_frame.geometry = {.width = w, .height = h};
+    bundle.source_frame.geometry = {.width = width, .height = height};
     return bundle;
 }
 
 TEST(ManualDecisionTest, PicksTheSelectedCameraFullFrame) {
     ManualCameraState state;
     ManualDecision decision(state);
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident 1080p/720p dims
     std::vector<std::optional<FrameBundle>> cameras{Bundle(1920, 1080), Bundle(1280, 720)};
 
     state.Set(1);
     auto choice = decision.Decide(cameras);
     ASSERT_TRUE(choice.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
     EXPECT_EQ(choice->camera_index, 1U);
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
     EXPECT_EQ(choice->crop.width, 1280U);  // cam1's geometry, full frame
 
     state.Set(0);
     choice = decision.Decide(cameras);
     ASSERT_TRUE(choice.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
     EXPECT_EQ(choice->camera_index, 0U);
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
     EXPECT_EQ(choice->crop.width, 1920U);
 }
 
@@ -43,6 +48,7 @@ TEST(ManualDecisionTest, HoldsWhenSelectedCameraHasNoFrameInsteadOfCrossSwitchin
     ManualDecision decision(state);
     // Selected camera (1) is absent this tick (a phase miss on the non-cadence,
     // TryPop'd camera); camera 0 is present.
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident 1080p dims
     std::vector<std::optional<FrameBundle>> cameras{Bundle(1920, 1080), std::nullopt};
 
     state.Set(1);
@@ -55,12 +61,16 @@ TEST(ManualDecisionTest, HoldsWhenSelectedCameraHasNoFrameInsteadOfCrossSwitchin
 TEST(ManualDecisionTest, FallsBackToCameraZeroWhenSelectionOutOfRange) {
     ManualCameraState state;
     ManualDecision decision(state);
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident 1080p/720p dims
     std::vector<std::optional<FrameBundle>> cameras{Bundle(1920, 1080), Bundle(1280, 720)};
 
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident out-of-range selection
     state.Set(5);  // misconfigured selection beyond the camera count
     const auto choice = decision.Decide(cameras);
     ASSERT_TRUE(choice.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
     EXPECT_EQ(choice->camera_index, 0U);  // one-time guard: show *something*
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
     EXPECT_EQ(choice->crop.width, 1920U);
 }
 

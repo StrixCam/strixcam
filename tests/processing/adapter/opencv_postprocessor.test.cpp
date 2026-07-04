@@ -158,20 +158,24 @@ TEST(OpenCvPostprocessorTest, ColorCorrectionAppliesPerChannelGain) {
 
     PostprocessConfig off{.output_width = 32, .output_height = 32};
     off.color_correction.enabled = false;
-    PostprocessConfig on{.output_width = 32, .output_height = 32};
-    on.color_correction = {.enabled = true, .r_gain = 0.5F, .g_gain = 1.0F, .b_gain = 0.5F};
+    PostprocessConfig enabled{.output_width = 32, .output_height = 32};
+    enabled.color_correction = {.enabled = true, .r_gain = 0.5F, .g_gain = 1.0F, .b_gain = 0.5F};
 
     auto out_off = OpenCvPostprocessor{off}.Process(src, CropRect{0, 0, 64, 64});
-    auto out_on = OpenCvPostprocessor{on}.Process(src, CropRect{0, 0, 64, 64});
+    auto out_on = OpenCvPostprocessor{enabled}.Process(src, CropRect{0, 0, 64, 64});
     ASSERT_TRUE(out_off.has_value());
     ASSERT_TRUE(out_on.has_value());
 
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok:
+    // ASSERT_TRUE(out_off.has_value())
     const auto* poff = out_off->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok:
+    // ASSERT_TRUE(out_on.has_value())
     const auto* pon = out_on->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
 
-    EXPECT_NEAR(pon[0], poff[0] / 2, 4);  // B halved
-    EXPECT_NEAR(pon[2], poff[2] / 2, 4);  // R halved
-    EXPECT_NEAR(pon[1], poff[1], 3);      // G untouched (gain 1.0)
+    EXPECT_NEAR(pon[0], static_cast<double>(poff[0]) / 2, 4);  // B halved
+    EXPECT_NEAR(pon[2], static_cast<double>(poff[2]) / 2, 4);  // R halved
+    EXPECT_NEAR(pon[1], poff[1], 3);                           // G untouched (gain 1.0)
 }
 
 // The live calibration state (diagnostic sliders) overrides config gains and a
@@ -185,16 +189,18 @@ TEST(OpenCvPostprocessorTest, LiveCalibrationStateOverridesConfigAndUpdates) {
 
     auto out = post.Process(src, CropRect{0, 0, 64, 64});
     ASSERT_TRUE(out.has_value());
-    const auto* p = out->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
-    EXPECT_LT(p[0], 80);   // B halved from ~128
-    EXPECT_LT(p[2], 80);   // R halved
-    EXPECT_GT(p[1], 110);  // G ~unchanged
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE(out.has_value())
+    const auto* pix = out->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
+    EXPECT_LT(pix[0], 80);   // B halved from ~128
+    EXPECT_LT(pix[2], 80);   // R halved
+    EXPECT_GT(pix[1], 110);  // G ~unchanged
 
     calib.Set({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = true});  // sliders back to identity
     auto out2 = post.Process(src, CropRect{0, 0, 64, 64});
     ASSERT_TRUE(out2.has_value());
-    const auto* p2 = out2->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
-    EXPECT_GT(p2[0], p[0]);  // B restored on the next frame
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE(out2.has_value())
+    const auto* pix2 = out2->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
+    EXPECT_GT(pix2[0], pix[0]);  // B restored on the next frame
 }
 
 // Saturation = 0 collapses a colored frame to greyscale (B≈G≈R); the WB gains
@@ -212,9 +218,10 @@ TEST(OpenCvPostprocessorTest, SaturationZeroProducesGreyscale) {
 
     auto out = post.Process(src, CropRect{0, 0, 64, 64});
     ASSERT_TRUE(out.has_value());
-    const auto* p = out->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
-    EXPECT_NEAR(p[0], p[1], 6);  // B≈G
-    EXPECT_NEAR(p[1], p[2], 6);  // G≈R → grey
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE(out.has_value())
+    const auto* pix = out->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
+    EXPECT_NEAR(pix[0], pix[1], 6);  // B≈G
+    EXPECT_NEAR(pix[1], pix[2], 6);  // G≈R → grey
 }
 // NOLINTEND(readability-magic-numbers)
 

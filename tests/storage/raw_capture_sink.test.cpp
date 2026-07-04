@@ -89,7 +89,9 @@ TEST(RawCaptureSinkTest, PushWhenNotCapturingIsNoOp) {
     TempDir dir("idle");
     FilesystemRawCaptureSink sink(dir.path(), 2);
     constexpr std::uint32_t kOutOfRangeCamera = 5;
-    sink.PushCamera(0, MakeFrame(0x33));                  // no Start(): harmless no-op
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident NV12 fill byte
+    sink.PushCamera(0, MakeFrame(0x33));  // no Start(): harmless no-op
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident NV12 fill byte
     sink.PushCamera(kOutOfRangeCamera, MakeFrame(0x33));  // out-of-range index
     EXPECT_FALSE(sink.Stop());                            // nothing to stop
 }
@@ -118,7 +120,9 @@ TEST(RawCaptureSinkE2E, StartPushStopWritesBothProxyFiles) {
     EXPECT_TRUE(sink.IsCapturing());
 
     for (int i = 0; i < kFramesPerCamera; ++i) {
+        // NOLINTNEXTLINE(readability-magic-numbers) — self-evident NV12 fill byte
         sink.PushCamera(0, MakeFrame(0x11));
+        // NOLINTNEXTLINE(readability-magic-numbers) — self-evident NV12 fill byte
         sink.PushCamera(1, MakeFrame(0x22));
     }
 

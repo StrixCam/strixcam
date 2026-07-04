@@ -256,8 +256,9 @@ auto RunFirmware() -> int {
         video_root, cfg.storage.proxy_max_total_bytes.value_or(0));
     if (cfg.storage.proxy_max_total_bytes) {
         std::thread([&download_server] {
+            constexpr std::chrono::minutes kProxySweepInterval{5};
             for (;;) {
-                std::this_thread::sleep_for(std::chrono::minutes(5));
+                std::this_thread::sleep_for(kProxySweepInterval);
                 proxy_retention.Sweep([&download_server](const std::filesystem::path& file) {
                     return download_server.IsTokened(file);
                 });
@@ -383,9 +384,9 @@ auto RunFirmware() -> int {
     // on-device without a rebuild (a fixed grey-world gain over/under-shoots per
     // scene). SST_WB_DISABLE turns it off; SST_WB_{R,G,B}GAIN override each gain.
     sst::processing::PostprocessConfig postproc_cfg;
-    auto& wb = postproc_cfg.color_correction;
+    auto& white_balance = postproc_cfg.color_correction;
     if (std::getenv("SST_WB_DISABLE") != nullptr) {
-        wb.enabled = false;
+        white_balance.enabled = false;
     }
     const auto env_gain = [](const char* name, float fallback) {
         const char* value = std::getenv(name);
@@ -398,20 +399,21 @@ auto RunFirmware() -> int {
             return fallback;
         }
     };
-    wb.r_gain = env_gain("SST_WB_RGAIN", wb.r_gain);
-    wb.g_gain = env_gain("SST_WB_GGAIN", wb.g_gain);
-    wb.b_gain = env_gain("SST_WB_BGAIN", wb.b_gain);
-    spdlog::info("Postprocess WB correction: enabled={} R={:.2f} G={:.2f} B={:.2f}", wb.enabled,
-                 wb.r_gain, wb.g_gain, wb.b_gain);
+    white_balance.r_gain = env_gain("SST_WB_RGAIN", white_balance.r_gain);
+    white_balance.g_gain = env_gain("SST_WB_GGAIN", white_balance.g_gain);
+    white_balance.b_gain = env_gain("SST_WB_BGAIN", white_balance.b_gain);
+    spdlog::info("Postprocess WB correction: enabled={} R={:.2f} G={:.2f} B={:.2f}",
+                 white_balance.enabled, white_balance.r_gain, white_balance.g_gain,
+                 white_balance.b_gain);
     // Live WB calibration state (diagnostic Calibration screen). Seeded from the
     // resolved default/env gains; the postprocessor samples it each frame and the
     // SetCameraCalibration handler writes it, so slider drags retune the preview
     // live. Must outlive the postprocessor (moved into the pipeline below).
     sst::processing::ColorCalibrationState calibration_state(
-        {.r = wb.r_gain,
-         .g = wb.g_gain,
-         .b = wb.b_gain,
-         .enabled = wb.enabled,
+        {.r = white_balance.r_gain,
+         .g = white_balance.g_gain,
+         .b = white_balance.b_gain,
+         .enabled = white_balance.enabled,
          .saturation = env_gain("SST_SATURATION", sst::processing::kDefaultSaturation),
          .contrast = env_gain("SST_CONTRAST", sst::processing::kDefaultContrast),
          .brightness = env_gain("SST_BRIGHTNESS", sst::processing::kDefaultBrightness)});

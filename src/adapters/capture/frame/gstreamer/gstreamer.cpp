@@ -67,8 +67,9 @@ auto GStreamerAdapter::CreatePipeline() -> std::string {
     // blank preview). videorate drops to the target rate right after capture so the
     // expensive stages only see 30fps. Env-tunable so it can be raised on-device
     // once headroom is measured; never exceeds the sensor rate.
+    constexpr int kDefaultPipelineFps = 30;
     const char* fps_env = std::getenv("SST_PIPELINE_FPS");
-    int pipeline_fps = (fps_env != nullptr) ? std::atoi(fps_env) : 30;
+    int pipeline_fps = (fps_env != nullptr) ? std::atoi(fps_env) : kDefaultPipelineFps;
     if (pipeline_fps <= 0 || pipeline_fps > camera_config_.fps) {
         pipeline_fps = camera_config_.fps;
     }

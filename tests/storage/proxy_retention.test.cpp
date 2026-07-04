@@ -37,6 +37,7 @@ class TempDir {
 
 // Write both camera files of a proxy group, each `bytes` big, with a mtime
 // `age_seconds` in the past (so the write-grace doesn't protect old groups).
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters) floor-ok: test helper
 void MakeGroup(const fs::path& dir, const std::string& group, std::size_t bytes, int age_seconds) {
     for (std::uint32_t cam = 0; cam < 2; ++cam) {
         const auto path = dir / naming::FileName({.capture_group_id = group, .camera_index = cam});
@@ -54,11 +55,14 @@ constexpr std::size_t kPerFile = 100;  // 200 bytes per 2-camera group
 
 TEST(ProxyRetentionTest, EvictsOldestOverCapKeepsNewestAndRecent) {
     TempDir dir;
-    MakeGroup(dir.path(), "old", kPerFile, /*age=*/300);
-    MakeGroup(dir.path(), "mid", kPerFile, /*age=*/120);
-    MakeGroup(dir.path(), "recent", kPerFile, /*age=*/0);  // within write-grace
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident age in seconds
+    MakeGroup(dir.path(), "old", kPerFile, /*age_seconds=*/300);
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident age in seconds
+    MakeGroup(dir.path(), "mid", kPerFile, /*age_seconds=*/120);
+    MakeGroup(dir.path(), "recent", kPerFile, /*age_seconds=*/0);  // within write-grace
 
     // Total 600; cap 450 => must free ~150 => evict the single oldest group.
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident byte cap
     ProxyRetention retention(dir.path(), /*max_total_bytes=*/450);
     const auto freed = retention.Sweep([](const fs::path&) { return false; });
 
@@ -70,9 +74,10 @@ TEST(ProxyRetentionTest, EvictsOldestOverCapKeepsNewestAndRecent) {
 
 TEST(ProxyRetentionTest, NeverEvictsGraceProtectedActiveGroup) {
     TempDir dir;
-    MakeGroup(dir.path(), "recent", kPerFile, /*age=*/0);  // actively writing
+    MakeGroup(dir.path(), "recent", kPerFile, /*age_seconds=*/0);  // actively writing
 
     // Way over a tiny cap, but the only group is within the write-grace.
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident byte cap
     ProxyRetention retention(dir.path(), /*max_total_bytes=*/10);
     EXPECT_EQ(retention.Sweep([](const fs::path&) { return false; }), 0U);
     EXPECT_TRUE(GroupExists(dir.path(), "recent"));
@@ -80,15 +85,18 @@ TEST(ProxyRetentionTest, NeverEvictsGraceProtectedActiveGroup) {
 
 TEST(ProxyRetentionTest, SkipsGroupsWithALiveDownloadToken) {
     TempDir dir;
-    MakeGroup(dir.path(), "tokened", kPerFile, /*age=*/300);
-    MakeGroup(dir.path(), "free", kPerFile, /*age=*/120);
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident age in seconds
+    MakeGroup(dir.path(), "tokened", kPerFile, /*age_seconds=*/300);
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident age in seconds
+    MakeGroup(dir.path(), "free", kPerFile, /*age_seconds=*/120);
 
     // Cap forces an eviction; protect the OLDER (tokened) group — the sweep must
     // skip it and evict the other instead.
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident byte cap
     ProxyRetention retention(dir.path(), /*max_total_bytes=*/250);
     const auto protectedFile =
         dir.path() / naming::FileName({.capture_group_id = "tokened", .camera_index = 0});
-    retention.Sweep([&](const fs::path& f) { return f == protectedFile; });
+    retention.Sweep([&](const fs::path& file) { return file == protectedFile; });
 
     EXPECT_TRUE(GroupExists(dir.path(), "tokened"));  // protected by "token"
     EXPECT_FALSE(GroupExists(dir.path(), "free"));    // evicted instead
@@ -96,7 +104,8 @@ TEST(ProxyRetentionTest, SkipsGroupsWithALiveDownloadToken) {
 
 TEST(ProxyRetentionTest, DisabledWhenCapIsZero) {
     TempDir dir;
-    MakeGroup(dir.path(), "old", kPerFile, /*age=*/300);
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident age in seconds
+    MakeGroup(dir.path(), "old", kPerFile, /*age_seconds=*/300);
     ProxyRetention retention(dir.path(), /*max_total_bytes=*/0);
     EXPECT_EQ(retention.Sweep([](const fs::path&) { return false; }), 0U);
     EXPECT_TRUE(GroupExists(dir.path(), "old"));

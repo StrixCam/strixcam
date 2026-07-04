@@ -52,11 +52,11 @@ TEST(ProxyLaunchTest, VicPathUsesNvvidconvDirectlyNoBgrxRepack) {
 
 // Software fallback (SST_DISABLE_VIC): videoconvert + videoscale, no VIC.
 TEST(ProxyLaunchTest, SoftwarePathUsesVideoconvertVideoscale) {
-    const auto sw = BuildProxyLaunch("/v/p.mp4", /*use_vic=*/false);
-    EXPECT_TRUE(Contains(sw, "videoconvert ! videoscale"));
-    EXPECT_FALSE(Contains(sw, "nvvidconv"));
-    EXPECT_TRUE(Contains(sw, "width=854"));
-    EXPECT_TRUE(Contains(sw, "format=I420"));
+    const auto software = BuildProxyLaunch("/v/p.mp4", /*use_vic=*/false);
+    EXPECT_TRUE(Contains(software, "videoconvert ! videoscale"));
+    EXPECT_FALSE(Contains(software, "nvvidconv"));
+    EXPECT_TRUE(Contains(software, "width=854"));
+    EXPECT_TRUE(Contains(software, "format=I420"));
 }
 
 }  // namespace

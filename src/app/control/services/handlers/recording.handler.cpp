@@ -23,6 +23,9 @@ auto RecordingHandler::HandledCases() const -> std::vector<sst_cam::Command::Pay
     return {sst_cam::Command::kRecordingControl};
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity) — floor-ok: flat
+// linear command dispatch (start/stop/status guards); splitting it would scatter
+// the record lifecycle across helpers without reducing real branching.
 auto RecordingHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse {
     sst_cam::CommandResponse resp;
     const auto action = cmd.recording_control().action();

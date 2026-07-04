@@ -19,6 +19,7 @@ auto AutoWbCommand() -> sst_cam::Command {
 
 TEST(AutoWhiteBalanceHandlerTest, ComputesGreyWorldGainsFromMagentaFrame) {
     FrameColorStats stats;
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident test channel means (B, G, R, spread)
     stats.Set(100.0F, 40.0F, 100.0F, 50.0F);  // B, G, R, spread — magenta (R=B=2.5×G)
     ColorCalibrationState calib({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = false});
     AutoWhiteBalanceHandler handler(stats, calib);
@@ -46,6 +47,8 @@ TEST(AutoWhiteBalanceHandlerTest, ComputesGreyWorldGainsFromMagentaFrame) {
 
 TEST(AutoWhiteBalanceHandlerTest, ClampsExtremeGainToSliderRange) {
     FrameColorStats stats;
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident test channel means (R hugely
+    // dominant)
     stats.Set(100.0F, 40.0F, 400.0F, 50.0F);  // R hugely dominant → gR = 0.1 → clamp 0.3
     ColorCalibrationState calib({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = false});
     AutoWhiteBalanceHandler handler(stats, calib);
@@ -56,6 +59,7 @@ TEST(AutoWhiteBalanceHandlerTest, ClampsExtremeGainToSliderRange) {
 
 TEST(AutoWhiteBalanceHandlerTest, DarkOrNoSampleFrameKeepsCurrentGains) {
     FrameColorStats stats;  // never Set → invalid
+    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident preset current gains (r, g, b)
     ColorCalibrationState calib({.r = 0.7F, .g = 1.0F, .b = 0.8F, .enabled = true});
     AutoWhiteBalanceHandler handler(stats, calib);
 

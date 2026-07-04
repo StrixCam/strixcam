@@ -65,9 +65,9 @@ TEST(RtmpLaunchTest, CarriesEncodeAndMuxChain) {
 // Default is the proven software path; U2 use_vic=true offloads scale + convert
 // to the VIC (nvvidconv), keeping videorate software and the mux/audio chain.
 TEST(RtmpLaunchTest, VicOffloadUsesNvvidconv) {
-    const auto sw = BuildRtmpLaunch(MakeConfig());
-    EXPECT_TRUE(Contains(sw, "videoconvert ! videoscale"));
-    EXPECT_FALSE(Contains(sw, "nvvidconv"));
+    const auto software = BuildRtmpLaunch(MakeConfig());
+    EXPECT_TRUE(Contains(software, "videoconvert ! videoscale"));
+    EXPECT_FALSE(Contains(software, "nvvidconv"));
 
     const auto vic = BuildRtmpLaunch(MakeConfig(), /*use_vic=*/true);
     EXPECT_TRUE(Contains(vic, "nvvidconv"));
