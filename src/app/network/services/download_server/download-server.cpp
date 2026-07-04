@@ -2,6 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <chrono>
 #include <system_error>
 #include <utility>
@@ -168,12 +169,9 @@ auto DownloadServer::ValidateToken(const std::string& token) -> std::optional<fs
 auto DownloadServer::IsTokened(const fs::path& file) const -> bool {
     const auto now = clock_();
     std::lock_guard lock(mtx_);
-    for (const auto& [_, entry] : tokens_) {
-        if (entry.expires_at_unix > now && entry.path == file) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(tokens_, [&](const auto& kv) {
+        return kv.second.expires_at_unix > now && kv.second.path == file;
+    });
 }
 
 }  // namespace sst::network

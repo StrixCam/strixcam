@@ -96,27 +96,31 @@ auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
     // format inherits neutral color. uint8 multiply saturates, so gains>1 clip
     // rather than wrap. Scalar is BGR order. Live gains from the calibration state
     // (diagnostic sliders) win over the static config when wired.
-    const auto wb = (calibration_ != nullptr)
-                        ? calibration_->Get()
-                        : sst::processing::ColorCalibrationState::Gains{
-                              config_.color_correction.r_gain, config_.color_correction.g_gain,
-                              config_.color_correction.b_gain, config_.color_correction.enabled};
-    if (wb.enabled) {
-        cv::multiply(resized, cv::Scalar(wb.b, wb.g, wb.r), resized);
+    const auto white_balance =
+        (calibration_ != nullptr)
+            ? calibration_->Get()
+            : sst::processing::ColorCalibrationState::Gains{
+                  config_.color_correction.r_gain, config_.color_correction.g_gain,
+                  config_.color_correction.b_gain, config_.color_correction.enabled};
+    if (white_balance.enabled) {
+        cv::multiply(resized, cv::Scalar(white_balance.b, white_balance.g, white_balance.r),
+                     resized);
         // Saturation: lerp between the frame and its greyscale (1.0 = unchanged,
         // 0 = greyscale, >1 = more vivid). Fixes the ArduCAM's washed-out look.
-        if (std::fabs(wb.saturation - 1.0F) > kTuningEpsilon) {
+        if (std::fabs(white_balance.saturation - 1.0F) > kTuningEpsilon) {
             cv::Mat grey;
             cv::cvtColor(resized, grey, cv::COLOR_BGR2GRAY);
             cv::cvtColor(grey, grey, cv::COLOR_GRAY2BGR);
-            cv::addWeighted(resized, wb.saturation, grey, 1.0 - wb.saturation, 0.0, resized);
+            cv::addWeighted(resized, white_balance.saturation, grey, 1.0 - white_balance.saturation,
+                            0.0, resized);
         }
         // Contrast (scaled around mid-grey) + brightness (additive). convertTo
         // saturates to uint8, so out-of-range values clip rather than wrap.
-        if (std::fabs(wb.contrast - 1.0F) > kTuningEpsilon ||
-            std::fabs(wb.brightness) > kTuningEpsilon) {
-            const double beta = (128.0 * (1.0 - wb.contrast)) + (wb.brightness * 255.0);
-            resized.convertTo(resized, -1, wb.contrast, beta);
+        if (std::fabs(white_balance.contrast - 1.0F) > kTuningEpsilon ||
+            std::fabs(white_balance.brightness) > kTuningEpsilon) {
+            const double beta =
+                (128.0 * (1.0 - white_balance.contrast)) + (white_balance.brightness * 255.0);
+            resized.convertTo(resized, -1, white_balance.contrast, beta);
         }
     }
 

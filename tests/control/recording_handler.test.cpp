@@ -105,7 +105,8 @@ class FakeProxy final : public sst::raw_capture::IRawCaptureSink {
         capturing_ = start_ok;
         return start_ok;
     }
-    auto PushCamera(std::uint32_t /*camera_index*/, const sst::capture::Frame&) -> void override {}
+    auto PushCamera(std::uint32_t /*camera_index*/,
+                    const sst::capture::Frame& /*frame*/) -> void override {}
     auto Stop() -> bool override {
         ++stops;
         const bool was = capturing_;

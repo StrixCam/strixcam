@@ -47,8 +47,8 @@ TEST(AutoWhiteBalanceHandlerTest, ComputesGreyWorldGainsFromMagentaFrame) {
 
 TEST(AutoWhiteBalanceHandlerTest, ClampsExtremeGainToSliderRange) {
     FrameColorStats stats;
-    // NOLINTNEXTLINE(readability-magic-numbers) — self-evident test channel means (R hugely
-    // dominant)
+    // Self-evident test channel means (R hugely dominant).
+    // NOLINTNEXTLINE(readability-magic-numbers)
     stats.Set(100.0F, 40.0F, 400.0F, 50.0F);  // R hugely dominant → gR = 0.1 → clamp 0.3
     ColorCalibrationState calib({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = false});
     AutoWhiteBalanceHandler handler(stats, calib);
