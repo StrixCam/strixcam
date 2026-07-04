@@ -20,14 +20,14 @@ PR/merge.
 
 ```bash
 # One command from the host: cross-build (in the devcontainer) → scp → install.
-just deploy-jetson user@jetson.local
-just deploy-jetson jetson.local --no-camera     # extra install.sh flags pass through
+just deploy-firmware user@jetson.local
+just deploy-firmware jetson.local --no-camera     # extra install.sh flags pass through
 ```
 
 Or by hand:
 
 ```bash
-just build-release                                   # binary → build/release/bin/sst_cam_firmware
+just build-release-firmware                          # binary → build/release/bin/sst_cam_firmware
 scp build/release/bin/sst_cam_firmware deploy/install.sh user@jetson:/tmp/
 ssh -t user@jetson "sudo bash /tmp/install.sh --binary /tmp/sst_cam_firmware"
 ```
