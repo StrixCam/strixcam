@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 
+#include "app/control/services/handlers/health-gate.hpp"
 #include "app/control/services/handlers/raw-capture.handler.hpp"
 #include "app/raw_capture/ports/raw-capture-sink.hpp"
 #include "bluetooth.pb.h"
@@ -133,6 +136,39 @@ TEST(RawCaptureHandlerTest, HandledCasesIsRawCapture) {
     const auto cases = handler.HandledCases();
     ASSERT_EQ(cases.size(), 1U);
     EXPECT_EQ(cases[0], sst_cam::Command::kRawCapture);
+}
+
+// U3 firmware-side gating: raw-capture START while any camera is not OK is
+// refused with DEVICE_INOPERABLE before the sink is touched (raw dual capture
+// needs BOTH cameras delivering).
+TEST(RawCaptureHandlerTest, StartWhileCameraRecoveringRejectedDeviceInoperable) {
+    FakeRawSink sink;
+    const sst::control::StartHealthGate gate{
+        []() -> std::optional<sst_cam::CameraHealth> { return sst_cam::CAMERA_HEALTH_OK; },
+        []() -> std::optional<sst_cam::CameraHealth> { return sst_cam::CAMERA_HEALTH_RECOVERING; }};
+    RawCaptureHandler handler(sink, gate);
+
+    auto resp = handler.Handle(RawCmd(sst_cam::RECORDING_START, "grp-9"));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::DEVICE_INOPERABLE);
+    EXPECT_FALSE(resp.error_message().empty());
+    EXPECT_EQ(sink.starts, 0);  // sink never touched
+}
+
+// U3: STOP is never gated — footage retrieval must survive a DOWN camera.
+TEST(RawCaptureHandlerTest, StopWhileCameraDownAccepted) {
+    FakeRawSink sink;
+    std::atomic<sst_cam::CameraHealth> health{sst_cam::CAMERA_HEALTH_OK};
+    const sst::control::StartHealthGate gate{
+        [&health]() -> std::optional<sst_cam::CameraHealth> { return health.load(); },
+        []() -> std::optional<sst_cam::CameraHealth> { return sst_cam::CAMERA_HEALTH_OK; }};
+    RawCaptureHandler handler(sink, gate);
+    ASSERT_EQ(handler.Handle(RawCmd(sst_cam::RECORDING_START, "grp-10")).status(),
+              sst_cam::ResponseStatus::OK);
+
+    health = sst_cam::CAMERA_HEALTH_DOWN;  // camera dies mid-capture
+    auto resp = handler.Handle(RawCmd(sst_cam::RECORDING_STOP));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(sink.stops, 1);
 }
 
 }  // namespace

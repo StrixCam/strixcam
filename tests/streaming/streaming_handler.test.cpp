@@ -2,10 +2,13 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "app/control/services/handlers/health-gate.hpp"
 #include "app/control/services/handlers/streaming.handler.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
 #include "app/streaming/ports/uplink-probe.hpp"
@@ -207,6 +210,40 @@ TEST(StreamingHandlerTest, UnsupportedStreamQualityKeepsDefault) {
     EXPECT_EQ(streaming.last_width, sst::streaming::kDefaultWidth);
     EXPECT_EQ(streaming.last_height, sst::streaming::kDefaultHeight);
     EXPECT_EQ(streaming.last_framerate, sst::streaming::kDefaultFramerate);
+}
+
+// U3 firmware-side gating: STREAMING_START while a camera is not OK is refused
+// with DEVICE_INOPERABLE before the streaming service is touched.
+TEST(StreamingHandlerTest, StartWhileCameraRecoveringRejectedDeviceInoperable) {
+    FakeStreaming streaming;
+    const sst::control::StartHealthGate gate{
+        []() -> std::optional<sst_cam::CameraHealth> { return sst_cam::CAMERA_HEALTH_RECOVERING; },
+        []() -> std::optional<sst_cam::CameraHealth> { return sst_cam::CAMERA_HEALTH_OK; }};
+    StreamingHandler handler(streaming, nullptr, gate);
+
+    auto resp = handler.Handle(StartCmd("rtmp://ingest/live/k"));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::DEVICE_INOPERABLE);
+    EXPECT_FALSE(resp.error_message().empty());
+    EXPECT_TRUE(streaming.last_url.empty());  // service never touched
+    EXPECT_TRUE(streaming.ListActivePlatformStreams().empty());
+}
+
+// U3: STOP is never gated — an active stream can always be ended even with a
+// camera DOWN.
+TEST(StreamingHandlerTest, StopWhileCameraDownAccepted) {
+    FakeStreaming streaming;
+    std::atomic<sst_cam::CameraHealth> health{sst_cam::CAMERA_HEALTH_OK};
+    const sst::control::StartHealthGate gate{
+        [&health]() -> std::optional<sst_cam::CameraHealth> { return health.load(); },
+        []() -> std::optional<sst_cam::CameraHealth> { return sst_cam::CAMERA_HEALTH_OK; }};
+    StreamingHandler handler(streaming, nullptr, gate);
+    ASSERT_EQ(handler.Handle(StartCmd("rtmp://ingest/live/k")).status(),
+              sst_cam::ResponseStatus::OK);
+
+    health = sst_cam::CAMERA_HEALTH_DOWN;  // camera dies mid-stream
+    auto resp = handler.Handle(StopCmd());
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_TRUE(streaming.ListActivePlatformStreams().empty());
 }
 
 }  // namespace

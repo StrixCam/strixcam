@@ -24,6 +24,10 @@ class DeviceHandler final : public ICommandHandler {
     using WifiStateProvider = std::function<sst::control::WifiState()>;
     // Reports the connected WiFi-Direct peer's RSSI (dBm); nullopt → "unknown".
     using SignalProvider = std::function<std::optional<int>()>;
+    // Frame-truth per-camera health (U3). Unset provider — or a nullopt
+    // reading — leaves the wire field ABSENT (has_ false): "unreported",
+    // never a fabricated OK. Same seam shape as the session snapshot's.
+    using HealthProvider = std::function<std::optional<sst_cam::CameraHealth>()>;
 
     // The live telemetry sources, grouped and named. Four of these are the same
     // FlagProvider type and are not adjacent, so passing them positionally invited
@@ -40,6 +44,10 @@ class DeviceHandler final : public ICommandHandler {
         FlagProvider internet_reachable;
         // Connected peer RSSI in dBm; nullopt when no peer / unavailable.
         SignalProvider wifi_signal_dbm;
+        // Per-camera frame-truth health (DeviceTelemetry 15/16) — consumed by
+        // the app's 1 Hz poll for the live health indicator.
+        HealthProvider camera0_health;
+        HealthProvider camera1_health;
     };
 
     DeviceHandler(sst::config::DeviceData device, ISystemStats& stats, Providers providers);

@@ -1,8 +1,12 @@
 #include "app/control/services/handlers/raw-capture.handler.hpp"
 
+#include <utility>
+
 namespace sst::control {
 
-RawCaptureHandler::RawCaptureHandler(sst::raw_capture::IRawCaptureSink& sink) : sink_(sink) {}
+RawCaptureHandler::RawCaptureHandler(sst::raw_capture::IRawCaptureSink& sink,
+                                     StartHealthGate health_gate)
+    : sink_(sink), health_gate_(std::move(health_gate)) {}
 
 auto RawCaptureHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kRawCapture};
@@ -22,6 +26,13 @@ auto RawCaptureHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandR
 
     switch (raw.action()) {
         case sst_cam::RECORDING_START: {
+            // Health gate first (U3): raw dual capture needs BOTH cameras
+            // delivering. STOP below is never gated.
+            if (const auto reason = health_gate_.RejectReason()) {
+                resp.set_status(sst_cam::ResponseStatus::DEVICE_INOPERABLE);
+                resp.set_error_message("raw capture start rejected: " + *reason);
+                return resp;
+            }
             // capture_group_id is app-minted and mandatory on START — firmware
             // stamps both files with it and never mints its own.
             if (!raw.has_capture_group_id() || raw.capture_group_id().empty()) {

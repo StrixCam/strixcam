@@ -114,6 +114,19 @@ auto DeviceHandler::HandleTelemetry() -> sst_cam::CommandResponse {
             telemetry->set_wifi_signal_dbm(*dbm);
         }
     }
+
+    // Frame-truth per-camera health (U3). Unset provider / nullopt reading
+    // leaves the field absent — "unreported", never a fabricated OK.
+    if (providers_.camera0_health) {
+        if (const auto health = providers_.camera0_health()) {
+            telemetry->set_camera0_health(*health);
+        }
+    }
+    if (providers_.camera1_health) {
+        if (const auto health = providers_.camera1_health()) {
+            telemetry->set_camera1_health(*health);
+        }
+    }
     return resp;
 }
 

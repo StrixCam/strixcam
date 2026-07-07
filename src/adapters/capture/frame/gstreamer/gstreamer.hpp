@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <mutex>
 #include <optional>
@@ -27,17 +29,38 @@ class GStreamerAdapter final : public ICaptureFrame {
 
     ~GStreamerAdapter() override = default;
 
+    // Reports PRIMED truth: after Start(), IsRunning() is true only when the
+    // pipeline reached PLAYING and delivered its first sample within the prime
+    // timeout. A prime timeout (common against a cold nvargus-daemon) tears the
+    // pipeline back down and leaves the adapter NOT running, so the producer
+    // watchdog owns recovery instead of a stalled camera reading healthy.
     auto Start() -> void override;
     auto Stop() -> void override;
     auto IsRunning() const -> bool override;
     auto Capture() -> std::optional<Frame> override;
+    // Steady-clock instant of the last sample the sensor delivered (prime or
+    // Capture()); nullopt until the first sample after Start(). Reset by Stop()
+    // so a restarting camera reads as stalled until frames actually resume.
+    [[nodiscard]] auto LastSampleAt() const
+        -> std::optional<std::chrono::steady_clock::time_point> override;
 
    private:
+    // Sentinel for "no sample since Start()" in last_sample_ns_.
+    static constexpr std::int64_t kNoSample = -1;
+
+    auto RecordSampleNow() -> void;
+
     CameraConfig camera_config_;
     std::string device_model_;
     std::uint16_t camera_index_{0};
     std::uint64_t frame_counter_{0};
-    bool is_running_{false};
+    // Read by IsRunning()/Capture() on the producer thread while Stop() (bus
+    // error path) or the health readers touch it from others — atomic, not a
+    // plain bool racing across threads.
+    std::atomic<bool> is_running_{false};
+    // Last-sample steady_clock nanoseconds (frame truth for health). Atomic so
+    // the health derivation reads it lock-free against the producer's writes.
+    std::atomic<std::int64_t> last_sample_ns_{kNoSample};
     std::string pipeline_str_;
     GstElement* gst_pipeline_{nullptr};
     GstBus* gst_bus_{nullptr};

@@ -213,4 +213,38 @@ TEST(DeviceHandlerTest, TelemetryReportsLiveWifiState) {
     EXPECT_EQ(off.telemetry().wifi_state(), sst_cam::WifiState::WIFI_DISCONNECTED);
 }
 
+// U3: telemetry carries the per-camera frame-truth health (DeviceTelemetry
+// 15/16) when providers are wired — the app's 1 Hz poll health indicator.
+TEST(DeviceHandlerTest, TelemetryReportsPerCameraHealth) {
+    FakeStats stats;
+    DeviceHandler handler(
+        MakeDevice(), stats,
+        {.camera0_health = [] { return std::optional{sst_cam::CAMERA_HEALTH_OK}; },
+         .camera1_health = [] { return std::optional{sst_cam::CAMERA_HEALTH_RECOVERING}; }});
+
+    auto resp = handler.Handle(TelemetryCommand());
+    ASSERT_TRUE(resp.telemetry().has_camera0_health());
+    ASSERT_TRUE(resp.telemetry().has_camera1_health());
+    EXPECT_EQ(resp.telemetry().camera0_health(), sst_cam::CAMERA_HEALTH_OK);
+    EXPECT_EQ(resp.telemetry().camera1_health(), sst_cam::CAMERA_HEALTH_RECOVERING);
+}
+
+// U3: unwired providers (or nullopt readings) leave the health fields ABSENT —
+// "unreported", never a fabricated OK.
+TEST(DeviceHandlerTest, TelemetryHealthAbsentWhenUnreported) {
+    FakeStats stats;
+    DeviceHandler unwired(MakeDevice(), stats, {});
+    auto resp = unwired.Handle(TelemetryCommand());
+    EXPECT_FALSE(resp.telemetry().has_camera0_health());
+    EXPECT_FALSE(resp.telemetry().has_camera1_health());
+
+    DeviceHandler nullopt_reading(
+        MakeDevice(), stats,
+        {.camera0_health = [] { return std::optional<sst_cam::CameraHealth>{}; },
+         .camera1_health = [] { return std::optional<sst_cam::CameraHealth>{}; }});
+    auto resp2 = nullopt_reading.Handle(TelemetryCommand());
+    EXPECT_FALSE(resp2.telemetry().has_camera0_health());
+    EXPECT_FALSE(resp2.telemetry().has_camera1_health());
+}
+
 }  // namespace

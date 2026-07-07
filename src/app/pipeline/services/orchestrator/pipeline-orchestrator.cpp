@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include <cstddef>
+#include <cstdlib>
 #include <exception>
 #include <utility>
 
@@ -11,6 +12,22 @@
 #include "domain/overlay/services/frame-compositor.hpp"
 
 namespace sst::pipeline {
+
+namespace {
+
+// Positive-integer env override; the config value holds when the variable is
+// unset or unparsable. Lets the health thresholds be recalibrated on metal
+// (systemd drop-in) without a rebuild, same discipline as SST_PIPELINE_FPS.
+auto EnvPositiveInt(const char* name, int fallback) -> int {
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return fallback;
+    }
+    const int parsed = std::atoi(value);
+    return parsed > 0 ? parsed : fallback;
+}
+
+}  // namespace
 
 PipelineOrchestrator::PipelineOrchestrator(
     std::vector<CameraChain> cameras,
@@ -34,10 +51,18 @@ PipelineOrchestrator::PipelineOrchestrator(
       overlay_source_(overlay_source),
       compositor_(compositor),
       preview_layout_(preview_layout) {
+    // Env-tunable health thresholds (metal calibration; env wins over config).
+    config_.health_stall_threshold = std::chrono::milliseconds{EnvPositiveInt(
+        "SST_HEALTH_STALL_MS", static_cast<int>(config_.health_stall_threshold.count()))};
+    config_.health_down_after_failed_restarts =
+        EnvPositiveInt("SST_HEALTH_DOWN_RESTARTS", config_.health_down_after_failed_restarts);
+
     slots_.reserve(cameras_.size());
+    failed_restarts_.reserve(cameras_.size());
     for (std::size_t i = 0; i < cameras_.size(); ++i) {
         slots_.push_back(
             std::make_unique<sst::buffer::LatestOnlySlot<sst::processing::FrameBundle>>());
+        failed_restarts_.push_back(std::make_unique<std::atomic<int>>(0));
     }
 }
 
@@ -60,13 +85,14 @@ auto PipelineOrchestrator::Start() -> bool {
     for (std::size_t i = 0; i < cameras_.size(); ++i) {
         cameras_[i].capture->Start();
         if (!cameras_[i].capture->IsRunning()) {
-            spdlog::error("PipelineOrchestrator::Start: camera {} failed to start", i);
-            // Roll back any captures already started so we never leave half the
-            // cameras running on a failed Start().
-            for (std::size_t j = 0; j < i; ++j) {
-                cameras_[j].capture->Stop();
-            }
-            return false;
+            // Tolerated, NOT rolled back: Start() now reports primed truth, so
+            // a cold nvargus-daemon prime timeout lands here at boot. The
+            // producer watchdog below owns recovery; this camera begins life
+            // RECOVERING (no frames yet) and heals when frames flow.
+            spdlog::warn(
+                "PipelineOrchestrator::Start: camera {} failed to prime — starting it RECOVERING, "
+                "watchdog owns recovery",
+                i);
         }
     }
 
@@ -112,10 +138,37 @@ auto PipelineOrchestrator::Stop() -> void {
 
 auto PipelineOrchestrator::IsRunning() const -> bool { return running_; }
 
+auto PipelineOrchestrator::SetOnCameraDown(std::function<void(std::size_t)> on_camera_down)
+    -> void {
+    on_camera_down_ = std::move(on_camera_down);
+}
+
+auto PipelineOrchestrator::CameraHealthStatus(std::size_t camera_index) const
+    -> std::optional<sst::health::CameraHealth> {
+    if (camera_index >= cameras_.size()) {
+        return std::nullopt;
+    }
+    // Frame truth dominates: a fresh sample is OK regardless of the restart
+    // history (frames resuming clear DOWN immediately; the producer resets the
+    // counter on its next Capture()).
+    const auto last_sample = cameras_[camera_index].capture->LastSampleAt();
+    if (last_sample.has_value() &&
+        std::chrono::steady_clock::now() - *last_sample <= config_.health_stall_threshold) {
+        return sst::health::CameraHealth::kOk;
+    }
+    // Stalled. DOWN only after N completed-and-failed restart attempts for
+    // THIS camera; anything less is the watchdog's RECOVERING window.
+    if (*failed_restarts_[camera_index] >= config_.health_down_after_failed_restarts) {
+        return sst::health::CameraHealth::kDown;
+    }
+    return sst::health::CameraHealth::kRecovering;
+}
+
 auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
     auto& capture = *cameras_[camera_index].capture;
     auto& preprocessor = *cameras_[camera_index].preprocessor;
     auto& slot = *slots_[camera_index];
+    auto& failed_restarts = *failed_restarts_[camera_index];
 
     while (running_) {
         // Watchdog: a capture pipeline can die mid-run and stay dead. Argus posts
@@ -138,10 +191,22 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
                 break;  // shutdown raced the restart — exit now, don't Capture/backoff
             }
             if (!capture.IsRunning()) {
+                // A COMPLETED-AND-FAILED restart attempt — the health signal
+                // that (after N of them) declares this camera DOWN. A count,
+                // never elapsed time: dual-camera radio events queue camera B
+                // behind camera A's full Argus reacquisition on restart_mtx_,
+                // so a time window would false-DOWN the queued camera.
+                const int failures = failed_restarts.fetch_add(1) + 1;
+                if (failures == config_.health_down_after_failed_restarts && on_camera_down_) {
+                    spdlog::error(
+                        "PipelineOrchestrator: camera {} DOWN after {} failed restart attempts",
+                        camera_index, failures);
+                    on_camera_down_(camera_index);
+                }
                 spdlog::warn(
-                    "PipelineOrchestrator: camera {} capture down; restart failed, retrying in "
-                    "{}ms",
-                    camera_index, config_.capture_restart_backoff.count());
+                    "PipelineOrchestrator: camera {} capture down; restart failed ({} attempts), "
+                    "retrying in {}ms",
+                    camera_index, failures, config_.capture_restart_backoff.count());
                 // Interruptible backoff: sleep in short slices so Stop() (running_
                 // -> false) aborts the wait promptly instead of holding the join
                 // for the full period.
@@ -162,6 +227,9 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
             std::this_thread::sleep_for(config_.capture_idle_sleep);
             continue;
         }
+        // Frames flow again: re-arm the DOWN counter (and the one-shot DOWN
+        // notification) — recovery is proven by frames, not by restart returns.
+        failed_restarts = 0;
         auto bundle = preprocessor.Process(*raw);
         if (!bundle) {
             // Preprocess failure is logged inside Process(); drop and continue.

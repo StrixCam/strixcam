@@ -9,8 +9,11 @@
 #include <gst/video/video.h>
 #include <spdlog/spdlog.h>
 
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -171,24 +174,36 @@ auto GStreamerAdapter::Start() -> void {
         return;
     }
 
-    is_running_ = true;
+    // Prime pull decides the reported truth: only a pipeline that actually
+    // delivered its first sample counts as running. Setting is_running_ before
+    // this pull (the old behavior) let a stalled camera read healthy forever —
+    // frame-truth health (U3) and the producer watchdog both key off IsRunning,
+    // so a prime timeout must leave the adapter down, torn back to NULL, ready
+    // for the watchdog's next Restart() (a cold nvargus-daemon recovers there).
     {
         constexpr GstClockTime kPrimeTimeout = 2 * GST_SECOND;
 
         GstSample* gstSample = gst_app_sink_try_pull_sample(gst_appsink, kPrimeTimeout);
-        if (gstSample != nullptr) {
-            auto owner = std::shared_ptr<GstSample>(
-                gstSample, [](GstSample* sample) { gst_sample_unref(sample); });
+        if (gstSample == nullptr) {
+            spdlog::warn(
+                "GStreamer: no initial frame within Start() prime timeout (sensor {}); leaving "
+                "capture down for the watchdog",
+                camera_index_);
+            gst_element_set_state(gst_pipeline_, GST_STATE_NULL);
+            CleanupPipeline();
+            return;
+        }
+        RecordSampleNow();
+        auto owner = std::shared_ptr<GstSample>(
+            gstSample, [](GstSample* sample) { gst_sample_unref(sample); });
 
-            auto capturedFrame = CreateFrameFromSample(owner.get());
-            if (capturedFrame) {
-                std::lock_guard<std::mutex> lastFrameLock(last_frame_mtx_);
-                last_frame_ = *capturedFrame;
-            }
-        } else {
-            spdlog::warn("GStreamer: did not receive initial frame during Start() prime");
+        auto capturedFrame = CreateFrameFromSample(owner.get());
+        if (capturedFrame) {
+            std::lock_guard<std::mutex> lastFrameLock(last_frame_mtx_);
+            last_frame_ = *capturedFrame;
         }
     }
+    is_running_ = true;
 }
 
 auto GStreamerAdapter::Stop() -> void {
@@ -197,14 +212,34 @@ auto GStreamerAdapter::Stop() -> void {
     }
     CleanupPipeline();
 
-    std::lock_guard<std::mutex> lastFrameLock(last_frame_mtx_);
-    last_frame_.reset();
+    {
+        std::lock_guard<std::mutex> lastFrameLock(last_frame_mtx_);
+        last_frame_.reset();
+    }
+    // Frame truth resets with the pipeline: a stopped/restarting camera reads
+    // as stalled (RECOVERING) until frames actually resume after re-prime.
+    last_sample_ns_ = kNoSample;
 
     is_running_ = false;
 };
 
 auto GStreamerAdapter::IsRunning() const -> bool {
     return is_running_ && (gst_pipeline_ != nullptr);
+}
+
+auto GStreamerAdapter::RecordSampleNow() -> void {
+    last_sample_ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                          std::chrono::steady_clock::now().time_since_epoch())
+                          .count();
+}
+
+auto GStreamerAdapter::LastSampleAt() const
+    -> std::optional<std::chrono::steady_clock::time_point> {
+    const std::int64_t nanoseconds = last_sample_ns_;
+    if (nanoseconds == kNoSample) {
+        return std::nullopt;
+    }
+    return std::chrono::steady_clock::time_point{std::chrono::nanoseconds{nanoseconds}};
 }
 
 auto GStreamerAdapter::HandleBusMessages() -> bool {
@@ -404,6 +439,9 @@ auto GStreamerAdapter::Capture() -> std::optional<Frame> {
             return std::nullopt;
         }
     }
+    // Frame truth for health: the sensor delivered a sample (regardless of
+    // whether the conversion below succeeds).
+    RecordSampleNow();
 
     auto sample =
         std::shared_ptr<GstSample>(last, [](GstSample* gstSample) { gst_sample_unref(gstSample); });

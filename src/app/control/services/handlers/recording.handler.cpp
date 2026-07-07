@@ -12,12 +12,14 @@ namespace sst::control {
 RecordingHandler::RecordingHandler(sst::session::ISessionManager& session,
                                    sst::storage::IRecordingService& recording,
                                    sst::overlay::IOverlayTimelineRecorder& timeline,
-                                   sst::raw_capture::IRawCaptureSink& proxy, Clock now_ms)
+                                   sst::raw_capture::IRawCaptureSink& proxy, Clock now_ms,
+                                   StartHealthGate health_gate)
     : session_(session),
       recording_(recording),
       timeline_(timeline),
       proxy_(proxy),
-      now_ms_(std::move(now_ms)) {}
+      now_ms_(std::move(now_ms)),
+      health_gate_(std::move(health_gate)) {}
 
 auto RecordingHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kRecordingControl};
@@ -32,6 +34,13 @@ auto RecordingHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
 
     switch (action) {
         case sst_cam::RECORDING_START: {
+            // Health gate first (U3): starting a recording against a stalled/
+            // dead camera would mint a doomed file. STOP below is never gated.
+            if (const auto reason = health_gate_.RejectReason()) {
+                resp.set_status(sst_cam::ResponseStatus::DEVICE_INOPERABLE);
+                resp.set_error_message("recording start rejected: " + *reason);
+                return resp;
+            }
             const auto state = session_.Snapshot();
             if (!state.config) {
                 resp.set_status(sst_cam::ResponseStatus::ERROR);

@@ -4,10 +4,13 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 
+#include "app/control/services/handlers/health-gate.hpp"
 #include "app/control/services/handlers/recording.handler.hpp"
 #include "app/overlay/ports/overlay-timeline-recorder.hpp"
 #include "app/raw_capture/ports/raw-capture-sink.hpp"
@@ -382,6 +385,71 @@ TEST(RecordingHandlerTest, ProxyStartFailureDoesNotFailRecord) {
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);  // record unaffected
     EXPECT_EQ(recorder.start_calls, 1);
     EXPECT_EQ(session_mgr.Phase(), SessionPhase::kRecording);
+}
+
+// A gate whose camera 0 reports `health` and whose camera 1 reports OK.
+auto GateWithCamera0(std::atomic<sst_cam::CameraHealth>& health) -> sst::control::StartHealthGate {
+    return {[&health]() -> std::optional<sst_cam::CameraHealth> { return health.load(); },
+            []() -> std::optional<sst_cam::CameraHealth> { return sst_cam::CAMERA_HEALTH_OK; }};
+}
+
+// U3 firmware-side gating (AE5): RECORDING_START while a camera is RECOVERING
+// is refused with DEVICE_INOPERABLE before the recorder is touched.
+TEST(RecordingHandlerTest, StartWhileCameraRecoveringRejectedDeviceInoperable) {
+    FakeCleanup cleanup;
+    SessionManager session_mgr(cleanup);
+    FakeRecorder recorder;
+    FakeTimeline timeline;
+    FakeProxy proxy;
+    std::atomic<sst_cam::CameraHealth> health{sst_cam::CAMERA_HEALTH_RECOVERING};
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock,
+                             GateWithCamera0(health));
+    AdvanceToReady(session_mgr);
+
+    auto resp = handler.Handle(Cmd(sst_cam::RECORDING_START));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::DEVICE_INOPERABLE);
+    EXPECT_FALSE(resp.error_message().empty());
+    EXPECT_EQ(recorder.start_calls, 0);  // recorder never touched
+    EXPECT_EQ(session_mgr.Phase(), SessionPhase::kReady);
+}
+
+// U3: STOP is NEVER gated — the operator must always be able to end a
+// recording even with a camera DOWN.
+TEST(RecordingHandlerTest, StopWhileCameraDownAccepted) {
+    FakeCleanup cleanup;
+    SessionManager session_mgr(cleanup);
+    FakeRecorder recorder;
+    FakeTimeline timeline;
+    FakeProxy proxy;
+    std::atomic<sst_cam::CameraHealth> health{sst_cam::CAMERA_HEALTH_OK};
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock,
+                             GateWithCamera0(health));
+    AdvanceToReady(session_mgr);
+    ASSERT_EQ(handler.Handle(Cmd(sst_cam::RECORDING_START)).status(), sst_cam::ResponseStatus::OK);
+
+    health = sst_cam::CAMERA_HEALTH_DOWN;  // camera dies mid-recording
+    auto resp = handler.Handle(Cmd(sst_cam::RECORDING_STOP));
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(recorder.stop_calls, 1);
+    EXPECT_EQ(session_mgr.Phase(), SessionPhase::kReady);
+}
+
+// U3: an unreported health (nullopt provider reading) gates nothing — never a
+// fabricated failure.
+TEST(RecordingHandlerTest, UnreportedHealthDoesNotGateStart) {
+    FakeCleanup cleanup;
+    SessionManager session_mgr(cleanup);
+    FakeRecorder recorder;
+    FakeTimeline timeline;
+    FakeProxy proxy;
+    const sst::control::StartHealthGate gate{
+        []() -> std::optional<sst_cam::CameraHealth> { return std::nullopt; },
+        []() -> std::optional<sst_cam::CameraHealth> { return std::nullopt; }};
+    RecordingHandler handler(session_mgr, recorder, timeline, proxy, ZeroClock, gate);
+    AdvanceToReady(session_mgr);
+
+    EXPECT_EQ(handler.Handle(Cmd(sst_cam::RECORDING_START)).status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(recorder.start_calls, 1);
 }
 
 }  // namespace

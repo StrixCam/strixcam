@@ -4,8 +4,10 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -49,6 +51,7 @@
 #include "app/control/services/handlers/device.handler.hpp"
 #include "app/control/services/handlers/download.handler.hpp"
 #include "app/control/services/handlers/export-burn.handler.hpp"
+#include "app/control/services/handlers/health-gate.hpp"
 #include "app/control/services/handlers/match-state.handler.hpp"
 #include "app/control/services/handlers/match.handler.hpp"
 #include "app/control/services/handlers/network.handler.hpp"
@@ -316,98 +319,10 @@ auto RunFirmware() -> int {
         },
         video_root.parent_path() / "exports");
 
-    // ── System stats (telemetry source) ────────────────────────────────
-    sst::adapters::control::ProcSystemStats system_stats(video_root);
-
-    // ── Control plane: dispatcher + per-concern handlers ───────────────
-    sst::control::CommandDispatcher dispatcher;
-
-    // ★ Extensibility point — one Register() line per concern.
-    dispatcher.Register(std::make_shared<sst::control::DeviceHandler>(
-        cfg.device, system_stats,
-        sst::control::DeviceHandler::Providers{
-            .is_recording =
-                [&recording_service] {
-                    return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
-                },
-            .is_streaming =
-                [&streaming_service] {
-                    return !streaming_service.ListActivePlatformStreams().empty();
-                },
-            .is_raw_capturing = [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
-            .wifi_state = [&wifi_manager] { return wifi_manager.State(); },
-            .internet_reachable =
-                [&telemetry_probe] { return telemetry_probe.InternetReachable(); },
-            .wifi_signal_dbm = [&telemetry_probe] { return telemetry_probe.WifiSignalDbm(); }}));
-    dispatcher.Register(
-        std::make_shared<sst::control::SessionHandler>(session_manager, overlay_controller));
-    // Reconnect handshake (state-health cycle): snapshot read + absolute
-    // match-state reconcile + wall-clock push. The snapshot's activity flags
-    // read the SAME sources as telemetry above, so the two can never disagree.
-    // The per-camera health providers stay unwired until the health monitor
-    // (U3) exists — absent wire fields mean "unreported", never a fabricated OK.
-    dispatcher.Register(std::make_shared<sst::control::SessionSnapshotHandler>(
-        session_manager, manual_camera_state, preview_layout_state,
-        sst::control::SessionSnapshotHandler::Providers{
-            .is_recording =
-                [&recording_service] {
-                    return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
-                },
-            .is_streaming =
-                [&streaming_service] {
-                    return !streaming_service.ListActivePlatformStreams().empty();
-                },
-            .is_raw_capturing = [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
-            .camera0_health = {},
-            .camera1_health = {}},
-        NowEpochMs));
-    dispatcher.Register(std::make_shared<sst::control::SetMatchStateHandler>(
-        session_manager, overlay_controller, NowMs));
-    // Device time: direct clock_settime (CAP_SYS_TIME via the systemd unit's
-    // AmbientCapabilities — deploy/install.sh) + opportunistic NTP enable when
-    // an uplink exists, bounded like every subprocess on the dispatcher thread.
-    dispatcher.Register(std::make_shared<sst::control::SetDeviceTimeHandler>(
-        [](std::uint64_t epoch_ms) { return sst::adapters::control::SetRealtimeClock(epoch_ms); },
-        [&telemetry_probe] { return telemetry_probe.InternetReachable(); },
-        [] {
-            sst::adapters::control::RunBounded({"timedatectl", "set-ntp", "true"},
-                                               sst::runtime_defaults::kNtpEnableTimeout);
-        }));
-    dispatcher.Register(std::make_shared<sst::control::WifiDirectHandler>(
-        session_manager, wifi_manager, network_configurator, dhcp_server, streaming_service,
-        sst::control::PreviewPort{sst::runtime_defaults::kPreviewPort},
-        sst::control::DownloadPort{sst::runtime_defaults::kDownloadPort}));
-    dispatcher.Register(
-        std::make_shared<sst::control::OverlayHandler>(session_manager, overlay_controller, NowMs));
-    auto match_handler =
-        std::make_shared<sst::control::MatchHandler>(session_manager, overlay_controller, NowMs);
-    dispatcher.Register(match_handler);
-    dispatcher.Register(
-        std::make_shared<sst::control::MatchStateHandler>(session_manager, NowEpochMs));
-    dispatcher.Register(std::make_shared<sst::control::RecordingHandler>(
-        session_manager, recording_service, overlay_timeline, raw_capture_sink, NowMs));
-    dispatcher.Register(
-        std::make_shared<sst::control::StreamingHandler>(streaming_service, &uplink_probe));
-    dispatcher.Register(std::make_shared<sst::control::DownloadHandler>(
-        download_server, sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort,
-        sst::runtime_defaults::kDownloadTokenTtlSeconds));
-    dispatcher.Register(std::make_shared<sst::control::ExportBurnHandler>(
-        export_manager,
-        [&recording_service, &streaming_service] {
-            return recording_service.CurrentState() != sst::storage::RecordingState::kIdle ||
-                   !streaming_service.ListActivePlatformStreams().empty();
-        },
-        sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort));
-
-    // ── BLE transport ──────────────────────────────────────────────────
-    // advertised_name computed above (shared with the WiFi-Direct SSID postfix).
-    sst::adapters::control::BluezBleTransport ble_transport(advertised_name);
-    ble_transport.SetOnCommand(
-        [&dispatcher](const sst_cam::Command& cmd) { return dispatcher.Dispatch(cmd); });
-    ble_transport.SetOnConnect([&session_manager] { session_manager.OnConnect(); });
-    ble_transport.SetOnDisconnect([&session_manager] { session_manager.OnDisconnect(); });
-
     // ── Pipeline (capture -> preprocess -> buffer -> postprocess -> split) ──
+    // Constructed BEFORE the control plane below: the telemetry / snapshot
+    // health providers and the start-class health gates all read the
+    // orchestrator's frame-truth health (U3), so the handlers capture it.
     // The recorder gets the CLEAN post-processed frame; streaming (RTSP + RTMP,
     // which StreamingService fans out internally) gets the overlaid copy. The
     // overlay is composited only on the stream branch inside the consumer, so a
@@ -492,7 +407,129 @@ auto RunFirmware() -> int {
         std::move(camera_chains), std::move(postprocessor), std::move(decision), recording_service,
         streaming_service, sst::pipeline::PipelineConfig{}, &raw_capture_sink, &overlay_sink,
         &side_by_side_compositor, &preview_layout_state);
-    dispatcher.Register(std::make_shared<sst::control::RawCaptureHandler>(raw_capture_sink));
+    // Mid-recording camera death (U3): fired exactly when a camera's Nth
+    // consecutive watchdog restart completes and fails (the RECOVERING window
+    // is the hold — origin decision "hold one window, then finalize"). Only a
+    // RECORDING session is ended; Ready/Configured sessions merely stay gated.
+    // FinalizeSession is CAS-claimed, so a race with app-stop/auto-stop
+    // finalizes exactly once.
+    pipeline.SetOnCameraDown([&session_manager](std::size_t camera_index) {
+        spdlog::error("camera {} DOWN — finalizing active recording (camera failure)",
+                      camera_index);
+        if (session_manager.Phase() == sst::session::SessionPhase::kRecording) {
+            session_manager.FinalizeSession(sst::session::SessionEndReason::kCameraFailure);
+        }
+    });
+    // Shared frame-truth health providers (U3): telemetry, the session
+    // snapshot, and the start-class gates all read THIS one derivation, so no
+    // two surfaces can ever disagree about a camera's health.
+    const auto camera0_health = [&pipeline]() -> std::optional<sst_cam::CameraHealth> {
+        const auto health = pipeline.CameraHealthStatus(0);
+        return health ? std::optional{sst::control::ToWireHealth(*health)} : std::nullopt;
+    };
+    const auto camera1_health = [&pipeline]() -> std::optional<sst_cam::CameraHealth> {
+        const auto health = pipeline.CameraHealthStatus(1);
+        return health ? std::optional{sst::control::ToWireHealth(*health)} : std::nullopt;
+    };
+    // Refuses start-class commands (record / stream / raw capture) with
+    // DEVICE_INOPERABLE while any camera is not OK. Stop/finalize, downloads,
+    // wifi-direct, reboot and diagnostics reads are never gated.
+    const sst::control::StartHealthGate start_health_gate(camera0_health, camera1_health);
+
+    // ── System stats (telemetry source) ────────────────────────────────
+    sst::adapters::control::ProcSystemStats system_stats(video_root);
+
+    // ── Control plane: dispatcher + per-concern handlers ───────────────
+    sst::control::CommandDispatcher dispatcher;
+
+    // ★ Extensibility point — one Register() line per concern.
+    dispatcher.Register(std::make_shared<sst::control::DeviceHandler>(
+        cfg.device, system_stats,
+        sst::control::DeviceHandler::Providers{
+            .is_recording =
+                [&recording_service] {
+                    return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
+                },
+            .is_streaming =
+                [&streaming_service] {
+                    return !streaming_service.ListActivePlatformStreams().empty();
+                },
+            .is_raw_capturing = [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
+            .wifi_state = [&wifi_manager] { return wifi_manager.State(); },
+            .internet_reachable =
+                [&telemetry_probe] { return telemetry_probe.InternetReachable(); },
+            .wifi_signal_dbm = [&telemetry_probe] { return telemetry_probe.WifiSignalDbm(); },
+            .camera0_health = camera0_health,
+            .camera1_health = camera1_health}));
+    dispatcher.Register(
+        std::make_shared<sst::control::SessionHandler>(session_manager, overlay_controller));
+    // Reconnect handshake (state-health cycle): snapshot read + absolute
+    // match-state reconcile + wall-clock push. The snapshot's activity flags
+    // read the SAME sources as telemetry above, so the two can never disagree —
+    // and its per-camera health reads the same U3 frame-truth derivation.
+    dispatcher.Register(std::make_shared<sst::control::SessionSnapshotHandler>(
+        session_manager, manual_camera_state, preview_layout_state,
+        sst::control::SessionSnapshotHandler::Providers{
+            .is_recording =
+                [&recording_service] {
+                    return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
+                },
+            .is_streaming =
+                [&streaming_service] {
+                    return !streaming_service.ListActivePlatformStreams().empty();
+                },
+            .is_raw_capturing = [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
+            .camera0_health = camera0_health,
+            .camera1_health = camera1_health},
+        NowEpochMs));
+    dispatcher.Register(std::make_shared<sst::control::SetMatchStateHandler>(
+        session_manager, overlay_controller, NowMs));
+    // Device time: direct clock_settime (CAP_SYS_TIME via the systemd unit's
+    // AmbientCapabilities — deploy/install.sh) + opportunistic NTP enable when
+    // an uplink exists, bounded like every subprocess on the dispatcher thread.
+    dispatcher.Register(std::make_shared<sst::control::SetDeviceTimeHandler>(
+        [](std::uint64_t epoch_ms) { return sst::adapters::control::SetRealtimeClock(epoch_ms); },
+        [&telemetry_probe] { return telemetry_probe.InternetReachable(); },
+        [] {
+            sst::adapters::control::RunBounded({"timedatectl", "set-ntp", "true"},
+                                               sst::runtime_defaults::kNtpEnableTimeout);
+        }));
+    dispatcher.Register(std::make_shared<sst::control::WifiDirectHandler>(
+        session_manager, wifi_manager, network_configurator, dhcp_server, streaming_service,
+        sst::control::PreviewPort{sst::runtime_defaults::kPreviewPort},
+        sst::control::DownloadPort{sst::runtime_defaults::kDownloadPort}));
+    dispatcher.Register(
+        std::make_shared<sst::control::OverlayHandler>(session_manager, overlay_controller, NowMs));
+    auto match_handler =
+        std::make_shared<sst::control::MatchHandler>(session_manager, overlay_controller, NowMs);
+    dispatcher.Register(match_handler);
+    dispatcher.Register(
+        std::make_shared<sst::control::MatchStateHandler>(session_manager, NowEpochMs));
+    dispatcher.Register(std::make_shared<sst::control::RecordingHandler>(
+        session_manager, recording_service, overlay_timeline, raw_capture_sink, NowMs,
+        start_health_gate));
+    dispatcher.Register(std::make_shared<sst::control::StreamingHandler>(
+        streaming_service, &uplink_probe, start_health_gate));
+    dispatcher.Register(std::make_shared<sst::control::DownloadHandler>(
+        download_server, sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort,
+        sst::runtime_defaults::kDownloadTokenTtlSeconds));
+    dispatcher.Register(std::make_shared<sst::control::ExportBurnHandler>(
+        export_manager,
+        [&recording_service, &streaming_service] {
+            return recording_service.CurrentState() != sst::storage::RecordingState::kIdle ||
+                   !streaming_service.ListActivePlatformStreams().empty();
+        },
+        sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort));
+
+    // ── BLE transport ──────────────────────────────────────────────────
+    // advertised_name computed above (shared with the WiFi-Direct SSID postfix).
+    sst::adapters::control::BluezBleTransport ble_transport(advertised_name);
+    ble_transport.SetOnCommand(
+        [&dispatcher](const sst_cam::Command& cmd) { return dispatcher.Dispatch(cmd); });
+    ble_transport.SetOnConnect([&session_manager] { session_manager.OnConnect(); });
+    ble_transport.SetOnDisconnect([&session_manager] { session_manager.OnDisconnect(); });
+    dispatcher.Register(
+        std::make_shared<sst::control::RawCaptureHandler>(raw_capture_sink, start_health_gate));
     dispatcher.Register(std::make_shared<sst::control::PreviewLayoutHandler>(
         preview_layout_state, sst::runtime_defaults::kOverlayWidth,
         sst::runtime_defaults::kOverlayHeight));
@@ -519,8 +556,11 @@ auto RunFirmware() -> int {
     dispatcher.Register(
         std::make_shared<sst::control::ThumbnailHandler>(pipeline, jpeg_encoder, NowEpochMs));
 
+    // Start() tolerates unprimed cameras (a cold nvargus-daemon boot begins
+    // RECOVERING and the watchdog heals it); it fails only with no cameras
+    // configured, which is a wiring bug worth aborting on.
     if (!pipeline.Start()) {
-        spdlog::error("pipeline failed to start (camera unavailable?) — aborting");
+        spdlog::error("pipeline failed to start (no cameras configured) — aborting");
         return 1;
     }
     ble_transport.Start();

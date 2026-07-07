@@ -280,14 +280,21 @@ TEST(PipelineOrchestratorTest, StartIsIdempotentAndReturnsRunning) {
     EXPECT_FALSE(orchestrator.IsRunning());
 }
 
-TEST(PipelineOrchestratorTest, FailsToStartWhenCaptureFailsToStart) {
+// U3 Start() tolerance: a camera that never primes (cold nvargus-daemon boot)
+// must NOT abort the start — the orchestrator runs anyway and the watchdog owns
+// that camera's recovery. The old all-or-nothing rollback turned a boot-time
+// prime timeout into a permanently dead pipeline.
+TEST(PipelineOrchestratorTest, StartToleratesCameraThatFailsToPrime) {
     // A capture that ignores Start() — IsRunning never flips true.
     class StuckCapture final : public ICaptureFrame {
        public:
         auto Start() -> void override {}
         auto Stop() -> void override {}
         [[nodiscard]] auto IsRunning() const -> bool override { return false; }
-        auto Capture() -> std::optional<Frame> override { return std::nullopt; }
+        auto Capture() -> std::optional<Frame> override {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kIdlePollMs));
+            return std::nullopt;
+        }
     };
 
     CountingSink record_sink;
@@ -296,6 +303,20 @@ TEST(PipelineOrchestratorTest, FailsToStartWhenCaptureFailsToStart) {
         OneCamera(std::make_unique<StuckCapture>(), std::make_unique<FakePreprocessor>()),
         std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
         sink, FastConfig());
+    EXPECT_TRUE(orchestrator.Start());
+    EXPECT_TRUE(orchestrator.IsRunning());
+    orchestrator.Stop();
+    EXPECT_FALSE(orchestrator.IsRunning());
+}
+
+// Start() still fails when there are no cameras at all (wiring bug, not a
+// recoverable runtime condition).
+TEST(PipelineOrchestratorTest, StartFailsWithNoCamerasConfigured) {
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        std::vector<CameraChain>{}, std::make_unique<FakePostprocessor>(),
+        std::make_unique<StaticDecision>(), record_sink, sink, FastConfig());
     EXPECT_FALSE(orchestrator.Start());
     EXPECT_FALSE(orchestrator.IsRunning());
 }

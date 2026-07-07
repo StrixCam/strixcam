@@ -2,6 +2,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -19,6 +21,7 @@
 #include "app/raw_capture/ports/raw-capture-sink.hpp"
 #include "domain/buffer/services/latest-only-slot.hpp"
 #include "domain/capture/models/frame.hpp"
+#include "domain/health/models/camera-health.hpp"
 #include "domain/processing/models/frame-bundle.hpp"
 #include "domain/streaming/models/preview-layout.hpp"
 
@@ -39,11 +42,23 @@ struct PipelineConfig {
     // this backoff keeps a persistently-failing sensor (or a still-settling
     // radio) from hot-looping gst_parse_launch every few milliseconds.
     std::chrono::milliseconds capture_restart_backoff{kDefaultCaptureRestartBackoffMs};
+    // Frame-truth health thresholds (U3). A camera whose last sample is older
+    // than health_stall_threshold reads RECOVERING; DOWN triggers only after
+    // health_down_after_failed_restarts COMPLETED-AND-FAILED watchdog restart
+    // attempts for that camera (a count, never elapsed time — restarts
+    // serialize under restart_mtx_, so an elapsed window would false-DOWN a
+    // camera queued behind another's full Argus reacquisition). Both are
+    // env-overridable (SST_HEALTH_STALL_MS / SST_HEALTH_DOWN_RESTARTS) for
+    // metal calibration without a rebuild; env wins over these values.
+    std::chrono::milliseconds health_stall_threshold{kDefaultHealthStallThresholdMs};
+    int health_down_after_failed_restarts{kDefaultHealthDownFailedRestarts};
 
    private:
     static constexpr int kDefaultCaptureIdleSleepMs = 5;
     static constexpr int kDefaultConsumerPopTimeoutMs = 100;
     static constexpr int kDefaultCaptureRestartBackoffMs = 500;
+    static constexpr int kDefaultHealthStallThresholdMs = 2000;
+    static constexpr int kDefaultHealthDownFailedRestarts = 3;
 };
 
 // One capture → preprocess chain for a single camera. The orchestrator owns the
@@ -111,12 +126,36 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     auto operator=(PipelineOrchestrator&&) -> PipelineOrchestrator& = delete;
 
     // Idempotent. Starts every camera's capture, then spawns the producer
-    // threads and the consumer. Returns false (and stops anything started) if
-    // any camera fails to start.
+    // threads and the consumer. A camera that fails to prime (cold
+    // nvargus-daemon, dead sensor) does NOT abort the start: its producer is
+    // spawned anyway, the camera begins life RECOVERING, and the watchdog +
+    // health derivation own recovery — an all-or-nothing rollback here would
+    // turn a transient boot-time prime timeout into a permanently dead
+    // pipeline with no watchdog. Returns false only with no cameras configured.
     auto Start() -> bool;
     // Idempotent. Signals all threads to exit, joins them, stops every capture.
     auto Stop() -> void;
     [[nodiscard]] auto IsRunning() const -> bool;
+
+    // Frame-truth health for one camera (U3), derived on read — an atomic
+    // failed-restart counter plus the adapter's last-sample age, so it is cheap
+    // enough for the BLE dispatcher thread (no sampling thread needed):
+    //   fresh sample            → kOk (frame truth dominates; resuming frames
+    //                             clear DOWN immediately)
+    //   stalled, < N failures   → kRecovering
+    //   stalled, ≥ N completed-and-failed restarts → kDown
+    // nullopt for an out-of-range camera index. Valid whether or not the
+    // orchestrator is running (a stopped pipeline reads stalled — correct for
+    // gating: nothing should start against it).
+    [[nodiscard]] auto CameraHealthStatus(std::size_t camera_index) const
+        -> std::optional<sst::health::CameraHealth>;
+
+    // Invoked (from that camera's producer thread, outside restart_mtx_) when a
+    // camera transitions into DOWN — i.e. exactly when its Nth consecutive
+    // watchdog restart completes and fails. Fires once per DOWN episode (frames
+    // resuming reset the counter and re-arm it). Wire before Start(); main.cpp
+    // hooks the session manager's camera-failure finalize here.
+    auto SetOnCameraDown(std::function<void(std::size_t)> on_camera_down) -> void;
 
     // IFrameSnapshotSource: the most recent post-processed final frame, deep-
     // copied off any GstBuffer so it stays valid for the caller. std::nullopt
@@ -149,6 +188,14 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     // One slot per camera. unique_ptr because LatestOnlySlot is non-movable and
     // we size the vector at construction from the camera count.
     std::vector<std::unique_ptr<sst::buffer::LatestOnlySlot<sst::processing::FrameBundle>>> slots_;
+
+    // Per-camera count of COMPLETED-AND-FAILED watchdog restart attempts since
+    // frames last flowed. Written by that camera's producer (increment on a
+    // failed restart, reset on a successful Capture()); read lock-free by
+    // CameraHealthStatus() on any thread. unique_ptr because std::atomic is
+    // non-movable and the vector is sized at construction.
+    std::vector<std::unique_ptr<std::atomic<int>>> failed_restarts_;
+    std::function<void(std::size_t)> on_camera_down_;
 
     mutable std::mutex mtx_;
     std::atomic<bool> running_{false};

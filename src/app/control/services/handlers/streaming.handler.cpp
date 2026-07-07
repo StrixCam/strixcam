@@ -1,13 +1,16 @@
 #include "app/control/services/handlers/streaming.handler.hpp"
 
+#include <utility>
+
 #include "app/control/services/handlers/quality-mapping.hpp"
 #include "domain/streaming/models/platform-stream-config.hpp"
 
 namespace sst::control {
 
 StreamingHandler::StreamingHandler(sst::streaming::IStreamingService& streaming,
-                                   sst::streaming::IUplinkProbe* uplink_probe)
-    : streaming_(streaming), uplink_probe_(uplink_probe) {}
+                                   sst::streaming::IUplinkProbe* uplink_probe,
+                                   StartHealthGate health_gate)
+    : streaming_(streaming), uplink_probe_(uplink_probe), health_gate_(std::move(health_gate)) {}
 
 auto StreamingHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kStreamingControl, sst_cam::Command::kSetStreamingConfig};
@@ -25,6 +28,13 @@ auto StreamingHandler::HandleControl(const sst_cam::StreamingControlCommand& cmd
     sst_cam::CommandResponse resp;
 
     if (cmd.action() == sst_cam::STREAMING_START) {
+        // Health gate first (U3): don't open an egress that would stream a
+        // stalled camera. STOP below is never gated.
+        if (const auto reason = health_gate_.RejectReason()) {
+            resp.set_status(sst_cam::ResponseStatus::DEVICE_INOPERABLE);
+            resp.set_error_message("streaming start rejected: " + *reason);
+            return resp;
+        }
         std::string destination = cmd.destination();
         if (destination.empty()) {
             std::lock_guard lock(mtx_);

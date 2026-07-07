@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <optional>
 
 #include "domain/capture/models/frame.hpp"
@@ -22,6 +23,16 @@ class ICaptureFrame {
     };
     [[nodiscard]] virtual auto IsRunning() const -> bool = 0;
     virtual auto Capture() -> std::optional<Frame> = 0;
+
+    // Frame truth for the per-camera health derivation (state-health cycle U3):
+    // when the source last delivered a sample, on the steady clock. nullopt =
+    // no sample since Start() (or the adapter cannot report frame truth, in
+    // which case the camera reads as stalled rather than fabricating health).
+    // Thread-safe: read by the health path while Capture() runs on the producer.
+    [[nodiscard]] virtual auto LastSampleAt() const
+        -> std::optional<std::chrono::steady_clock::time_point> {
+        return std::nullopt;
+    }
 };
 
 }  // namespace sst::capture
