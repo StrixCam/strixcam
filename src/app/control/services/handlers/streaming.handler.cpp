@@ -9,8 +9,12 @@ namespace sst::control {
 
 StreamingHandler::StreamingHandler(sst::streaming::IStreamingService& streaming,
                                    sst::streaming::IUplinkProbe* uplink_probe,
-                                   StartHealthGate health_gate)
-    : streaming_(streaming), uplink_probe_(uplink_probe), health_gate_(std::move(health_gate)) {}
+                                   StartHealthGate health_gate,
+                                   sst::raw_capture::ProxyLifecycle* proxy_lifecycle)
+    : streaming_(streaming),
+      uplink_probe_(uplink_probe),
+      health_gate_(std::move(health_gate)),
+      proxy_lifecycle_(proxy_lifecycle) {}
 
 auto StreamingHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kStreamingControl, sst_cam::Command::kSetStreamingConfig};
@@ -80,12 +84,24 @@ auto StreamingHandler::HandleControl(const sst_cam::StreamingControlCommand& cmd
             resp.set_error_message("streaming start failed (already streaming or bad destination)");
             return resp;
         }
+        // Stream leg of the record-or-stream proxy ref-count (U5): a live
+        // egress holds the training proxy so streaming-only matches still
+        // produce footage. Only on a SUCCESSFUL start — a rejected start must
+        // not take a hold it will never release.
+        if (proxy_lifecycle_ != nullptr) {
+            proxy_lifecycle_->OnStreamingStart();
+        }
         resp.set_status(sst_cam::ResponseStatus::OK);
         return resp;
     }
 
     if (cmd.action() == sst_cam::STREAMING_STOP) {
         const bool stopped = streaming_.StopPlatformStream(kEgressStreamId);
+        if (stopped && proxy_lifecycle_ != nullptr) {
+            // Release the stream hold; the proxy keeps running if a recording
+            // still holds it, stops on last-out.
+            proxy_lifecycle_->OnStreamingStop();
+        }
         resp.set_status(stopped ? sst_cam::ResponseStatus::OK : sst_cam::ResponseStatus::ERROR);
         if (!stopped) {
             resp.set_error_message("no active stream to stop");

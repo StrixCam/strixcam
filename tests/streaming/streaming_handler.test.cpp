@@ -10,6 +10,8 @@
 
 #include "app/control/services/handlers/health-gate.hpp"
 #include "app/control/services/handlers/streaming.handler.hpp"
+#include "app/raw_capture/ports/raw-capture-sink.hpp"
+#include "app/raw_capture/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
 #include "app/streaming/ports/uplink-probe.hpp"
 #include "bluetooth.pb.h"
@@ -244,6 +246,80 @@ TEST(StreamingHandlerTest, StopWhileCameraDownAccepted) {
     auto resp = handler.Handle(StopCmd());
     EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
     EXPECT_TRUE(streaming.ListActivePlatformStreams().empty());
+}
+
+// ── Stream leg of the record-or-stream proxy ref-count (U5) ───────────────
+
+class FakeProxySink final : public sst::raw_capture::IRawCaptureSink {
+   public:
+    auto Start(const std::string& capture_group_id,
+               const std::filesystem::path& /*output_dir*/) -> bool override {
+        ++starts;
+        last_group = capture_group_id;
+        capturing_ = true;
+        return true;
+    }
+    auto PushCamera(std::uint32_t /*camera_index*/,
+                    const sst::capture::Frame& /*frame*/) -> void override {}
+    auto Stop() -> bool override {
+        ++stops;
+        const bool was = capturing_;
+        capturing_ = false;
+        return was;
+    }
+    [[nodiscard]] auto IsCapturing() const -> bool override { return capturing_; }
+
+    int starts{0};
+    int stops{0};
+    std::string last_group;
+
+   private:
+    bool capturing_{false};
+};
+
+// Deterministic epoch-ms clock so the interim stream-minted group id is
+// assertable ("stream-7").
+constexpr std::uint64_t kFixedEpochMs = 7;
+
+// A successful platform-stream START takes the proxy hold (streaming-only
+// matches still produce training footage); STOP releases it (last-out).
+TEST(StreamingHandlerTest, StartTakesProxyHoldStopReleasesIt) {
+    FakeStreaming streaming;
+    FakeProxySink sink;
+    sst::raw_capture::ProxyLifecycle lifecycle(sink, [] { return kFixedEpochMs; });
+    StreamingHandler handler(streaming, nullptr, {}, &lifecycle);
+
+    ASSERT_EQ(handler.Handle(StartCmd("rtmp://ingest/live/k")).status(),
+              sst_cam::ResponseStatus::OK);
+    EXPECT_TRUE(sink.IsCapturing());
+    EXPECT_EQ(sink.last_group, "stream-7");  // interim firmware-minted id
+
+    EXPECT_EQ(handler.Handle(StopCmd()).status(), sst_cam::ResponseStatus::OK);
+    EXPECT_FALSE(sink.IsCapturing());
+}
+
+// A REJECTED start (no destination here) must not take a hold it would never
+// release — the proxy stays down.
+TEST(StreamingHandlerTest, RejectedStartTakesNoProxyHold) {
+    FakeStreaming streaming;
+    FakeProxySink sink;
+    sst::raw_capture::ProxyLifecycle lifecycle(sink);
+    StreamingHandler handler(streaming, nullptr, {}, &lifecycle);
+
+    EXPECT_EQ(handler.Handle(StartCmd("")).status(), sst_cam::ResponseStatus::ERROR);
+    EXPECT_FALSE(sink.IsCapturing());
+    EXPECT_EQ(sink.starts, 0);
+}
+
+// A STOP with nothing active errors and releases nothing.
+TEST(StreamingHandlerTest, FailedStopReleasesNoProxyHold) {
+    FakeStreaming streaming;
+    FakeProxySink sink;
+    sst::raw_capture::ProxyLifecycle lifecycle(sink);
+    StreamingHandler handler(streaming, nullptr, {}, &lifecycle);
+
+    EXPECT_EQ(handler.Handle(StopCmd()).status(), sst_cam::ResponseStatus::ERROR);
+    EXPECT_EQ(sink.stops, 0);
 }
 
 }  // namespace

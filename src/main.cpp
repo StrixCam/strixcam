@@ -73,6 +73,7 @@
 #include "app/network/services/uplink-manager/uplink-manager.hpp"
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
+#include "app/raw_capture/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/session/services/session_cleanup/session-cleanup.hpp"
 #include "app/session/services/session_manager/session-manager.hpp"
 #include "app/storage/services/recording_service/recording-service.hpp"
@@ -218,12 +219,17 @@ auto RunFirmware() -> int {
     }).detach();
 
     // Training-proxy sink — per-camera H.264 proxy, taps both materialized camera
-    // chains, coupled to the match record lifecycle (RecordingHandler drives
-    // Start/Stop; SessionCleanup force-stops it on disconnect). Constructed here,
-    // ahead of both SessionCleanup and the pipeline that pushes into it, so both
-    // can reference it and DeviceHandler can report its IsCapturing() state.
+    // chains. Constructed here, ahead of both SessionCleanup and the pipeline
+    // that pushes into it, so both can reference it and DeviceHandler can report
+    // its IsCapturing() state.
     sst::adapters::raw_capture::FilesystemRawCaptureSink raw_capture_sink(
         cfg.storage.video.value_or(sst::paths::kVideoRootFallback), /*camera_count=*/2);
+    // Record-or-stream proxy ref-count (U5): the proxy runs while a recording OR
+    // an RTMP egress is active and stops on last-out, so streaming-only matches
+    // still produce training footage. RecordingHandler drives the record leg,
+    // StreamingHandler the stream leg, SessionCleanup force-stops (and resets
+    // both holds) at session end. The always-on RTSP preview takes no hold.
+    sst::raw_capture::ProxyLifecycle proxy_lifecycle(raw_capture_sink);
 
     // Session-scoped UI selections. Declared here, ahead of SessionCleanup, so
     // it can reset them on disconnect: a reconnect must start from the app's
@@ -243,7 +249,7 @@ auto RunFirmware() -> int {
     // The summary store persists the last-session summary in the config dir
     // (write-ahead on recording start), so a crash mid-recording is reconciled
     // into a reboot/file-invalid summary at the next boot.
-    sst::session::SessionCleanup cleanup(recording_service, streaming_service, raw_capture_sink,
+    sst::session::SessionCleanup cleanup(recording_service, streaming_service, proxy_lifecycle,
                                          overlay_timeline, wifi_manager, dhcp_server,
                                          manual_camera_state, preview_layout_state);
     sst::adapters::session::JsonSessionSummaryStore session_summary_store(
@@ -506,10 +512,10 @@ auto RunFirmware() -> int {
     dispatcher.Register(
         std::make_shared<sst::control::MatchStateHandler>(session_manager, NowEpochMs));
     dispatcher.Register(std::make_shared<sst::control::RecordingHandler>(
-        session_manager, recording_service, overlay_timeline, raw_capture_sink, NowMs,
+        session_manager, recording_service, overlay_timeline, proxy_lifecycle, NowMs,
         start_health_gate));
     dispatcher.Register(std::make_shared<sst::control::StreamingHandler>(
-        streaming_service, &uplink_probe, start_health_gate));
+        streaming_service, &uplink_probe, start_health_gate, &proxy_lifecycle));
     dispatcher.Register(std::make_shared<sst::control::DownloadHandler>(
         download_server, sst::runtime_defaults::kGroupOwnerIp, sst::runtime_defaults::kDownloadPort,
         sst::runtime_defaults::kDownloadTokenTtlSeconds));

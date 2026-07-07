@@ -7,6 +7,7 @@
 
 #include "app/control/ports/handler.hpp"
 #include "app/control/services/handlers/health-gate.hpp"
+#include "app/raw_capture/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
 #include "app/streaming/ports/uplink-probe.hpp"
 #include "bluetooth.pb.h"
@@ -24,9 +25,13 @@ class StreamingHandler final : public ICommandHandler {
     // message instead of an opaque rtmp connect failure (U6 / R9).
     // `health_gate` refuses START with DEVICE_INOPERABLE while any camera is
     // not OK (U3); STOP and SetStreamingConfig are never gated.
+    // `proxy_lifecycle`, when set, gets this handler's stream leg of the
+    // record-or-stream proxy ref-count (U5): a successful platform-stream
+    // START takes the hold, a successful STOP releases it.
     explicit StreamingHandler(sst::streaming::IStreamingService& streaming,
                               sst::streaming::IUplinkProbe* uplink_probe = nullptr,
-                              StartHealthGate health_gate = {});
+                              StartHealthGate health_gate = {},
+                              sst::raw_capture::ProxyLifecycle* proxy_lifecycle = nullptr);
 
     [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
@@ -38,6 +43,7 @@ class StreamingHandler final : public ICommandHandler {
     sst::streaming::IStreamingService& streaming_;
     sst::streaming::IUplinkProbe* uplink_probe_;
     StartHealthGate health_gate_;
+    sst::raw_capture::ProxyLifecycle* proxy_lifecycle_;
 
     // Single egress stream for the contract's one-destination model.
     static constexpr std::int64_t kEgressStreamId = 1;

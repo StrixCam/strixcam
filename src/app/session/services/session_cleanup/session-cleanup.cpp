@@ -4,7 +4,7 @@ namespace sst::session {
 
 SessionCleanup::SessionCleanup(sst::storage::IRecordingService& recording,
                                sst::streaming::IStreamingService& streaming,
-                               sst::raw_capture::IRawCaptureSink& proxy,
+                               sst::raw_capture::ProxyLifecycle& proxy,
                                sst::overlay::IOverlayTimelineRecorder& timeline,
                                sst::control::IWifiManager& wifi, sst::control::IDhcpServer& dhcp,
                                sst::decision::ManualCameraState& camera_state,
@@ -26,10 +26,12 @@ auto SessionCleanup::FinalizeRecording() -> bool {
     // Flush the overlay timeline beside the L1 (no-op when never started) so an
     // auto-stop/failure finalize still leaves a burnable timeline.
     timeline_.Stop();
-    // Force-stop the coupled training proxy so a session ending without a
-    // commanded RECORDING_STOP can't leave the per-camera proxy pipelines
-    // running / files open. A no-op if the proxy was never started.
-    proxy_.Stop();
+    // Force-stop the training proxy AND reset both ref-count holds atomically
+    // (U5): a session ending without commanded stops must not leave a stale
+    // record/stream hold, or the next session's first start would miss the
+    // 0->1 transition and the proxy would stay silently dead. A no-op when the
+    // proxy was never started.
+    proxy_.ForceStop();
     return result.success;
 }
 

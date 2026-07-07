@@ -7,7 +7,7 @@
 #include "app/control/ports/handler.hpp"
 #include "app/control/services/handlers/health-gate.hpp"
 #include "app/overlay/ports/overlay-timeline-recorder.hpp"
-#include "app/raw_capture/ports/raw-capture-sink.hpp"
+#include "app/raw_capture/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/session/ports/session-manager.hpp"
 #include "app/storage/ports/recording-service.hpp"
 #include "bluetooth.pb.h"
@@ -27,10 +27,12 @@ class RecordingHandler final : public ICommandHandler {
 
     // `health_gate` refuses START with DEVICE_INOPERABLE while any camera is
     // not OK (U3); STOP/PAUSE/RESUME are never gated. Default gates nothing.
+    // `proxy` is the shared record-or-stream ref-count for the training proxy —
+    // this handler drives its record leg (START/STOP take/release the hold).
     RecordingHandler(sst::session::ISessionManager& session,
                      sst::storage::IRecordingService& recording,
                      sst::overlay::IOverlayTimelineRecorder& timeline,
-                     sst::raw_capture::IRawCaptureSink& proxy, Clock now_ms,
+                     sst::raw_capture::ProxyLifecycle& proxy, Clock now_ms,
                      StartHealthGate health_gate = {});
 
     [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
@@ -40,7 +42,7 @@ class RecordingHandler final : public ICommandHandler {
     sst::session::ISessionManager& session_;
     sst::storage::IRecordingService& recording_;
     sst::overlay::IOverlayTimelineRecorder& timeline_;
-    sst::raw_capture::IRawCaptureSink& proxy_;
+    sst::raw_capture::ProxyLifecycle& proxy_;
     Clock now_ms_;
     StartHealthGate health_gate_;
 };

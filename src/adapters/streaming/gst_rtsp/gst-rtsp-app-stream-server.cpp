@@ -3,9 +3,11 @@
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
+#include "adapters/storage/gstreamer/encode-fragment.hpp"
 #include "domain/streaming/models/formatter/_fmt.hpp"  // IWYU pragma: keep
 
 namespace sst::adapters::streaming {
@@ -18,6 +20,10 @@ constexpr const char* kAppsrcName = "src";
 // pushed frame must match w*h*3 exactly or x264enc stalls on the mismatch.
 constexpr std::size_t kBgrBytesPerPixel = 3;
 
+// Tight pre-encoder bound: the preview is latency-sensitive, so hold at most 2
+// frames before x264enc and drop-oldest under encode overload.
+constexpr int kRtspPreEncodeQueueBuffers = 2;
+
 auto FrameByteSize(const sst::capture::Frame& frame) -> std::size_t {
     std::size_t total = 0;
     for (const auto& plane : frame.planes) {
@@ -26,30 +32,35 @@ auto FrameByteSize(const sst::capture::Frame& frame) -> std::size_t {
     return total;
 }
 
-auto BuildLaunch(const sst::streaming::AppStreamConfig& cfg) -> std::string {
-    // Software H.264: the Orin Nano has no NVENC. x264enc reads system memory,
-    // so the nvvidconv→NVMM hop is dropped (appsrc already provides BGR system
-    // memory). do-timestamp=true stamps PTS on arrival — required for x264enc,
-    // which (unlike nvv4l2h264enc) corrupts the stream on absent/invalid PTS.
-    // x264enc bitrate is in kbit/s (nvv4l2h264enc used bit/s). gst-rtsp-server
-    // shares one encode across all viewers (set_shared), so this CPU cost is
-    // paid once regardless of viewer count.
+auto BuildLaunch(const sst::streaming::AppStreamConfig& cfg, bool use_vic) -> std::string {
+    // Software H.264: the Orin Nano has no NVENC. do-timestamp=true stamps PTS
+    // on arrival — required for x264enc, which (unlike nvv4l2h264enc) corrupts
+    // the stream on absent/invalid PTS. x264enc bitrate is in kbit/s.
+    // gst-rtsp-server shares one encode across all viewers (set_shared), so this
+    // CPU cost is paid once regardless of viewer count. The convert + leaky
+    // queue + x264enc come from the shared encode fragment (encode-fragment.hpp):
+    // the appsrc caps already carry the target geometry (the postprocess output
+    // is pushed with NO resize — CPU is scarce), so the fragment gets no scale
+    // target and only colour-converts BGR->I420 (on the VIC unless
+    // SST_DISABLE_VIC forces software).
+    const std::string fragment = sst::adapters::storage::BuildEncodeFragment({
+        .input = sst::adapters::storage::EncodeInput::kBgr,
+        .target = {},  // no scale: the appsrc caps above already carry the geometry
+        .framerate = static_cast<int>(cfg.framerate),
+        .use_vic = use_vic,
+        .default_preset = "ultrafast",
+        .bitrate_kbps = static_cast<int>(cfg.bitrate_kbps),
+        .queue_max_buffers = kRtspPreEncodeQueueBuffers,
+        .encoder_name = {},
+    });
     return fmt::format(
         "( appsrc name={src} is-live=true format=time do-timestamp=true "
         "    caps=\"video/x-raw,format=BGR,width={w},height={h},framerate={fps}/1\" "
-        "  ! videoconvert "
-        // Force 4:2:0 (I420). videoconvert otherwise hands x264enc a 4:4:4 frame
-        // (from BGR), which H.264 baseline rejects ("baseline profile doesn't
-        // support 4:4:4") — the encoder then emits nothing and the client gets no
-        // video. I420 is the universally-decodable H.264 chroma the app expects.
-        "  ! video/x-raw,format=I420 "
-        "  ! queue leaky=downstream max-size-buffers=2 "
-        "  ! x264enc speed-preset=ultrafast tune=zerolatency bitrate={brk} key-int-max={gik} "
+        "  ! {frag} "
         "  ! h264parse config-interval=1 "
         "  ! rtph264pay name=pay0 pt=96 config-interval=1 )",
         fmt::arg("src", kAppsrcName), fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
-        fmt::arg("fps", cfg.framerate), fmt::arg("brk", cfg.bitrate_kbps),
-        fmt::arg("gik", cfg.framerate * 2));
+        fmt::arg("fps", cfg.framerate), fmt::arg("frag", fragment));
 }
 
 }  // namespace
@@ -85,7 +96,11 @@ auto GstRtspAppStreamServer::Start(const sst::streaming::AppStreamConfig& config
     GstRTSPMountPoints* mounts = gst_rtsp_server_get_mount_points(server_);
     factory_ = gst_rtsp_media_factory_new();
 
-    const std::string launch = BuildLaunch(config_);
+    // VIC offload ON by default (frees CPU for the shared software encoders);
+    // SST_DISABLE_VIC=1 forces the full-software path at runtime — same escape
+    // hatch as the recorder / RTMP / proxy branches.
+    const bool use_vic = std::getenv("SST_DISABLE_VIC") == nullptr;
+    const std::string launch = BuildLaunch(config_, use_vic);
     spdlog::info("GstRtspAppStreamServer: launch = {}", launch);
     gst_rtsp_media_factory_set_launch(factory_, launch.c_str());
     gst_rtsp_media_factory_set_shared(factory_, TRUE);
