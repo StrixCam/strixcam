@@ -25,6 +25,12 @@ struct SessionConfig {
     std::string team_b_name;
     std::string team_a_color_hex;
     std::string team_b_color_hex;
+
+    // Auto-stop safety net: minutes of app absence before the firmware ends the
+    // session on its own (finalize + summary + group teardown). 0 = the app did
+    // not set it → the firmware default (30 min) applies. Wire field lands with
+    // the U2 contract bump; until then this stays at the default.
+    std::int32_t auto_stop_minutes{0};
 };
 
 }  // namespace sst::session

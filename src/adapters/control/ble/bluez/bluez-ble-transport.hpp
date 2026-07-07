@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "adapters/control/ble/bluez/chunk-assembler.hpp"
+#include "adapters/control/ble/bluez/connection-supervisor.hpp"
 #include "adapters/control/ble/bluez/gatt-application.hpp"
 #include "app/control/ports/ble-transport.hpp"
 
@@ -93,7 +94,11 @@ class BluezBleTransport final : public sst::control::IBleTransport {
     CommandHandler on_command_;
     ConnectionHandler on_connect_;
     ConnectionHandler on_disconnect_;
-    bool central_present_{false};
+    // Connect/disconnect ordering: generation-validated so the detached
+    // disconnect worker never delivers OnDisconnect after a newer OnConnect
+    // (fast unsubscribe+resubscribe would otherwise re-arm the session's
+    // auto-stop right after the reconnect cancelled it).
+    ConnectionSupervisor supervisor_;
     ChunkAssembler assembler_;
     std::atomic<bool> running_{false};
     bool advertisement_registered_{false};

@@ -4,16 +4,21 @@
 
 namespace sst::session {
 
-// Ordered session lifecycle phase (F1–F3). Transitions advance only in order:
-// Idle → Connected → WifiReady → Configured → Ready → Recording. A BLE
-// disconnect drops straight back to Idle from any phase.
+// The SESSION axis of the orthogonal state model (app_connected ⟂ wifi_group ⟂
+// session). Unlike the old single phase ladder, this axis is independent of the
+// BLE connection: a disconnect no longer moves it, so a session (and its
+// recording) outlives the app.
+//
+// Forward edges: Idle → Configured → Ready → Recording. Recording drops back to
+// Ready on a commanded stop. Any active state (≥ Configured) ends through
+// Finalizing — claimed exactly once by compare-and-swap under the session mutex
+// (app stop / auto-stop / camera failure / shutdown) — and lands back on Idle.
 enum class SessionPhase : std::uint8_t {
-    kIdle = 0,        // no central connected
-    kConnected = 1,   // BLE connected, no WiFi group yet
-    kWifiReady = 2,   // autonomous WiFi Direct group up
-    kConfigured = 3,  // session config received + output dirs prepared
-    kReady = 4,       // overlay layout applied — ready to record/stream
-    kRecording = 5,   // recording in progress
+    kIdle = 0,        // no session (config not applied, or the last one finalized)
+    kConfigured = 1,  // session config received + output dirs prepared
+    kReady = 2,       // overlay layout applied — ready to record/stream
+    kRecording = 3,   // recording in progress
+    kFinalizing = 4,  // session end claimed; cleanup fan-out in flight
 };
 
 }  // namespace sst::session

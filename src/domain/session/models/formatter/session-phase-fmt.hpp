@@ -18,12 +18,6 @@ struct fmt::formatter<sst::session::SessionPhase> {
             case SessionPhase::kIdle:
                 name = "Idle";
                 break;
-            case SessionPhase::kConnected:
-                name = "Connected";
-                break;
-            case SessionPhase::kWifiReady:
-                name = "WifiReady";
-                break;
             case SessionPhase::kConfigured:
                 name = "Configured";
                 break;
@@ -32,6 +26,9 @@ struct fmt::formatter<sst::session::SessionPhase> {
                 break;
             case SessionPhase::kRecording:
                 name = "Recording";
+                break;
+            case SessionPhase::kFinalizing:
+                name = "Finalizing";
                 break;
         }
         return fmt::format_to(ctx.out(), "{}", name);

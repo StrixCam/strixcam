@@ -75,19 +75,21 @@ auto BluezBleTransport::OnRawCommand(std::vector<std::uint8_t> bytes) -> void {
     // mtx_ across it head-of-line-blocks the whole BLE control path, including
     // acks for the other direction. We extract everything the handler needs while
     // locked, drop the lock, then call it.
+    // Any write means a central is connected — surface the connect once (per
+    // central) through the supervisor, which orders it against the detached
+    // disconnect worker so a stale disconnect can never land after it.
+    ConnectionHandler connect_handler;
+    {
+        std::lock_guard lock(mtx_);
+        connect_handler = on_connect_;
+    }
+    supervisor_.OnWrite(connect_handler);
+
     sst_cam::Command command;
     bool have_command = false;
     CommandHandler handler;
-    ConnectionHandler connect;
     {
         std::lock_guard lock(mtx_);
-
-        // Any write means a central is connected — surface the connect once so
-        // the session can leave Idle.
-        if (!central_present_) {
-            central_present_ = true;
-            connect = on_connect_;  // invoked after the lock is released
-        }
 
         // A ChunkAck is wire-compatible with ChunkedPayload on fields 1/2 but
         // carries no total_chunks (#3): total_chunks == kChunkAckTotalChunks
@@ -116,10 +118,6 @@ auto BluezBleTransport::OnRawCommand(std::vector<std::uint8_t> bytes) -> void {
                 }
             }
         }
-    }
-
-    if (connect) {
-        connect();
     }
 
     if (!have_command) {
@@ -268,17 +266,17 @@ auto BluezBleTransport::Stop() -> void {
     }
     spdlog::info("BluezBleTransport::Stop");
 
-    // Notify the session layer so it finalizes + cleans up (R15). On-device, a
+    // Notify the session layer of the connection loss (it arms the auto-stop
+    // safety net; it no longer tears the session down). On-device, a
     // central-initiated disconnect (org.bluez Device1 Connected=false) should
     // also invoke this; that D-Bus subscription is verified on hardware.
     ConnectionHandler on_disconnect;
     {
         std::lock_guard lock(mtx_);
-        on_disconnect = central_present_ ? on_disconnect_ : nullptr;
-        central_present_ = false;
+        on_disconnect = on_disconnect_;
     }
-    if (on_disconnect) {
-        on_disconnect();
+    if (const auto ticket = supervisor_.OnCentralGone()) {
+        supervisor_.DeliverDisconnect(*ticket, on_disconnect);
     }
 
     if (connection_ && (advertisement_registered_ || application_registered_)) {
@@ -324,24 +322,32 @@ auto BluezBleTransport::Stop() -> void {
 }
 
 auto BluezBleTransport::HandleCentralGone() -> void {
-    ConnectionHandler on_disc;
-    {
-        std::lock_guard lock(mtx_);
-        if (!central_present_) {
-            return;  // never connected this session, or already handled
-        }
-        central_present_ = false;
-        on_disc = on_disconnect_;
+    const auto ticket = supervisor_.OnCentralGone();
+    if (!ticket) {
+        return;  // never connected this session, or already handled
     }
     // This runs on the D-Bus event-loop thread (a GATT StopNotify callback).
-    // Both the session cleanup and the re-advertise wait on work the event loop
-    // itself must service, so they cannot run inline — hand off to a worker. The
-    // transport lives for the process lifetime, so capturing `this` is safe.
-    std::thread([this, on_disc] {
-        if (on_disc) {
-            on_disc();
+    // Both the session notification and the re-advertise wait on work the event
+    // loop itself must service, so they cannot run inline — hand off to a
+    // worker. The transport lives for the process lifetime, so capturing `this`
+    // is safe. The worker re-validates the ticket at delivery time: if the
+    // central resubscribed+wrote before the worker ran, the disconnect is stale
+    // and is dropped (never delivered after the newer OnConnect).
+    std::thread([this, ticket = *ticket] {
+        ConnectionHandler on_disc;
+        {
+            std::lock_guard lock(mtx_);
+            on_disc = on_disconnect_;
         }
-        ReAdvertise();
+        if (!supervisor_.DeliverDisconnect(ticket, on_disc)) {
+            spdlog::info(
+                "BluezBleTransport: stale disconnect superseded by a newer connect — dropped");
+        }
+        // Skip the re-advertise churn when a central is already back (BlueZ
+        // pauses a connectable advert while connected anyway).
+        if (!supervisor_.CentralPresent()) {
+            ReAdvertise();
+        }
     }).detach();
 }
 

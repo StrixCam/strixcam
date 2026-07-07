@@ -45,7 +45,7 @@ constexpr std::uint32_t kLayoutCanvasWidth = 1920;
 
 class FakeCleanup final : public session::ISessionCleanup {
    public:
-    auto FinalizeRecording() -> void override {}
+    auto FinalizeRecording() -> bool override { return false; }
     auto StopStreaming() -> void override {}
     auto TeardownWifiDirect() -> void override {}
     auto ResetSelections() -> void override {}
@@ -123,7 +123,7 @@ auto Corr(const std::string& corr_id) { return corr_id; }
 // Each lifecycle step is its own helper so the smoke test's per-step
 // build/dispatch/assert sequences stay under the cognitive-complexity cap.
 
-// StartWifiDirect -> WifiReady, with generated creds reported.
+// StartWifiDirect -> group axis up, with generated creds reported.
 void StepStartWifiDirect(control::CommandDispatcher& dispatcher, session::SessionManager& manager) {
     sst_cam::Command cmd;
     cmd.set_correlation_id(Corr("a"));
@@ -133,7 +133,7 @@ void StepStartWifiDirect(control::CommandDispatcher& dispatcher, session::Sessio
     EXPECT_EQ(resp.correlation_id(), "a");
     ASSERT_EQ(resp.payload_case(), sst_cam::CommandResponse::kWifiDirectGroup);
     EXPECT_EQ(resp.wifi_direct_group().ssid(), "DIRECT-z");
-    EXPECT_EQ(manager.Phase(), session::SessionPhase::kWifiReady);
+    EXPECT_TRUE(manager.Snapshot().wifi_group_up);
 }
 
 // PushSessionConfig -> Configured.

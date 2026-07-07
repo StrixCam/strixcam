@@ -32,6 +32,7 @@
 #include "adapters/processing/opencv/opencv-side-by-side-compositor.hpp"
 #include "adapters/raw_capture/filesystem-raw-capture-sink.hpp"
 #include "adapters/raw_capture/proxy-retention.hpp"
+#include "adapters/session/json/json-session-summary-store.hpp"
 #include "adapters/storage/filesystem/filesystem-disk-guard.hpp"
 #include "adapters/storage/gstreamer/gst-continuous-recorder.hpp"
 #include "adapters/storage/opencv/opencv-jpeg-encoder.hpp"
@@ -223,11 +224,21 @@ auto RunFirmware() -> int {
     static sst::decision::ManualCameraState manual_camera_state;
     sst::streaming::PreviewLayoutState preview_layout_state;
 
-    // ── Session (lifecycle SM + disconnect cleanup) ────────────────────
+    // Persists the overlay scene timeline beside each L1 recording (#6 F6b) so
+    // the overlay can be burned onto the clean recording on demand (F6c).
+    // Declared ahead of SessionCleanup, which flushes it at session end.
+    sst::adapters::overlay::FilesystemOverlayTimelineRecorder overlay_timeline;
+
+    // ── Session (orthogonal axes SM + session-end cleanup fan-out) ─────
+    // The summary store persists the last-session summary in the config dir
+    // (write-ahead on recording start), so a crash mid-recording is reconciled
+    // into a reboot/file-invalid summary at the next boot.
     sst::session::SessionCleanup cleanup(recording_service, streaming_service, raw_capture_sink,
-                                         wifi_manager, dhcp_server, manual_camera_state,
-                                         preview_layout_state);
-    sst::session::SessionManager session_manager(cleanup);
+                                         overlay_timeline, wifi_manager, dhcp_server,
+                                         manual_camera_state, preview_layout_state);
+    sst::adapters::session::JsonSessionSummaryStore session_summary_store(
+        std::string(sst::paths::kConfigDir) + "/last-session.json");
+    sst::session::SessionManager session_manager(cleanup, &session_summary_store);
 
     // ── Overlay (scene -> Cairo/Pango RGBA -> caching sink) ────────────
     // The controller renders on change into the caching sink; the pipeline
@@ -235,9 +246,6 @@ auto RunFirmware() -> int {
     // each final BGR frame (CPU composite, single path for all output branches).
     sst::adapters::overlay::CairoOverlayRenderer overlay_renderer;
     sst::adapters::overlay::CachingOverlaySink overlay_sink;
-    // Persists the overlay scene timeline beside each L1 recording (#6 F6b) so
-    // the overlay can be burned onto the clean recording on demand (F6c).
-    sst::adapters::overlay::FilesystemOverlayTimelineRecorder overlay_timeline;
     sst::overlay::OverlayController overlay_controller(
         overlay_renderer, overlay_sink,
         sst::common::OutputSize{sst::runtime_defaults::kOverlayWidth,
@@ -500,8 +508,9 @@ auto RunFirmware() -> int {
 
     spdlog::info("startup complete — advertising as {}", advertised_name);
 
-    // Run until terminated (SIGINT/SIGTERM). Destructors stop the pipeline +
-    // transport (which finalizes any active session via the disconnect hook).
+    // Run until terminated (SIGINT/SIGTERM). The shutdown sequence below
+    // finalizes any still-active session explicitly (a disconnect no longer
+    // does — sessions outlive connections).
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, SIGINT);
@@ -512,6 +521,7 @@ auto RunFirmware() -> int {
         clock_thread.join();
         http_download_server.Stop();
         ble_transport.Stop();
+        session_manager.FinalizeSession(sst::session::SessionEndReason::kAppStop);
         pipeline.Stop();
         return 1;
     }
@@ -524,6 +534,10 @@ auto RunFirmware() -> int {
     telemetry_probe.Stop();
     http_download_server.Stop();
     ble_transport.Stop();
+    // End any still-active session BEFORE the pipeline stops feeding the
+    // recorder, so the MP4 is EOSed with its last frames (a disconnect no
+    // longer finalizes — sessions outlive connections).
+    session_manager.FinalizeSession(sst::session::SessionEndReason::kAppStop);
     pipeline.Stop();
     return 0;
 }

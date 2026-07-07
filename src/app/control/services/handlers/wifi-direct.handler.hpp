@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -12,15 +13,18 @@
 #include "app/streaming/ports/streaming-service.hpp"
 #include "bluetooth.pb.h"
 #include "domain/control/models/service-ports.hpp"
+#include "domain/network/models/wifi-direct-group.hpp"
 
 namespace sst::control {
 
 // Handles StartWifiDirect / StopWifiDirect. Start forms a real autonomous P2P
-// group owner, brings up DHCP on the group interface, advances the session to
-// WifiReady, starts the RTSP preview stream bound to the group-owner IP, and
+// group owner, brings up DHCP on the group interface, marks the session's WiFi
+// group up, starts the RTSP preview stream bound to the group-owner IP, and
 // reports the camera-generated credentials in a WifiDirectGroupResponse (KTD4).
-// Stop tears the group + DHCP down (preview teardown runs via SessionCleanup on
-// disconnect).
+// Start is IDEMPOTENT: while the group is already up (an app rejoining a live
+// session), it returns the existing credentials without touching
+// wpa_supplicant — group re-formation is the known Argus capture killer. Stop
+// tears the group + DHCP down (preview teardown runs via session finalize).
 class WifiDirectHandler final : public ICommandHandler {
    public:
     WifiDirectHandler(sst::session::ISessionManager& session, IWifiManager& wifi,
@@ -34,6 +38,11 @@ class WifiDirectHandler final : public ICommandHandler {
    private:
     auto HandleStart() -> sst_cam::CommandResponse;
     auto HandleStop() -> sst_cam::CommandResponse;
+    // The OK response carrying `group`'s credentials + service ports.
+    [[nodiscard]] auto BuildGroupResponse(const sst::network::WifiDirectGroup& group) const
+        -> sst_cam::CommandResponse;
+    // Best-effort RTSP preview start on the group-owner IP; degraded-not-fatal.
+    auto EnsurePreviewStarted(const std::string& group_owner_ip) -> void;
 
     sst::session::ISessionManager& session_;
     IWifiManager& wifi_;
@@ -45,6 +54,11 @@ class WifiDirectHandler final : public ICommandHandler {
     // Group interface of the active session, retained so HandleStop can flush its
     // address before the group is removed.
     std::string group_interface_;
+    // The formed group's credentials, retained for the idempotent rejoin path.
+    // Consulted only while wpa_supplicant still reports the group up, so a
+    // teardown the handler didn't see (auto-stop finalize) can't serve stale
+    // credentials.
+    std::optional<sst::network::WifiDirectGroup> active_group_;
 };
 
 }  // namespace sst::control

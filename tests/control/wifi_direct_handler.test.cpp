@@ -34,6 +34,7 @@ class FakeWifi final : public sst::control::IWifiManager {
         if (!ok) {
             return std::nullopt;
         }
+        group_up = true;
         sst::network::WifiDirectGroup group;
         group.ssid = "DIRECT-xy";
         group.psk = "secretpass";
@@ -42,10 +43,21 @@ class FakeWifi final : public sst::control::IWifiManager {
         group.role = "GO";
         return group;
     }
-    auto Stop() -> void override { ++stops; }
-    [[nodiscard]] auto State() const -> sst::control::WifiState override { return {}; }
+    auto Stop() -> void override {
+        ++stops;
+        group_up = false;
+    }
+    // Mirrors WpaWifiManager: a live group reads kP2pGroupOwner, else kOff —
+    // the handler's idempotent-start check consults this truth.
+    [[nodiscard]] auto State() const -> sst::control::WifiState override {
+        sst::control::WifiState state;
+        state.mode =
+            group_up ? sst::control::WifiMode::kP2pGroupOwner : sst::control::WifiMode::kOff;
+        return state;
+    }
 
     bool ok{true};
+    bool group_up{false};
     int starts{0};
     int stops{0};
 };
@@ -90,7 +102,7 @@ class FakeNetworkConfigurator final : public sst::control::INetworkConfigurator 
 
 class FakeCleanup final : public sst::session::ISessionCleanup {
    public:
-    auto FinalizeRecording() -> void override {}
+    auto FinalizeRecording() -> bool override { return false; }
     auto StopStreaming() -> void override {}
     auto TeardownWifiDirect() -> void override {}
     auto ResetSelections() -> void override {}
@@ -173,7 +185,7 @@ TEST(WifiDirectHandlerTest, StartReportsGeneratedCredentials) {
 
     EXPECT_EQ(dhcp.started_iface, "p2p-wlan0-0");
     EXPECT_EQ(dhcp.started_ip, "192.168.49.1");
-    EXPECT_EQ(manager.Phase(), sst::session::SessionPhase::kWifiReady);
+    EXPECT_TRUE(manager.Snapshot().wifi_group_up);
 
     // RTSP preview started, bound to the group-owner IP + preview port.
     EXPECT_EQ(streaming.app_starts, 1);
@@ -248,9 +260,10 @@ TEST(WifiDirectHandlerTest, StartRollsBackWhenSessionRejects) {
     EXPECT_EQ(dhcp.stops, 1);            // DHCP rolled back
     EXPECT_EQ(streaming.app_starts, 0);  // preview never started (rolled back before it)
     EXPECT_EQ(manager.Phase(), sst::session::SessionPhase::kIdle);
+    EXPECT_FALSE(manager.Snapshot().wifi_group_up);
 }
 
-// StopWifiDirect tears down DHCP + the group and drops the session phase.
+// StopWifiDirect tears down DHCP + the group and drops the group axis.
 TEST(WifiDirectHandlerTest, StopTearsDownGroupAndDhcp) {
     FakeCleanup cleanup;
     sst::session::SessionManager manager(cleanup);
@@ -269,7 +282,8 @@ TEST(WifiDirectHandlerTest, StopTearsDownGroupAndDhcp) {
     EXPECT_EQ(dhcp.stops, 1);
     EXPECT_EQ(netcfg.clears, 1);  // GO address flushed on teardown
     EXPECT_EQ(wifi.stops, 1);
-    EXPECT_EQ(manager.Phase(), sst::session::SessionPhase::kConnected);
+    EXPECT_FALSE(manager.Snapshot().wifi_group_up);
+    EXPECT_TRUE(manager.Snapshot().app_connected);  // connection axis untouched
 }
 
 // A preview start failure is degraded-but-not-fatal: the handler still returns
@@ -294,7 +308,66 @@ TEST(WifiDirectHandlerTest, PreviewFailureIsDegradedNotFatal) {
     // Group is not rolled back on a preview failure.
     EXPECT_EQ(wifi.stops, 0);
     EXPECT_EQ(dhcp.stops, 0);
-    EXPECT_EQ(manager.Phase(), sst::session::SessionPhase::kWifiReady);
+    EXPECT_TRUE(manager.Snapshot().wifi_group_up);
+}
+
+// Idempotent rejoin (Argus protection): StartWifiDirect while the group is
+// already up returns the SAME credentials with ZERO group re-formation — no
+// wpa_supplicant start, no IP re-assign, no DHCP restart, and the live RTSP
+// preview is left untouched.
+TEST(WifiDirectHandlerTest, RedundantStartReturnsSameCredentialsWithoutReforming) {
+    FakeCleanup cleanup;
+    sst::session::SessionManager manager(cleanup);
+    manager.OnConnect();
+    FakeWifi wifi;
+    FakeDhcp dhcp;
+    FakeNetworkConfigurator netcfg;
+    FakeStreaming streaming;
+    WifiDirectHandler handler(manager, wifi, netcfg, dhcp, streaming,
+                              sst::control::PreviewPort{kPreviewPort},
+                              sst::control::DownloadPort{kDownloadPort});
+
+    auto first = handler.Handle(StartCmd());
+    ASSERT_EQ(first.status(), sst_cam::ResponseStatus::OK);
+
+    auto second = handler.Handle(StartCmd());
+    ASSERT_EQ(second.status(), sst_cam::ResponseStatus::OK);
+    ASSERT_EQ(second.payload_case(), sst_cam::CommandResponse::kWifiDirectGroup);
+    EXPECT_EQ(second.wifi_direct_group().ssid(), first.wifi_direct_group().ssid());
+    EXPECT_EQ(second.wifi_direct_group().psk(), first.wifi_direct_group().psk());
+    EXPECT_EQ(second.wifi_direct_group().group_owner_ip(),
+              first.wifi_direct_group().group_owner_ip());
+
+    EXPECT_EQ(wifi.starts, 1);           // wpa_supplicant touched exactly once
+    EXPECT_EQ(wifi.stops, 0);            // and never cycled
+    EXPECT_EQ(netcfg.assigns, 1);        // GO address assigned once
+    EXPECT_EQ(dhcp.starts, 1);           // DHCP started once
+    EXPECT_EQ(streaming.app_starts, 1);  // live preview not restarted
+    EXPECT_TRUE(manager.Snapshot().wifi_group_up);
+}
+
+// After a teardown the handler did NOT perform (auto-stop finalize stops wpa
+// directly), a new Start re-forms a fresh group instead of serving stale creds.
+TEST(WifiDirectHandlerTest, StartAfterExternalTeardownReformsGroup) {
+    FakeCleanup cleanup;
+    sst::session::SessionManager manager(cleanup);
+    manager.OnConnect();
+    FakeWifi wifi;
+    FakeDhcp dhcp;
+    FakeNetworkConfigurator netcfg;
+    FakeStreaming streaming;
+    WifiDirectHandler handler(manager, wifi, netcfg, dhcp, streaming,
+                              sst::control::PreviewPort{kPreviewPort},
+                              sst::control::DownloadPort{kDownloadPort});
+
+    ASSERT_EQ(handler.Handle(StartCmd()).status(), sst_cam::ResponseStatus::OK);
+    wifi.Stop();  // external teardown (session finalize path)
+    manager.OnWifiStopped();
+
+    auto resp = handler.Handle(StartCmd());
+    EXPECT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_EQ(wifi.starts, 2);  // genuinely re-formed
+    EXPECT_TRUE(manager.Snapshot().wifi_group_up);
 }
 
 }  // namespace

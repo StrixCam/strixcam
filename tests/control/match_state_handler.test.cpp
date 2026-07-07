@@ -28,7 +28,7 @@ constexpr std::uint64_t kUpdatedAtStamp = 12345;
 
 class FakeCleanup final : public sst::session::ISessionCleanup {
    public:
-    auto FinalizeRecording() -> void override {}
+    auto FinalizeRecording() -> bool override { return false; }
     auto StopStreaming() -> void override {}
     auto TeardownWifiDirect() -> void override {}
     auto ResetSelections() -> void override {}

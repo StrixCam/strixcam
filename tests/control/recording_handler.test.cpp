@@ -70,7 +70,7 @@ class FakeRecorder final : public sst::storage::IRecordingService {
 
 class FakeCleanup final : public sst::session::ISessionCleanup {
    public:
-    auto FinalizeRecording() -> void override {}
+    auto FinalizeRecording() -> bool override { return false; }
     auto StopStreaming() -> void override {}
     auto TeardownWifiDirect() -> void override {}
     auto ResetSelections() -> void override {}
