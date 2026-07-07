@@ -116,10 +116,6 @@ auto GStreamerAdapter::CleanupPipeline() -> void {
         gst_object_unref(gst_pipeline_);
         gst_pipeline_ = nullptr;
     }
-    if (gst_err_ != nullptr) {
-        g_error_free(gst_err_);
-        gst_err_ = nullptr;
-    }
 }
 
 auto GStreamerAdapter::Start() -> void {
@@ -127,16 +123,17 @@ auto GStreamerAdapter::Start() -> void {
         return;
     }
 
-    pipeline_str_ = CreatePipeline();
-    if (pipeline_str_.empty()) {
+    const std::string pipeline_str = CreatePipeline();
+    if (pipeline_str.empty()) {
         spdlog::error("GStreamerAdapter: CreatePipeline() returned empty pipeline");
         return;
     }
 
-    gst_err_ = nullptr;
-    gst_pipeline_ = gst_parse_launch(pipeline_str_.c_str(), &gst_err_);
-    if (gst_err_ != nullptr) {
-        spdlog::error("Failed to parse/link pipeline: {}", gst_err_->message);
+    GError* gst_err = nullptr;
+    gst_pipeline_ = gst_parse_launch(pipeline_str.c_str(), &gst_err);
+    if (gst_err != nullptr) {
+        spdlog::error("Failed to parse/link pipeline: {}", gst_err->message);
+        g_error_free(gst_err);
         CleanupPipeline();
         return;
     }
@@ -283,6 +280,35 @@ auto GStreamerAdapter::HandleBusMessages() -> bool {
     return true;
 }
 
+namespace {
+// Owns the ref+map of a GstBuffer across CreateFrameFromSample's validation
+// early-exits (previously seven hand-rolled unmap+unref pairs); Disarm() hands
+// ownership over to the Frame's owner deleter, which performs the same
+// unmap+unref when the last Frame copy drops.
+class MappedBufferGuard {
+   public:
+    MappedBufferGuard(GstBuffer* buf, std::shared_ptr<GstMapInfo> map)
+        : buf_(buf), map_(std::move(map)) {}
+    ~MappedBufferGuard() {
+        if (armed_) {
+            gst_buffer_unmap(buf_, map_.get());
+            gst_buffer_unref(buf_);
+        }
+    }
+    MappedBufferGuard(const MappedBufferGuard&) = delete;
+    auto operator=(const MappedBufferGuard&) -> MappedBufferGuard& = delete;
+    MappedBufferGuard(MappedBufferGuard&&) = delete;
+    auto operator=(MappedBufferGuard&&) -> MappedBufferGuard& = delete;
+
+    auto Disarm() -> void { armed_ = false; }
+
+   private:
+    GstBuffer* buf_;
+    std::shared_ptr<GstMapInfo> map_;
+    bool armed_{true};
+};
+}  // namespace
+
 auto GStreamerAdapter::CreateFrameFromSample(GstSample* gst_sample) -> std::optional<Frame> {
     if (gst_sample == nullptr) {
         return std::nullopt;
@@ -305,10 +331,11 @@ auto GStreamerAdapter::CreateFrameFromSample(GstSample* gst_sample) -> std::opti
         gst_buffer_unref(buf_ref);
         return std::nullopt;
     }
+    // From here on every early exit must unmap+unref — one RAII guard instead
+    // of a hand-rolled pair per validation branch.
+    MappedBufferGuard guard(buf_ref, map);
     const guint number_of_planes = GST_VIDEO_INFO_N_PLANES(&info);
     if (number_of_planes == 0) {
-        gst_buffer_unmap(buf_ref, map.get());
-        gst_buffer_unref(buf_ref);
         return std::nullopt;
     }
     std::vector<FramePlane> planes;
@@ -316,16 +343,12 @@ auto GStreamerAdapter::CreateFrameFromSample(GstSample* gst_sample) -> std::opti
     const gsize mapped_size = map->size;
     const auto* mapped_data = static_cast<const uint8_t*>(map->data);
     if (mapped_data == nullptr || mapped_size == 0) {
-        gst_buffer_unmap(buf_ref, map.get());
-        gst_buffer_unref(buf_ref);
         return std::nullopt;
     }
     for (guint i = 0; i < number_of_planes; ++i) {
         const auto stride = static_cast<guint>(GST_VIDEO_INFO_PLANE_STRIDE(&info, i));
         const gsize offset = GST_VIDEO_INFO_PLANE_OFFSET(&info, i);
         if (offset >= mapped_size) {
-            gst_buffer_unmap(buf_ref, map.get());
-            gst_buffer_unref(buf_ref);
             return std::nullopt;
         }
         gsize current_plane_size = mapped_size;
@@ -336,14 +359,10 @@ auto GStreamerAdapter::CreateFrameFromSample(GstSample* gst_sample) -> std::opti
             }
         }
         if (current_plane_size <= offset) {
-            gst_buffer_unmap(buf_ref, map.get());
-            gst_buffer_unref(buf_ref);
             return std::nullopt;
         }
         const gsize plane_size = current_plane_size - offset;
         if (plane_size == 0 || offset + plane_size > mapped_size) {
-            gst_buffer_unmap(buf_ref, map.get());
-            gst_buffer_unref(buf_ref);
             return std::nullopt;
         }
         FramePlane plane{};
@@ -390,12 +409,11 @@ auto GStreamerAdapter::CreateFrameFromSample(GstSample* gst_sample) -> std::opti
             break;
         default:
             spdlog::error("GStreamerAdapter: unsupported GstVideoFormat {}", static_cast<int>(fmt));
-            gst_buffer_unmap(buf_ref, map.get());
-            gst_buffer_unref(buf_ref);
             return std::nullopt;
     }
 
     frame.memory = MemoryType::CPU;
+    guard.Disarm();  // the owner deleter below takes over the unmap+unref
     frame.owner = std::shared_ptr<void>(buf_ref, [map](void* gstreamerPipeline) {
         auto* gstreamerBuffer = static_cast<GstBuffer*>(gstreamerPipeline);
         gst_buffer_unmap(gstreamerBuffer, map.get());

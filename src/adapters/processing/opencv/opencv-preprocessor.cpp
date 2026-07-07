@@ -6,7 +6,6 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <optional>
-#include <utility>
 
 #include "adapters/processing/opencv/frame-mat.hpp"
 #include "domain/capture/models/frame.hpp"

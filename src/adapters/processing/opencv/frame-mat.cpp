@@ -71,9 +71,15 @@ auto MakeOwnedFrame(const cv::Mat& mat, sst::common::PixelFormat fmt, std::uint6
     const std::size_t total = static_cast<std::size_t>(rows) * row_bytes;
 
     auto buf = std::make_shared<std::vector<std::uint8_t>>(total);
-    for (std::uint32_t row = 0; row < rows; ++row) {
-        std::memcpy(buf->data() + static_cast<std::size_t>(row) * row_bytes,
-                    mat.ptr(static_cast<int>(row)), row_bytes);
+    if (mat.isContinuous()) {
+        // Hot path: every fresh cvtColor/resize output is continuous — one bulk
+        // copy instead of a per-row loop.
+        std::memcpy(buf->data(), mat.ptr(0), total);
+    } else {
+        for (std::uint32_t row = 0; row < rows; ++row) {
+            std::memcpy(buf->data() + static_cast<std::size_t>(row) * row_bytes,
+                        mat.ptr(static_cast<int>(row)), row_bytes);
+        }
     }
 
     sst::capture::Frame out;

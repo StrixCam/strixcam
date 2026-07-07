@@ -12,15 +12,11 @@
 
 extern "C" {
 using GstElement = struct _GstElement;  // NOLINT(bugprone-reserved-identifier)
-using GError = struct _GError;          // NOLINT(bugprone-reserved-identifier)
 using GstBus = struct _GstBus;          // NOLINT(bugprone-reserved-identifier)
 using GstSample = struct _GstSample;    // NOLINT(bugprone-reserved-identifier)
 }
 
 namespace sst::capture {
-
-using sst::capture::Frame;
-using sst::capture::ICaptureFrame;
 
 class GStreamerAdapter final : public ICaptureFrame {
    public:
@@ -61,10 +57,8 @@ class GStreamerAdapter final : public ICaptureFrame {
     // Last-sample steady_clock nanoseconds (frame truth for health). Atomic so
     // the health derivation reads it lock-free against the producer's writes.
     std::atomic<std::int64_t> last_sample_ns_{kNoSample};
-    std::string pipeline_str_;
     GstElement* gst_pipeline_{nullptr};
     GstBus* gst_bus_{nullptr};
-    GError* gst_err_{nullptr};
     GstElement* gst_sink_{nullptr};
     std::string gst_sink_name_{"sink"};
 
