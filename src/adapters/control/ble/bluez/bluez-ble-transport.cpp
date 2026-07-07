@@ -5,6 +5,8 @@
 #include <chrono>
 #include <cstdint>
 #include <future>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -224,6 +226,10 @@ auto BluezBleTransport::Start() -> void {
         connection_->enterEventLoopAsync();
         running_ = true;
 
+        // Owned worker for off-event-loop disconnect handling (see
+        // HandleCentralGone). Joined by Stop() while the event loop is still up.
+        disconnect_worker_ = std::thread([this] { DisconnectWorkerLoop(); });
+
         auto bluez = sdbus::createProxy(*connection_, kBluezBus, adapter_path_);
 
         // RegisterAdvertisement and RegisterApplication MUST be asynchronous.
@@ -266,6 +272,13 @@ auto BluezBleTransport::Stop() -> void {
     }
     spdlog::info("BluezBleTransport::Stop");
 
+    // Join the disconnect worker FIRST, while the event loop is still running
+    // (its re-advertise futures are serviced by that loop), and before the
+    // unregister calls below (so a late ReAdvertise can't re-register the
+    // advertisement we are about to drop). A ticket it never delivered is
+    // handed back and delivered synchronously here.
+    const auto undelivered_ticket = StopDisconnectWorker();
+
     // Notify the session layer of the connection loss (it arms the auto-stop
     // safety net; it no longer tears the session down). On-device, a
     // central-initiated disconnect (org.bluez Device1 Connected=false) should
@@ -274,6 +287,9 @@ auto BluezBleTransport::Stop() -> void {
     {
         std::lock_guard lock(mtx_);
         on_disconnect = on_disconnect_;
+    }
+    if (undelivered_ticket) {
+        supervisor_.DeliverDisconnect(*undelivered_ticket, on_disconnect);
     }
     if (const auto ticket = supervisor_.OnCentralGone()) {
         supervisor_.DeliverDisconnect(*ticket, on_disconnect);
@@ -328,18 +344,40 @@ auto BluezBleTransport::HandleCentralGone() -> void {
     }
     // This runs on the D-Bus event-loop thread (a GATT StopNotify callback).
     // Both the session notification and the re-advertise wait on work the event
-    // loop itself must service, so they cannot run inline — hand off to a
-    // worker. The transport lives for the process lifetime, so capturing `this`
-    // is safe. The worker re-validates the ticket at delivery time: if the
-    // central resubscribed+wrote before the worker ran, the disconnect is stale
-    // and is dropped (never delivered after the newer OnConnect).
-    std::thread([this, ticket = *ticket] {
+    // loop itself must service, so they cannot run inline — queue the ticket
+    // for the owned worker. Overwriting a pending ticket is safe: a second
+    // ticket can only exist after an intervening connect, which makes the older
+    // one stale (DeliverDisconnect would drop it by generation anyway).
+    {
+        std::lock_guard lock(worker_mtx_);
+        pending_ticket_ = ticket;
+    }
+    worker_cv_.notify_one();
+}
+
+auto BluezBleTransport::DisconnectWorkerLoop() -> void {
+    for (;;) {
+        std::optional<std::uint64_t> ticket;
+        {
+            std::unique_lock lock(worker_mtx_);
+            worker_cv_.wait(lock, [this] { return worker_stop_ || pending_ticket_.has_value(); });
+            if (worker_stop_) {
+                return;  // Stop() takes over delivery of any still-pending ticket
+            }
+            std::swap(ticket, pending_ticket_);
+        }
+        if (!ticket) {
+            continue;
+        }
         ConnectionHandler on_disc;
         {
             std::lock_guard lock(mtx_);
             on_disc = on_disconnect_;
         }
-        if (!supervisor_.DeliverDisconnect(ticket, on_disc)) {
+        // Re-validate at delivery time: if the central resubscribed+wrote before
+        // this ran, the disconnect is stale and is dropped (never delivered
+        // after the newer OnConnect).
+        if (!supervisor_.DeliverDisconnect(*ticket, on_disc)) {
             spdlog::info(
                 "BluezBleTransport: stale disconnect superseded by a newer connect — dropped");
         }
@@ -348,7 +386,25 @@ auto BluezBleTransport::HandleCentralGone() -> void {
         if (!supervisor_.CentralPresent()) {
             ReAdvertise();
         }
-    }).detach();
+    }
+}
+
+auto BluezBleTransport::StopDisconnectWorker() -> std::optional<std::uint64_t> {
+    std::optional<std::uint64_t> undelivered;
+    {
+        std::lock_guard lock(worker_mtx_);
+        worker_stop_ = true;
+        undelivered = pending_ticket_;
+        pending_ticket_.reset();
+    }
+    worker_cv_.notify_one();
+    if (disconnect_worker_.joinable()) {
+        disconnect_worker_.join();
+    }
+    // Re-arm for a future Start() (the transport is Start/Stop cyclable).
+    std::lock_guard lock(worker_mtx_);
+    worker_stop_ = false;
+    return undelivered;
 }
 
 auto BluezBleTransport::ReAdvertise() -> void {

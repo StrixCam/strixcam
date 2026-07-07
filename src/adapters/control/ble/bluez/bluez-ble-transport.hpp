@@ -3,10 +3,13 @@
 #include <sdbus-c++/sdbus-c++.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "adapters/control/ble/bluez/chunk-assembler.hpp"
@@ -52,9 +55,17 @@ class BluezBleTransport final : public sst::control::IBleTransport {
     // The central unsubscribed (StopNotify) — BlueZ fires this on disconnect.
     // Fire on_disconnect_ (session cleanup) and resume advertising so the camera
     // is discoverable again. Invoked on the D-Bus event-loop thread, so it hands
-    // the (blocking) work to a detached worker — running it inline would deadlock
-    // the event loop the re-advertise futures depend on.
+    // the (blocking) work to the owned disconnect worker — running it inline
+    // would deadlock the event loop the re-advertise futures depend on.
     auto HandleCentralGone() -> void;
+    // Body of the owned disconnect worker thread: waits for tickets queued by
+    // HandleCentralGone, delivers each (generation-validated) disconnect and
+    // re-advertises. Started by Start(), joined by Stop() BEFORE the event loop
+    // goes away (its re-advertise futures are serviced by that loop).
+    auto DisconnectWorkerLoop() -> void;
+    // Joins the worker; returns a still-undelivered ticket (queued disconnect
+    // the worker never got to) so Stop() can deliver it synchronously.
+    auto StopDisconnectWorker() -> std::optional<std::uint64_t>;
     // Re-register the LE advertisement so BlueZ resumes advertising (it pauses
     // our connectable advert on connect and does not auto-resume on disconnect).
     // MUST run off the event-loop thread.
@@ -94,15 +105,26 @@ class BluezBleTransport final : public sst::control::IBleTransport {
     CommandHandler on_command_;
     ConnectionHandler on_connect_;
     ConnectionHandler on_disconnect_;
-    // Connect/disconnect ordering: generation-validated so the detached
-    // disconnect worker never delivers OnDisconnect after a newer OnConnect
-    // (fast unsubscribe+resubscribe would otherwise re-arm the session's
-    // auto-stop right after the reconnect cancelled it).
+    // Connect/disconnect ordering: generation-validated so the disconnect
+    // worker never delivers OnDisconnect after a newer OnConnect (fast
+    // unsubscribe+resubscribe would otherwise re-arm the session's auto-stop
+    // right after the reconnect cancelled it).
     ConnectionSupervisor supervisor_;
     ChunkAssembler assembler_;
     std::atomic<bool> running_{false};
-    bool advertisement_registered_{false};
+    // Atomic: ReAdvertise() re-arms the advertisement flag from the disconnect
+    // worker while Stop()'s early-exit check may read it from another thread.
+    std::atomic<bool> advertisement_registered_{false};
     bool application_registered_{false};
+
+    // Owned disconnect worker (replaces the old detached thread, so shutdown
+    // joins every thread). HandleCentralGone (event-loop thread) queues the
+    // latest ticket; the worker delivers it off-loop. Guarded by worker_mtx_.
+    std::thread disconnect_worker_;
+    std::mutex worker_mtx_;
+    std::condition_variable worker_cv_;
+    bool worker_stop_{false};
+    std::optional<std::uint64_t> pending_ticket_;
 };
 
 }  // namespace sst::adapters::control
