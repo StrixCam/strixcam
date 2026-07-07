@@ -47,7 +47,12 @@ auto DownloadServer::Enumerate() const -> std::vector<RecordingSummary> {
     for (auto entry = fs::recursive_directory_iterator(video_root_, err);
          !err && entry != fs::recursive_directory_iterator(); entry.increment(err)) {
         const fs::path& path = entry->path();
-        if (!entry->is_regular_file(err)) {
+        // Per-entry error code, NOT the iterator's `err`: reusing `err` makes one
+        // failed stat (a file deleted mid-scan — the proxy-retention sweep deletes
+        // concurrently) silently END the whole walk via the `!err` loop condition,
+        // truncating the recordings list.
+        std::error_code stat_ec;
+        if (!entry->is_regular_file(stat_ec) || stat_ec) {
             continue;
         }
         const auto ext = path.extension();
@@ -57,8 +62,8 @@ auto DownloadServer::Enumerate() const -> std::vector<RecordingSummary> {
         RecordingSummary summary;
         // Both the training proxy and the final recording are .mp4 now; the
         // `raw__<group>__cam<N>` filename prefix (parsed here) is the sole
-        // discriminator — proxies live flat at the video root with that prefix,
-        // final recordings live in per-match subdirs without it.
+        // discriminator — proxies carry it, final recordings do not (both live
+        // inside the per-match subdirs; the walk above is recursive).
         const auto identity =
             sst::raw_capture::raw_capture_naming::ParseFileName(path.filename().string());
         if (identity) {
@@ -82,39 +87,39 @@ auto DownloadServer::Enumerate() const -> std::vector<RecordingSummary> {
     return out;
 }
 
-auto DownloadServer::ResolveRecordingPath(const std::string& recording_id) const
-    -> std::optional<fs::path> {
+namespace {
+
+// One recursive stem-match scan for both Resolve* lookups (they differed only in
+// root + extension). Per-entry error codes so one failed stat skips that entry
+// instead of ending the walk (same rationale as Enumerate above).
+auto FindByStem(const fs::path& root, const std::string& stem,
+                const char* extension) -> std::optional<fs::path> {
     std::error_code err;
-    if (recording_id.empty() || !fs::exists(video_root_, err)) {
+    if (stem.empty() || !fs::exists(root, err)) {
         return std::nullopt;
     }
-    for (auto entry = fs::recursive_directory_iterator(video_root_, err);
+    for (auto entry = fs::recursive_directory_iterator(root, err);
          !err && entry != fs::recursive_directory_iterator(); entry.increment(err)) {
         const fs::path& path = entry->path();
-        const auto ext = path.extension();
-        if (entry->is_regular_file(err) && ext == kMp4Extension &&
-            path.stem().string() == recording_id) {
+        std::error_code stat_ec;
+        if (entry->is_regular_file(stat_ec) && !stat_ec && path.extension() == extension &&
+            path.stem().string() == stem) {
             return path;
         }
     }
     return std::nullopt;
 }
 
+}  // namespace
+
+auto DownloadServer::ResolveRecordingPath(const std::string& recording_id) const
+    -> std::optional<fs::path> {
+    return FindByStem(video_root_, recording_id, kMp4Extension);
+}
+
 auto DownloadServer::ResolveThumbnailPath(const std::string& recording_id) const
     -> std::optional<fs::path> {
-    std::error_code err;
-    if (recording_id.empty() || !fs::exists(thumbnail_root_, err)) {
-        return std::nullopt;
-    }
-    for (auto entry = fs::recursive_directory_iterator(thumbnail_root_, err);
-         !err && entry != fs::recursive_directory_iterator(); entry.increment(err)) {
-        const fs::path& path = entry->path();
-        if (entry->is_regular_file(err) && path.extension() == kThumbnailExtension &&
-            path.stem().string() == recording_id) {
-            return path;
-        }
-    }
-    return std::nullopt;
+    return FindByStem(thumbnail_root_, recording_id, kThumbnailExtension);
 }
 
 auto DownloadServer::MintToken(const std::string& recording_id,
@@ -124,15 +129,7 @@ auto DownloadServer::MintToken(const std::string& recording_id,
         spdlog::warn("DownloadServer::MintToken: recording {} not found", recording_id);
         return std::nullopt;
     }
-    DownloadToken token;
-    token.recording_id = recording_id;
-    token.token = sst::common::utils::MakeSecureToken();
-    token.expires_at_unix = clock_() + ttl_seconds;
-    {
-        std::lock_guard lock(mtx_);
-        tokens_[token.token] = Entry{.path = *path, .expires_at_unix = token.expires_at_unix};
-    }
-    return token;
+    return MintFor(*path, recording_id, ttl_seconds);
 }
 
 auto DownloadServer::MintTokenForFile(const fs::path& file, const std::string& file_id,
@@ -142,6 +139,12 @@ auto DownloadServer::MintTokenForFile(const fs::path& file, const std::string& f
         spdlog::warn("DownloadServer::MintTokenForFile: {} missing", file.string());
         return std::nullopt;
     }
+    return MintFor(file, file_id, ttl_seconds);
+}
+
+// Shared token construction for both Mint entry points.
+auto DownloadServer::MintFor(const fs::path& file, const std::string& file_id,
+                             std::uint64_t ttl_seconds) -> DownloadToken {
     DownloadToken token;
     token.recording_id = file_id;
     token.token = sst::common::utils::MakeSecureToken();

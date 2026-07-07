@@ -7,9 +7,7 @@
 #include <unistd.h>
 
 #include <array>
-#include <charconv>
 #include <chrono>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -38,15 +36,10 @@ constexpr const char* kGoRole = "GO";
 // (P2P_GROUP_ADD's OK) gets dropped as "<no reply>".
 constexpr int kMaxEventReads = 48;
 
-auto StartsWith(const std::string& text, std::string_view prefix) -> bool {
-    return text.size() >= prefix.size() &&
-           std::memcmp(text.data(), prefix.data(), prefix.size()) == 0;
-}
-
 // A WiFi-ish interface name (predictable "wlP1p1s0", classic "wlan0", or a P2P
 // virtual iface).
 auto IsWifiName(const std::string& name) -> bool {
-    return StartsWith(name, "wl") || StartsWith(name, "p2p");
+    return name.starts_with("wl") || name.starts_with("p2p");
 }
 
 // The wpa_supplicant-managed interface == the control socket present in ctrl_dir.
@@ -241,8 +234,8 @@ auto WpaWifiManager::SendCommand(std::string_view cmd) -> std::optional<std::str
             // A zero-length datagram is not a reply. ReadUntil treats bytes<=0 as
             // terminal; here we skip the empty datagram and keep scanning for the
             // real reply within the bounded loop rather than returning "" as if it
-            // were the command's response (which made StartsWith("OK") spuriously
-            // fail, e.g. P2P_GROUP_ADD).
+            // were the command's response (which made the starts_with("OK") check
+            // spuriously fail, e.g. P2P_GROUP_ADD).
             continue;
         }
         std::string msg(buf.data(), static_cast<std::size_t>(bytes));
@@ -302,7 +295,7 @@ auto WpaWifiManager::DisableStaNetworks() -> void {
         // Station networks only — never a P2P group (active or persistent). Every
         // P2P SSID is `DIRECT-…`; a home AP is not, so the prefix is the safe
         // discriminator (the [CURRENT] flag alone can't tell them apart).
-        if (!StartsWith(net.ssid, "DIRECT-")) {
+        if (!net.ssid.starts_with("DIRECT-")) {
             SendCommand(fmt::format("DISABLE_NETWORK {}", net.id));
         }
     }
@@ -345,7 +338,7 @@ auto WpaWifiManager::FormGroup(std::string_view add_cmd)
         // reply isn't skipped past by SendCommand's event budget.
         DrainPendingEvents();
         auto reply = SendCommand(add_cmd);
-        if (reply && StartsWith(*reply, "OK")) {
+        if (reply && reply->starts_with("OK")) {
             if (auto event = ReadUntil("P2P-GROUP-STARTED")) {
                 if (auto parsed = ParseGroupStarted(*event)) {
                     sst::network::WifiDirectGroup group;

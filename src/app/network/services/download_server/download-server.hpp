@@ -61,6 +61,10 @@ class DownloadServer {
         -> std::optional<std::filesystem::path>;
 
    private:
+    // Shared token construction for MintToken / MintTokenForFile.
+    auto MintFor(const std::filesystem::path& file, const std::string& file_id,
+                 std::uint64_t ttl_seconds) -> DownloadToken;
+
     std::filesystem::path video_root_;
     std::filesystem::path thumbnail_root_;
     Clock clock_;

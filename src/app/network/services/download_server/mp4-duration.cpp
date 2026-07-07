@@ -1,8 +1,8 @@
 #include "app/network/services/download_server/mp4-duration.hpp"
 
 #include <array>
-#include <cstring>
 #include <fstream>
+#include <optional>
 #include <string>
 
 namespace sst::network {
@@ -36,6 +36,46 @@ auto ReadBe64(const std::uint8_t* bytes) -> std::uint64_t {
     const std::uint64_t high = ReadBe32(bytes);
     const std::uint64_t low = ReadBe32(bytes + kWordLen);
     return (high << (kBitsPerByte * kWordLen)) | low;
+}
+
+// One parsed box header: full box size (largesize / to-container-end resolved),
+// the header length actually consumed (8 or 16), and the 4-char type. Shared by
+// the top-level walk and the moov-child walk (previously duplicated).
+struct BoxHeader {
+    std::uint64_t size{0};
+    std::uint64_t header_len{0};
+    std::string type;
+};
+
+// Read the box header at `box_start` (file already positioned there). A
+// box_size of 0 means "extends to `container_end`". Returns nullopt on a short
+// read or an inconsistent size.
+auto ReadBoxHeader(std::ifstream& file, std::uint64_t box_start,
+                   std::uint64_t container_end) -> std::optional<BoxHeader> {
+    std::array<std::uint8_t, kBoxHeaderLen> hdr{};
+    file.read(reinterpret_cast<char*>(hdr.data()), kBoxHeaderLen);
+    if (!file) {
+        return std::nullopt;
+    }
+    BoxHeader box;
+    box.size = ReadBe32(hdr.data());
+    box.header_len = kBoxHeaderLen;
+    if (box.size == 1) {
+        std::array<std::uint8_t, kLargeSizeLen> ext{};
+        file.read(reinterpret_cast<char*>(ext.data()), kLargeSizeLen);
+        if (!file) {
+            return std::nullopt;
+        }
+        box.size = ReadBe64(ext.data());
+        box.header_len += kLargeSizeLen;
+    } else if (box.size == 0) {
+        box.size = container_end - box_start;
+    }
+    if (box.size < box.header_len) {
+        return std::nullopt;
+    }
+    box.type.assign(reinterpret_cast<const char*>(hdr.data()) + kWordLen, kWordLen);
+    return box;
 }
 
 // Read the mvhd box body (already positioned past its header) and return the
@@ -78,32 +118,14 @@ auto ParseMvhdDuration(std::ifstream& file, std::uint64_t body_len) -> std::uint
 auto FindMvhdInMoov(std::ifstream& file, std::uint64_t moov_body_end) -> std::uint64_t {
     while (static_cast<std::uint64_t>(file.tellg()) + kBoxHeaderLen <= moov_body_end) {
         const auto box_start = static_cast<std::uint64_t>(file.tellg());
-        std::array<std::uint8_t, kBoxHeaderLen> hdr{};
-        file.read(reinterpret_cast<char*>(hdr.data()), kBoxHeaderLen);
-        if (!file) {
+        const auto box = ReadBoxHeader(file, box_start, moov_body_end);
+        if (!box || box_start + box->size > moov_body_end) {
             return 0;
         }
-        std::uint64_t box_size = ReadBe32(hdr.data());
-        std::uint64_t header_len = kBoxHeaderLen;
-        if (box_size == 1) {
-            std::array<std::uint8_t, kLargeSizeLen> ext{};
-            file.read(reinterpret_cast<char*>(ext.data()), kLargeSizeLen);
-            if (!file) {
-                return 0;
-            }
-            box_size = ReadBe64(ext.data());
-            header_len += kLargeSizeLen;
-        } else if (box_size == 0) {
-            box_size = moov_body_end - box_start;
+        if (box->type == "mvhd") {
+            return ParseMvhdDuration(file, box->size - box->header_len);
         }
-        if (box_size < header_len || box_start + box_size > moov_body_end) {
-            return 0;
-        }
-        const std::string type(reinterpret_cast<const char*>(hdr.data()) + 4, 4);
-        if (type == "mvhd") {
-            return ParseMvhdDuration(file, box_size - header_len);
-        }
-        file.seekg(static_cast<std::streamoff>(box_start + box_size));
+        file.seekg(static_cast<std::streamoff>(box_start + box->size));
     }
     return 0;
 }
@@ -123,33 +145,15 @@ auto ProbeMp4DurationSeconds(const fs::path& path) -> std::uint64_t {
     std::uint64_t pos = 0;
     while (pos + kBoxHeaderLen <= file_size) {
         file.seekg(static_cast<std::streamoff>(pos));
-        std::array<std::uint8_t, kBoxHeaderLen> hdr{};
-        file.read(reinterpret_cast<char*>(hdr.data()), kBoxHeaderLen);
-        if (!file) {
+        const auto box = ReadBoxHeader(file, pos, file_size);
+        if (!box) {
             return 0;
         }
-        std::uint64_t box_size = ReadBe32(hdr.data());
-        std::uint64_t header_len = kBoxHeaderLen;
-        if (box_size == 1) {
-            std::array<std::uint8_t, kLargeSizeLen> ext{};
-            file.read(reinterpret_cast<char*>(ext.data()), kLargeSizeLen);
-            if (!file) {
-                return 0;
-            }
-            box_size = ReadBe64(ext.data());
-            header_len += kLargeSizeLen;
-        } else if (box_size == 0) {
-            box_size = file_size - pos;
+        if (box->type == "moov") {
+            // file is positioned just past this moov header -> at its first child.
+            return FindMvhdInMoov(file, pos + box->size);
         }
-        if (box_size < header_len) {
-            return 0;
-        }
-        const std::string type(reinterpret_cast<const char*>(hdr.data()) + 4, 4);
-        if (type == "moov") {
-            // file is positioned just past this moov header → at its first child.
-            return FindMvhdInMoov(file, pos + box_size);
-        }
-        pos += box_size;
+        pos += box->size;
     }
     return 0;
 }
