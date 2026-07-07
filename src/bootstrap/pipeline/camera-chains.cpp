@@ -1,12 +1,12 @@
-#include "composition/camera-chains.hpp"
+#include "bootstrap/pipeline/camera-chains.hpp"
 
 #include <memory>
 
 #include "adapters/capture/frame/gstreamer/gstreamer.hpp"
 #include "adapters/processing/opencv/opencv-preprocessor.hpp"
-#include "composition/runtime-defaults.hpp"
+#include "bootstrap/runtime/runtime-defaults.hpp"
 
-namespace sst::composition {
+namespace sst::bootstrap {
 
 auto BuildCameraChains(const sst::capture::CameraConfig& camera_config,
                        const std::string& device_model) -> std::vector<sst::pipeline::CameraChain> {
@@ -22,4 +22,4 @@ auto BuildCameraChains(const sst::capture::CameraConfig& camera_config,
     return chains;
 }
 
-}  // namespace sst::composition
+}  // namespace sst::bootstrap

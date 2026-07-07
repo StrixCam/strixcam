@@ -1,4 +1,4 @@
-#include "composition/control-plane.hpp"
+#include "bootstrap/control/control-plane.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -29,10 +29,10 @@
 #include "app/control/services/handlers/streaming.handler.hpp"
 #include "app/control/services/handlers/thumbnail.handler.hpp"
 #include "app/control/services/handlers/wifi-direct.handler.hpp"
-#include "composition/runtime-clock.hpp"
-#include "composition/runtime-defaults.hpp"
+#include "bootstrap/runtime/runtime-clock.hpp"
+#include "bootstrap/runtime/runtime-defaults.hpp"
 
-namespace sst::composition {
+namespace sst::bootstrap {
 
 auto RegisterControlPlane(sst::control::CommandDispatcher& dispatcher, const ControlPlaneDeps& deps)
     -> std::shared_ptr<sst::control::MatchHandler> {
@@ -167,4 +167,4 @@ auto RegisterControlPlane(sst::control::CommandDispatcher& dispatcher, const Con
     return match_handler;
 }
 
-}  // namespace sst::composition
+}  // namespace sst::bootstrap

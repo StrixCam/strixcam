@@ -3,7 +3,7 @@
 #include "domain/processing/models/color-calibration-state.hpp"
 #include "domain/processing/models/postprocess-config.hpp"
 
-namespace sst::composition {
+namespace sst::bootstrap {
 
 // WB magenta-correction gains are env-tunable so the cast can be dialed in
 // on-device without a rebuild (a fixed grey-world gain over/under-shoots per
@@ -19,4 +19,4 @@ auto ResolvePostprocessConfig() -> sst::processing::PostprocessConfig;
 auto InitialCalibrationGains(const sst::processing::PostprocessConfig& config)
     -> sst::processing::ColorCalibrationState::Gains;
 
-}  // namespace sst::composition
+}  // namespace sst::bootstrap

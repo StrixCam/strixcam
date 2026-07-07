@@ -7,9 +7,9 @@
 #include <thread>
 #include <utility>
 
-namespace sst::composition {
+namespace sst::common {
 
-// Composition-root helper: runs `tick` every `interval` on an owned background
+// Generic concurrency helper: runs `tick` every `interval` on an owned background
 // thread until destroyed (or Stop()). The wait is condition-variable based, so
 // shutdown is immediate rather than sleeping out the interval — the same
 // cv-interruptible poller pattern the telemetry probe and autofocus loop use,
@@ -77,4 +77,4 @@ class PeriodicWorker {
     std::thread thread_;
 };
 
-}  // namespace sst::composition
+}  // namespace sst::common

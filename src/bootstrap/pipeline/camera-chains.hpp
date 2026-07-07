@@ -6,7 +6,7 @@
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
 #include "domain/capture/models/camera-config.hpp"
 
-namespace sst::composition {
+namespace sst::bootstrap {
 
 // The two production camera chains (sensor-id 0 and 1): GStreamer capture +
 // OpenCV preprocessor each. Both run; the decision seam presents one camera,
@@ -14,4 +14,4 @@ namespace sst::composition {
 auto BuildCameraChains(const sst::capture::CameraConfig& camera_config,
                        const std::string& device_model) -> std::vector<sst::pipeline::CameraChain>;
 
-}  // namespace sst::composition
+}  // namespace sst::bootstrap

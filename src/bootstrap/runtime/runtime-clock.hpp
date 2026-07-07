@@ -6,7 +6,7 @@
 // Composition-root clock sources. Every handler that needs "now" takes it as
 // an injected function (testability); these are the production implementations
 // main() wires in.
-namespace sst::composition {
+namespace sst::bootstrap {
 
 // Monotonic milliseconds (steady_clock) — for RELATIVE durations only
 // (overlay/match clocks). Never decode this as a wall-clock timestamp.
@@ -33,4 +33,4 @@ inline auto NowEpochMs() -> std::uint64_t {
                                           .count());
 }
 
-}  // namespace sst::composition
+}  // namespace sst::bootstrap

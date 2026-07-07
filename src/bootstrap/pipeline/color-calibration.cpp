@@ -1,4 +1,4 @@
-#include "composition/color-calibration.hpp"
+#include "bootstrap/pipeline/color-calibration.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -6,7 +6,7 @@
 #include <exception>
 #include <string>
 
-namespace sst::composition {
+namespace sst::bootstrap {
 
 namespace {
 
@@ -51,4 +51,4 @@ auto InitialCalibrationGains(const sst::processing::PostprocessConfig& config)
             .brightness = EnvGain("SST_BRIGHTNESS", sst::processing::kDefaultBrightness)};
 }
 
-}  // namespace sst::composition
+}  // namespace sst::bootstrap

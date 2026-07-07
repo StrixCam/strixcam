@@ -201,7 +201,7 @@ src/
 ├── domain/<module>/     # Pure C++ — entities, value objects, invariants. No I/O, no heavy libs.
 ├── app/<module>/        # Use-case services, orchestration. Depends on domain + ports only.
 ├── adapters/<module>/   # GStreamer, filesystem, OpenCV. Implements ports.
-├── composition/         # Composition-root units main() wires together (control-plane registration, camera chains, env-resolved calibration, clocks, periodic workers).
+├── bootstrap/           # Composition root main() wires together, split by concern: pipeline/ (camera chains, env-resolved calibration), control/ (control-plane registration), runtime/ (clocks, path/wiring defaults).
 └── <module>/ports/      # Abstract interfaces (pure virtual). Stable contracts between layers.
 ```
 

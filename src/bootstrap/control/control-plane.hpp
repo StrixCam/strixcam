@@ -32,7 +32,7 @@
 #include "domain/processing/models/frame-color-stats.hpp"
 #include "domain/streaming/models/preview-layout.hpp"
 
-namespace sst::composition {
+namespace sst::bootstrap {
 
 // Everything the control plane wires against. References only — main() owns
 // every object and each must outlive the dispatcher (i.e. the BLE transport
@@ -76,4 +76,4 @@ struct ControlPlaneDeps {
 auto RegisterControlPlane(sst::control::CommandDispatcher& dispatcher, const ControlPlaneDeps& deps)
     -> std::shared_ptr<sst::control::MatchHandler>;
 
-}  // namespace sst::composition
+}  // namespace sst::bootstrap

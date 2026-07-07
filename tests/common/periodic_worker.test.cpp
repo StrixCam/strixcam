@@ -4,11 +4,11 @@
 #include <chrono>
 #include <thread>
 
-#include "composition/periodic-worker.hpp"
+#include "domain/common/services/periodic-worker.hpp"
 
 using namespace std::chrono_literals;
 
-namespace sst::composition {
+namespace sst::common {
 
 TEST(PeriodicWorkerTest, TicksRepeatedlyAtInterval) {
     std::atomic<int> ticks{0};
@@ -63,4 +63,4 @@ TEST(PeriodicWorkerTest, DestructorJoinsARunningWorker) {
     EXPECT_EQ(ticks.load(), after_destruction);
 }
 
-}  // namespace sst::composition
+}  // namespace sst::common

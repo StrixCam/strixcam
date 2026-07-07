@@ -54,13 +54,13 @@
 #include "app/session/services/session_manager/session-manager.hpp"
 #include "app/storage/services/recording_service/recording-service.hpp"
 #include "app/streaming/services/streaming_service/streaming-service.hpp"
-#include "composition/camera-chains.hpp"
-#include "composition/color-calibration.hpp"
-#include "composition/control-plane.hpp"
-#include "composition/periodic-worker.hpp"
-#include "composition/runtime-clock.hpp"
-#include "composition/runtime-defaults.hpp"
+#include "bootstrap/control/control-plane.hpp"
+#include "bootstrap/pipeline/camera-chains.hpp"
+#include "bootstrap/pipeline/color-calibration.hpp"
+#include "bootstrap/runtime/runtime-clock.hpp"
+#include "bootstrap/runtime/runtime-defaults.hpp"
 #include "domain/capture/models/camera-config.hpp"
+#include "domain/common/services/periodic-worker.hpp"
 #include "domain/control/utils/advertised-name.hpp"
 #include "domain/decision/models/manual-camera-state.hpp"
 #include "domain/focus/models/focus-state.hpp"
@@ -73,7 +73,7 @@
 // until terminated. Pure composition: construction order IS destruction-order
 // safety here (locals are destroyed in reverse, so everything is declared
 // before what borrows it), and the policy/wiring details live in
-// src/composition/.
+// src/bootstrap/.
 namespace {
 auto RunFirmware() -> int {
     spdlog::set_level(spdlog::level::debug);
@@ -199,7 +199,7 @@ auto RunFirmware() -> int {
 
     // ── Downloads ──────────────────────────────────────────────────────
     sst::network::DownloadServer download_server(video_root, thumbnail_root,
-                                                 sst::composition::NowUnixSeconds);
+                                                 sst::bootstrap::NowUnixSeconds);
 
     // Training-proxy retention (U7): a periodic sweep bounds total proxy footage
     // (the raw__*.mp4 pairs accumulate one per match). Delete-oldest, protected
@@ -210,7 +210,7 @@ auto RunFirmware() -> int {
     sst::adapters::raw_capture::ProxyRetention proxy_retention(
         video_root, cfg.storage.proxy_max_total_bytes.value_or(0));
     constexpr std::chrono::minutes kProxySweepInterval{5};
-    sst::composition::PeriodicWorker proxy_retention_sweep(
+    sst::common::PeriodicWorker proxy_retention_sweep(
         kProxySweepInterval, [&proxy_retention, &download_server] {
             proxy_retention.Sweep([&download_server](const std::filesystem::path& file) {
                 return download_server.IsTokened(file);
@@ -269,15 +269,15 @@ auto RunFirmware() -> int {
     // but stays live so raw dual capture can tap it.
     const sst::capture::CameraConfig camera_cfg{};
     auto camera_chains =
-        sst::composition::BuildCameraChains(camera_cfg, cfg.device.model.value_or(""));
+        sst::bootstrap::BuildCameraChains(camera_cfg, cfg.device.model.value_or(""));
 
-    const auto postproc_cfg = sst::composition::ResolvePostprocessConfig();
+    const auto postproc_cfg = sst::bootstrap::ResolvePostprocessConfig();
     // Live WB calibration state (diagnostic Calibration screen). Seeded from the
     // resolved default/env gains; the postprocessor samples it each frame and the
     // SetCameraCalibration handler writes it, so slider drags retune the preview
     // live. Must outlive the postprocessor (moved into the pipeline below).
     sst::processing::ColorCalibrationState calibration_state(
-        sst::composition::InitialCalibrationGains(postproc_cfg));
+        sst::bootstrap::InitialCalibrationGains(postproc_cfg));
     // Motorized-focus VCM driver + shared per-camera focus mode/position (U8/U9).
     // Must outlive the handlers + the AF loop below.
     sst::adapters::focus::I2cFocuser focuser;
@@ -339,39 +339,39 @@ auto RunFirmware() -> int {
     sst::adapters::control::ProcSystemStats system_stats(video_root);
 
     // ── Control plane: dispatcher + per-concern handlers ───────────────
-    // One Register() per concern, grouped in composition/control-plane.cpp
+    // One Register() per concern, grouped in bootstrap/control/control-plane.cpp
     // (the ★ extensibility point). MatchHandler comes back so the ~1 Hz
     // display-clock worker below can tick it.
     sst::control::CommandDispatcher dispatcher;
     sst::adapters::storage::OpenCvJpegEncoder jpeg_encoder;
-    auto match_handler = sst::composition::RegisterControlPlane(
-        dispatcher, sst::composition::ControlPlaneDeps{.device_cfg = cfg.device,
-                                                       .uplink_cfg = cfg.uplink,
-                                                       .system_stats = system_stats,
-                                                       .telemetry_probe = telemetry_probe,
-                                                       .session_manager = session_manager,
-                                                       .overlay_controller = overlay_controller,
-                                                       .overlay_timeline = overlay_timeline,
-                                                       .recording_service = recording_service,
-                                                       .streaming_service = streaming_service,
-                                                       .uplink_probe = uplink_probe,
-                                                       .raw_capture_sink = raw_capture_sink,
-                                                       .proxy_lifecycle = proxy_lifecycle,
-                                                       .wifi_manager = wifi_manager,
-                                                       .network_configurator = network_configurator,
-                                                       .dhcp_server = dhcp_server,
-                                                       .uplink_manager = uplink_manager,
-                                                       .uplink_store = uplink_store,
-                                                       .download_server = download_server,
-                                                       .export_manager = export_manager,
-                                                       .pipeline = pipeline,
-                                                       .jpeg_encoder = jpeg_encoder,
-                                                       .manual_camera_state = manual_camera_state,
-                                                       .preview_layout_state = preview_layout_state,
-                                                       .calibration_state = calibration_state,
-                                                       .frame_color_stats = frame_color_stats,
-                                                       .focuser = focuser,
-                                                       .focus_state = focus_state});
+    auto match_handler = sst::bootstrap::RegisterControlPlane(
+        dispatcher, sst::bootstrap::ControlPlaneDeps{.device_cfg = cfg.device,
+                                                     .uplink_cfg = cfg.uplink,
+                                                     .system_stats = system_stats,
+                                                     .telemetry_probe = telemetry_probe,
+                                                     .session_manager = session_manager,
+                                                     .overlay_controller = overlay_controller,
+                                                     .overlay_timeline = overlay_timeline,
+                                                     .recording_service = recording_service,
+                                                     .streaming_service = streaming_service,
+                                                     .uplink_probe = uplink_probe,
+                                                     .raw_capture_sink = raw_capture_sink,
+                                                     .proxy_lifecycle = proxy_lifecycle,
+                                                     .wifi_manager = wifi_manager,
+                                                     .network_configurator = network_configurator,
+                                                     .dhcp_server = dhcp_server,
+                                                     .uplink_manager = uplink_manager,
+                                                     .uplink_store = uplink_store,
+                                                     .download_server = download_server,
+                                                     .export_manager = export_manager,
+                                                     .pipeline = pipeline,
+                                                     .jpeg_encoder = jpeg_encoder,
+                                                     .manual_camera_state = manual_camera_state,
+                                                     .preview_layout_state = preview_layout_state,
+                                                     .calibration_state = calibration_state,
+                                                     .frame_color_stats = frame_color_stats,
+                                                     .focuser = focuser,
+                                                     .focus_state = focus_state});
 
     // ── BLE transport ──────────────────────────────────────────────────
     // advertised_name computed above (shared with the WiFi-Direct SSID postfix).
@@ -405,8 +405,8 @@ auto RunFirmware() -> int {
     // Drive the display-only match clock at ~1 Hz (the app is still the timing
     // authority; this only advances the on-screen clock between app events).
     // cv-interruptible, so shutdown never waits out the tick interval.
-    sst::composition::PeriodicWorker match_clock(std::chrono::seconds(1),
-                                                 [&match_handler] { match_handler->TickClock(); });
+    sst::common::PeriodicWorker match_clock(std::chrono::seconds(1),
+                                            [&match_handler] { match_handler->TickClock(); });
     match_clock.Start();
 
     spdlog::info("startup complete — advertising as {}", advertised_name);
