@@ -4,11 +4,11 @@
 # emitted diagnostic to an error via `WarningsAsErrors: '*'`. The tree is clean
 # under the full enforced set, so any new violation fails the build.
 #
-# VERSION-LOCKED to clang-tidy-14 (jammy). The enforced check set and the
-# zero-warning baseline are tied to this version — a silent bump to 15+ adds
-# checks and breaks the gate. Treat a version change as a deliberate, re-triaged
-# change (clang-tidy-14 is pinned in .devcontainer/Dockerfile and called
-# explicitly in CI + scripts/fix.sh). See CLAUDE.md "Linting & formatting".
+# VERSION-LOCKED to noble's clang-tidy v18 (JetPack 7.2 / Ubuntu 24.04). The
+# enforced check set and the zero-warning baseline are tied to this version —
+# a silent bump adds checks and breaks the gate. Treat a version change as a
+# deliberate, re-triaged change (the devcontainer installs noble's clang-tidy;
+# CI + scripts/fix.sh run that same binary). See CLAUDE.md "Linting & formatting".
 #
 # Enforced families (none removed — the tree passes all of them):
 #   bugprone-*     real defect classes  — FLOOR: fix, or a justified + sanctioned

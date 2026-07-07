@@ -109,14 +109,14 @@ Built and working:
 - [x] **Buffer** — `LatestOnlySlot`, `DropOldestRing`, plus a `MaterializeFrame` helper so producers can release the GstBuffer the moment a frame enters a downstream buffer
 - [x] **Network / control** — WiFi and Bluetooth BLE modules
 - [x] **Processing** — `IPreprocessor` / `IPostprocessor` ports + OpenCV adapter (Grayscale / Binary / RGB AI modes; crop + resize + format-convert post)
-- [x] **Pipeline orchestration** — `PipelineOrchestrator` wires capture → preprocess → materialize → buffer → postprocess → fan-out (two worker threads). Single-camera + inline full-frame crop today; the dual-camera + `IDecision` seam is the hardware-demo work
+- [x] **Pipeline orchestration** — `PipelineOrchestrator` wires capture → preprocess → materialize → buffer → postprocess → fan-out (producer threads per camera + one consumer). Dual-camera with the `IDecision` seam wired
 - [x] **Storage** — `RecordingService` + GStreamer recorder write MP4s; `DownloadServer` enumerates them and mints TTL tokens
-- [x] **Streaming** — `StreamingService` fans out to RTSP app-stream + RTMP adapters (RTSP not yet started in production)
-- [x] **Overlay** — cairo renderer + GStreamer compositor + proto→domain mapper, built but not yet wired into the final-frame path
+- [x] **Streaming** — `StreamingService` fans out to RTSP app-stream + RTMP adapters (RTSP preview starts with the WiFi-Direct group)
+- [x] **Overlay** — cairo renderer + caching sink, composited onto the stream branch in the pipeline consumer; burned onto recordings on demand (export)
+- [x] **Decision** — `IDecision` seam wired in production with `ManualDecision` (app-selected camera); `StaticDecision` (cam-0) remains the test/demo policy until AI decision lands
 
 Not started:
 
-- [ ] **Decision** — picks which camera's frame + crop / zoom rect; hands off to postprocess (hardware demo adds a static cam-0 `StaticDecision` behind the `IDecision` port)
 - [ ] **AI / tracking** — TensorRT model + adapter; field and ball first, players + jersey numbers later. One inference per camera
 - [ ] **Physics** — ball trajectory / world-coordinate projection from both cameras' detections
 - [ ] **Microphone** — MAX4466 dual-mic integration

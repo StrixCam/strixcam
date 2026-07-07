@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-SST Cam firmware — C++20 embedded runtime for NVIDIA Jetson Orin Nano (JetPack 7.2 / L4T r39.2 / Ubuntu 24.04). Dual IMX477 cameras, GStreamer pipeline, AI sports tracking. `_old/` contains deprecated Python prototypes; ignore it.
+SST Cam firmware — C++20 embedded runtime for NVIDIA Jetson Orin Nano (JetPack 7.2 / L4T r39.2 / Ubuntu 24.04). Dual IMX477 cameras, GStreamer pipeline, AI sports tracking.
 
 ## Build
 
@@ -201,6 +201,7 @@ src/
 ├── domain/<module>/     # Pure C++ — entities, value objects, invariants. No I/O, no heavy libs.
 ├── app/<module>/        # Use-case services, orchestration. Depends on domain + ports only.
 ├── adapters/<module>/   # GStreamer, filesystem, OpenCV. Implements ports.
+├── composition/         # Composition-root units main() wires together (control-plane registration, camera chains, env-resolved calibration, clocks, periodic workers).
 └── <module>/ports/      # Abstract interfaces (pure virtual). Stable contracts between layers.
 ```
 
@@ -245,7 +246,7 @@ Per-stage notes:
 - **Storage**: writes the (optionally overlaid) final frames to disk — local recording / archive.
 - **Streaming**: sends the (optionally overlaid) final frames over the network — RTSP / HLS / etc.
 
-Storage and streaming consume the same final buffer in parallel; either can be enabled or disabled independently. Capture threads do minimal work and never block on downstream. Buffers are bounded and drop old data. `PipelineOrchestrator` already runs the producer/consumer worker threads (single-camera, inline full-frame crop); the AI → physics → decision shared stages are not built yet — the hardware demo adds the `IDecision` seam and the second camera.
+Storage and streaming consume the same final buffer in parallel; either can be enabled or disabled independently. Capture threads do minimal work and never block on downstream. Buffers are bounded and drop old data. `PipelineOrchestrator` runs the per-camera producer threads + the consumer, with the `IDecision` seam and both cameras wired; the AI → physics shared stages are not built yet.
 
 ## Module status
 
@@ -256,14 +257,14 @@ Built and working:
 - [x] **Buffer** — `LatestOnlySlot<T>`, `DropOldestRing<T>`, plus `MaterializeFrame` for releasing GstBuffer-backed frames at the buffer boundary (`src/domain/buffer/`).
 - [x] **Network / control** — WiFi and Bluetooth BLE control modules.
 - [x] **Processing** — `IPreprocessor` / `IPostprocessor` ports + OpenCV adapter (Grayscale / Binary / RGB AI modes; crop + resize + format-convert post). `FrameBundle`, `CropRect`, `ColorMode` (`src/{domain,app,adapters}/processing/`).
-- [x] **Pipeline orchestration** — `PipelineOrchestrator` (`src/app/pipeline/services/orchestrator/`) wires capture → preprocess → materialize → buffer → postprocess → fan-out via two worker threads (`ProducerLoop`/`ConsumerLoop`). Single-camera with an inline full-frame crop today; the `IDecision` seam and second camera are the hardware-demo work.
+- [x] **Pipeline orchestration** — `PipelineOrchestrator` (`src/app/pipeline/services/orchestrator/`) wires capture → preprocess → materialize → buffer → decision → postprocess → fan-out (`ProducerLoop` per camera + `ConsumerLoop`), dual-camera with the `IDecision` seam wired.
 - [x] **Storage** — `RecordingService` (`src/app/storage/services/recording_service/`) + GStreamer continuous recorder write MP4s to disk; `DownloadServer` enumerates them and mints TTL download tokens.
 - [x] **Streaming** — `StreamingService` (`src/app/streaming/services/streaming_service/`) fans out to an RTSP app-stream server + RTMP streamer (`src/adapters/streaming/`). RTSP `StartAppStream` is started by `WifiDirectHandler::HandleStart` when the WiFi-Direct group forms (the server listens; the x264 encode is instantiated lazily per connected viewer via `media-configure`, so idle costs no encode) and torn down by `SessionCleanup`.
-- [x] **Overlay** — `OverlayHandler`, cairo renderer, GStreamer compositor, proto→domain mapper (`src/{domain,app,adapters}/overlay/`). Built but **not yet wired into the final-frame production path**.
+- [x] **Overlay** — `OverlayHandler`, cairo renderer, caching sink, proto→domain mapper (`src/{domain,app,adapters}/overlay/`). Composited onto the stream branch in the pipeline consumer; burned onto clean recordings on demand (export module).
+- [x] **Decision** — `IDecision` seam wired in production: `ManualDecision` follows the app-selected camera; `StaticDecision` (cam-0) remains the test/demo policy until AI decision lands (`src/app/decision/`).
 
 Not started:
 
-- [ ] **Decision** — picks which camera's frame + crop / zoom rect; hands off to postprocess. (The hardware demo adds a static cam-0 `StaticDecision` behind the `IDecision` port — the intelligence seam.)
 - [ ] **AI / tracking** — TensorRT model + adapter; field and ball first, players + jersey numbers later. One inference per camera.
 - [ ] **Physics** — ball trajectory / world-coordinate projection from both cameras' detections.
 - [ ] **Microphone** — MAX4466 dual-mic integration.

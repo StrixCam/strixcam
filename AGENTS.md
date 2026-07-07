@@ -25,11 +25,12 @@ Do not `#ifdef`-skip them.
 ## Linting (hard gate)
 
 `tidy` is a **hard CI gate**: `.clang-tidy` promotes every diagnostic to an
-error (`WarningsAsErrors: '*'`) and clang-tidy is version-locked to
-`clang-tidy-14`. CI is verify-only — fix fixable findings dev-side first:
+error (`WarningsAsErrors: '*'`) and clang-tidy is version-locked to noble's
+v18 (JetPack 7.2 / Ubuntu 24.04). CI is verify-only — fix fixable findings
+dev-side first:
 
 ```bash
-scripts/fix.sh          # clang-format + clang-tidy-14 --fix on STAGED C/C++
+scripts/fix.sh          # clang-format + clang-tidy --fix on STAGED C/C++
 scripts/fix.sh --all    # whole src/ + tests/ tree
 ```
 
