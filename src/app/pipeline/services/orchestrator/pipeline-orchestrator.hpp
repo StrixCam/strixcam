@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -14,6 +15,7 @@
 #include "app/capture/ports/frame-src.hpp"
 #include "app/decision/ports/decision.hpp"
 #include "app/overlay/ports/overlay-frame-source.hpp"
+#include "app/pipeline/ports/camera-frame-tap.hpp"
 #include "app/pipeline/ports/frame-snapshot-source.hpp"
 #include "app/processing/ports/frame-compositor.hpp"
 #include "app/processing/ports/postprocessor.hpp"
@@ -100,7 +102,8 @@ struct CameraChain {
 // always presents camera 0. If camera 0 stalls, the consumer wakes every
 // consumer_pop_timeout, the decision returns nullopt, and it retries — no
 // deadlock, and other cameras' frames simply age out.
-class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
+class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource,
+                                   public sst::pipeline::ICameraFrameTap {
    public:
     // Both raw_sink and overlay_source are optional (may be null). When raw_sink
     // is set, every camera's materialized bundle is forked to it before the move
@@ -171,6 +174,14 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     // copied off any GstBuffer so it stays valid for the caller. std::nullopt
     // until the consumer has produced at least one frame.
     [[nodiscard]] auto GrabLatest() -> std::optional<sst::capture::Frame> override;
+
+    // ICameraFrameTap (U6 autofocus): block up to `timeout` for the next frame
+    // camera_index's producer materializes, then return a descriptor copy that
+    // shares pixel ownership (never a pixel copy). The producer pays a single
+    // relaxed atomic load per frame while no request is pending, so the tap is
+    // free on the hot path. nullopt on timeout / out-of-range / stopped.
+    [[nodiscard]] auto GrabCameraFrame(std::size_t camera_index, std::chrono::milliseconds timeout)
+        -> std::optional<sst::capture::Frame> override;
 
    private:
     auto ProducerLoop(std::size_t camera_index) -> void;
@@ -245,6 +256,24 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     // One slot per camera. unique_ptr because LatestOnlySlot is non-movable and
     // we size the vector at construction from the camera count.
     std::vector<std::unique_ptr<sst::buffer::LatestOnlySlot<sst::processing::FrameBundle>>> slots_;
+
+    // Per-camera on-request producer tap (U6 autofocus). GrabCameraFrame arms
+    // `requested`; the producer — right after materializing, so the shared
+    // pixels are an owned vector, never a pinned GstBuffer — checks it with one
+    // relaxed load per frame and, only when armed, publishes a descriptor copy
+    // under the slot mutex and notifies. unique_ptr because the sync members
+    // are non-movable and the vector is sized at construction.
+    struct FrameTapSlot {
+        std::mutex mtx;
+        std::condition_variable cv;
+        std::atomic<bool> requested{false};
+        std::optional<sst::capture::Frame> sample;
+    };
+    std::vector<std::unique_ptr<FrameTapSlot>> tap_slots_;
+
+    // Producer-side half of the tap: publish `frame` iff a grab is waiting.
+    // One relaxed load when idle — the hot path's entire cost.
+    static auto ServeFrameTap(FrameTapSlot& tap, const sst::capture::Frame& frame) -> void;
 
     // Per-camera count of COMPLETED-AND-FAILED watchdog restart attempts since
     // frames last flowed. Written by that camera's producer (increment on a

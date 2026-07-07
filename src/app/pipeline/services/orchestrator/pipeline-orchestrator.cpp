@@ -62,10 +62,12 @@ PipelineOrchestrator::PipelineOrchestrator(
 
     slots_.reserve(cameras_.size());
     failed_restarts_.reserve(cameras_.size());
+    tap_slots_.reserve(cameras_.size());
     for (std::size_t i = 0; i < cameras_.size(); ++i) {
         slots_.push_back(
             std::make_unique<sst::buffer::LatestOnlySlot<sst::processing::FrameBundle>>());
         failed_restarts_.push_back(std::make_unique<std::atomic<int>>(0));
+        tap_slots_.push_back(std::make_unique<FrameTapSlot>());
     }
 }
 
@@ -120,6 +122,11 @@ auto PipelineOrchestrator::Stop() -> void {
         running_ = false;
         for (auto& slot : slots_) {
             slot->Close();
+        }
+        // Wake any autofocus GrabCameraFrame() waiter promptly — the producers
+        // are about to exit, so no sample would ever arrive.
+        for (auto& tap : tap_slots_) {
+            tap->cv.notify_all();
         }
         producers_to_join = std::move(producer_threads_);
         producer_threads_.clear();
@@ -241,6 +248,10 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
         // Materialize the source plane bytes off the GstBuffer so the appsink
         // slot is freed before the bundle crosses to the consumer thread.
         bundle->source_frame = sst::buffer::MaterializeFrame(bundle->source_frame);
+        // Autofocus frame tap (U6): only when a GrabCameraFrame() is actually
+        // waiting does the producer publish a descriptor copy (shares the just-
+        // materialized owned pixels — no pixel copy, no GstBuffer pinned).
+        ServeFrameTap(*tap_slots_[camera_index], bundle->source_frame);
         // Fork the materialized frame to raw capture BEFORE the std::move below
         // (tapping after the move would read a moved-from bundle). The sink
         // copies what it needs and no-ops cheaply when not capturing.
@@ -461,6 +472,36 @@ auto PipelineOrchestrator::ComposePanes(const sst::capture::Frame& chosen,
 auto PipelineOrchestrator::GrabLatest() -> std::optional<sst::capture::Frame> {
     std::lock_guard lock(latest_frame_mtx_);
     return latest_frame_;
+}
+
+auto PipelineOrchestrator::ServeFrameTap(FrameTapSlot& tap,
+                                         const sst::capture::Frame& frame) -> void {
+    if (!tap.requested.load(std::memory_order_relaxed)) {
+        return;
+    }
+    {
+        const std::lock_guard tap_lock(tap.mtx);
+        tap.sample = frame;
+        tap.requested.store(false, std::memory_order_relaxed);
+    }
+    tap.cv.notify_all();
+}
+
+auto PipelineOrchestrator::GrabCameraFrame(std::size_t camera_index,
+                                           std::chrono::milliseconds timeout)
+    -> std::optional<sst::capture::Frame> {
+    if (camera_index >= tap_slots_.size() || !running_) {
+        return std::nullopt;
+    }
+    auto& tap = *tap_slots_[camera_index];
+    std::unique_lock lock(tap.mtx);
+    tap.sample.reset();  // discard any sample a timed-out earlier grab left behind
+    tap.requested.store(true, std::memory_order_relaxed);
+    tap.cv.wait_for(lock, timeout, [this, &tap] { return tap.sample.has_value() || !running_; });
+    tap.requested.store(false, std::memory_order_relaxed);
+    auto sample = std::move(tap.sample);
+    tap.sample.reset();
+    return sample;
 }
 
 }  // namespace sst::pipeline

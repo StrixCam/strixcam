@@ -69,6 +69,7 @@
 #include "app/control/services/handlers/wifi-direct.handler.hpp"
 #include "app/control/services/telemetry_probe/telemetry-probe.hpp"
 #include "app/decision/services/manual_decision/manual-decision.hpp"
+#include "app/focus/services/autofocus/autofocus-service.hpp"
 #include "app/network/services/download_server/download-server.hpp"
 #include "app/network/services/uplink-manager/uplink-manager.hpp"
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
@@ -442,6 +443,22 @@ auto RunFirmware() -> int {
     // wifi-direct, reboot and diagnostics reads are never gated.
     const sst::control::StartHealthGate start_health_gate(camera0_health, camera1_health);
 
+    // ── Autofocus loop (U6) ────────────────────────────────────────────
+    // Owns its own low-rate thread (never the BLE dispatcher): hunts only
+    // cameras the app flipped to AUTO (CameraFocus handler ↔ focus_state),
+    // taps the producer path for sharpness samples, skips unhealthy cameras
+    // (same U3 frame-truth derivation as the gates above), and pauses while a
+    // recording session is active unless SST_AF_DURING_RECORDING=1 (R15 —
+    // metal validation decides the default flip). On a fixed lens (focuser
+    // unavailable) the loop idles entirely. Started after pipeline.Start()
+    // below; declared after the pipeline so it is destroyed (joined) first.
+    sst::focus::AutofocusService autofocus(
+        focuser, focus_state, pipeline,
+        [&pipeline](std::size_t camera_index) { return pipeline.CameraHealthStatus(camera_index); },
+        [&recording_service] {
+            return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
+        });
+
     // ── System stats (telemetry source) ────────────────────────────────
     sst::adapters::control::ProcSystemStats system_stats(video_root);
 
@@ -569,9 +586,11 @@ auto RunFirmware() -> int {
         spdlog::error("pipeline failed to start (no cameras configured) — aborting");
         return 1;
     }
+    autofocus.Start();
     ble_transport.Start();
     if (!ble_transport.IsRunning()) {
         spdlog::error("BLE transport failed to start — aborting");
+        autofocus.Stop();
         pipeline.Stop();
         return 1;
     }
@@ -607,6 +626,7 @@ auto RunFirmware() -> int {
         http_download_server.Stop();
         ble_transport.Stop();
         session_manager.FinalizeSession(sst::session::SessionEndReason::kAppStop);
+        autofocus.Stop();
         pipeline.Stop();
         return 1;
     }
@@ -623,6 +643,9 @@ auto RunFirmware() -> int {
     // recorder, so the MP4 is EOSed with its last frames (a disconnect no
     // longer finalizes — sessions outlive connections).
     session_manager.FinalizeSession(sst::session::SessionEndReason::kAppStop);
+    // Stop the AF loop before the pipeline: its sample grabs tap the producer
+    // threads the pipeline is about to join.
+    autofocus.Stop();
     pipeline.Stop();
     return 0;
 }

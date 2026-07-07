@@ -1049,4 +1049,53 @@ TEST(PipelineOrchestratorTest, SingleLayoutSkipsCompositor) {
     EXPECT_EQ(std::get<3>(sink.Snapshot()).width, kOutputDims.width);
 }
 
+// U6 autofocus tap: GrabCameraFrame returns the requested camera's SOURCE
+// frame (per-camera geometry proves which camera served it), not the chosen/
+// postprocessed output — including for the camera the decision never selects.
+TEST(PipelineOrchestratorTest, GrabCameraFrameTapsTheRequestedCamerasProducerPath) {
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig());
+    ASSERT_TRUE(orchestrator.Start());
+
+    // Generous timeout: qemu is slow and FakeCapture paces at ~30fps.
+    constexpr auto kGrabTimeout = std::chrono::seconds(5);
+    const auto cam0 = orchestrator.GrabCameraFrame(0, kGrabTimeout);
+    const auto cam1 = orchestrator.GrabCameraFrame(1, kGrabTimeout);  // never the chosen camera
+    orchestrator.Stop();
+
+    ASSERT_TRUE(cam0.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
+    EXPECT_EQ(cam0->geometry.width, kCam0Dims.width);
+    ASSERT_TRUE(cam1.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
+    EXPECT_EQ(cam1->geometry.width, kCam1Dims.width);
+}
+
+// U6 autofocus tap edges: an out-of-range camera and a stalled camera both
+// yield nullopt (the latter after the bounded wait) — the AF loop must never
+// block unbounded on a camera that produces nothing.
+TEST(PipelineOrchestratorTest, GrabCameraFrameTimesOutOnStalledCamera) {
+    auto capture = std::make_unique<FakeCapture>(kCam0Dims, /*stall=*/true);
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        OneCamera(std::move(capture), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig());
+    ASSERT_TRUE(orchestrator.Start());
+
+    constexpr auto kShortTimeout = std::chrono::milliseconds(50);
+    constexpr std::size_t kOutOfRangeCamera = 7;
+    EXPECT_FALSE(orchestrator.GrabCameraFrame(0, kShortTimeout).has_value());  // stalled
+    EXPECT_FALSE(orchestrator.GrabCameraFrame(kOutOfRangeCamera, kShortTimeout)
+                     .has_value());  // out of range
+    orchestrator.Stop();
+    EXPECT_FALSE(orchestrator.GrabCameraFrame(0, kShortTimeout).has_value());  // stopped
+}
+
 }  // namespace
