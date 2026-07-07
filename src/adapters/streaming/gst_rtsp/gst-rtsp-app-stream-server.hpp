@@ -66,7 +66,6 @@ class GstRtspAppStreamServer final : public sst::streaming::IAppStreamServer {
     GMainContext* context_{nullptr};
     GMainLoop* loop_{nullptr};
     GstRTSPServer* server_{nullptr};
-    GstRTSPMediaFactory* factory_{nullptr};
     guint source_id_{0};
     std::thread loop_thread_;
 

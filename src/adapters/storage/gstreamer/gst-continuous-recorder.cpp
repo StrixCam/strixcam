@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "adapters/common/gstreamer/gst-frame.hpp"
 #include "adapters/storage/gstreamer/recorder-launch.hpp"
 #include "domain/common/models/pixel-format.hpp"
 
@@ -20,26 +21,10 @@ namespace {
 // that backlog can get); a too-short wait leaves an unfinalized, unplayable MP4.
 constexpr int kFinalizeTimeoutSeconds = 10;
 
+// Shared helper (adapters/common/gstreamer); "BGR" is this adapter's
+// historical fallback for an out-of-enum format.
 auto GstFormatFor(sst::common::PixelFormat fmt) -> const char* {
-    switch (fmt) {
-        case sst::common::PixelFormat::BGR8:
-            return "BGR";
-        case sst::common::PixelFormat::RGB8:
-            return "RGB";
-        case sst::common::PixelFormat::BGRA8:
-            return "BGRA";
-        case sst::common::PixelFormat::RGBA8:
-            return "RGBA";
-        case sst::common::PixelFormat::GRAY8:
-            return "GRAY8";
-        case sst::common::PixelFormat::NV12:
-            return "NV12";
-        case sst::common::PixelFormat::I420:
-            return "I420";
-        case sst::common::PixelFormat::YUYV:
-            return "YUY2";
-    }
-    return "BGR";
+    return sst::adapters::gst_common::GstFormatFor(fmt, "BGR");
 }
 
 }  // namespace
@@ -112,6 +97,10 @@ auto GstContinuousRecorder::Start(const std::filesystem::path& output_mp4,
 auto GstContinuousRecorder::Pause() -> void { paused_ = true; }
 
 auto GstContinuousRecorder::Resume() -> void {
+    // Under mtx_ like Start/Stop: encoder_ is nulled by Stop's teardown, so the
+    // unlocked read here was a latent use-after-free for any caller not already
+    // serialized by RecordingService's own lock.
+    std::lock_guard lock(mtx_);
     if (!running_) {
         return;
     }

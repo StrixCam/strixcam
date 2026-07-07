@@ -107,6 +107,12 @@ auto RecordingService::StartRecording(const std::string& video_output_path,
     std::error_code mkdir_ec;
     if (!video_path_.parent_path().empty()) {
         std::filesystem::create_directories(video_path_.parent_path(), mkdir_ec);
+        if (mkdir_ec) {
+            // Surface the real cause now — otherwise it resurfaces as an opaque
+            // recorder-start failure below.
+            spdlog::warn("RecordingService::StartRecording: create_directories({}) failed: {}",
+                         video_path_.parent_path().string(), mkdir_ec.message());
+        }
     }
 
     if (!recorder_->Start(video_path_, quality)) {

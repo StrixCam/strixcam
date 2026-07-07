@@ -7,8 +7,9 @@
 namespace sst::adapters::raw_capture {
 
 // Bounds total training-proxy storage. The proxy writes small per-camera H.264
-// files (raw__<group>__cam<N>.mp4) flat at the video root, one pair per match —
-// they accumulate. Sweep() deletes the OLDEST complete groups once the total
+// files (raw__<group>__cam<N>.mp4) into each per-match directory under the
+// video root (the sweep walks recursively), one pair per match — they
+// accumulate. Sweep() deletes the OLDEST complete groups once the total
 // exceeds `max_total_bytes`, so training footage can't grow unbounded, while
 // never touching a group that is still being written (recent mtime) or is being
 // downloaded (the caller's protection predicate).

@@ -52,7 +52,13 @@ auto ProxyRetention::Sweep(
     std::uint64_t total = 0;
     for (fs::recursive_directory_iterator it(video_dir_, err), end; !err && it != end;
          it.increment(err)) {
-        if (!it->is_regular_file(err)) {
+        // Per-entry error codes, NOT the iterator's `err`: reusing `err` here
+        // would (a) end the whole walk on one failed stat (the `!err` loop
+        // condition) and (b) fold file_size's uintmax(-1) error value into
+        // `total`, blowing it past any budget and evicting every unprotected
+        // group. A file deleted mid-scan is simply skipped.
+        std::error_code stat_ec;
+        if (!it->is_regular_file(stat_ec) || stat_ec) {
             continue;
         }
         const auto identity =
@@ -60,8 +66,14 @@ auto ProxyRetention::Sweep(
         if (!identity) {
             continue;  // final recordings / other files are not proxy footage
         }
-        const auto size = static_cast<std::uint64_t>(fs::file_size(it->path(), err));
-        const auto mtime = fs::last_write_time(it->path(), err);
+        const auto size = static_cast<std::uint64_t>(fs::file_size(it->path(), stat_ec));
+        if (stat_ec) {
+            continue;  // vanished between iteration and stat — not part of the total
+        }
+        const auto mtime = fs::last_write_time(it->path(), stat_ec);
+        if (stat_ec) {
+            continue;
+        }
         auto& group = groups[identity->capture_group_id];
         group.bytes += size;
         group.files.push_back(it->path());

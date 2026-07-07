@@ -31,8 +31,10 @@ auto ToBgr(const sst::capture::Frame& frame) -> cv::Mat {
     cv::Mat bgr;
     switch (frame.format) {
         case PixelFormat::BGR8:
-            // Clone so the returned Mat owns its bytes independently of `frame`.
-            bgr = cv::Mat(height, width, CV_8UC3, data, step).clone();
+            // Non-owning wrap: `frame` outlives Encode's use of the Mat, and
+            // resize/imencode only read it — a full-frame clone here was waste
+            // (the other branches already return fresh cvtColor outputs).
+            bgr = cv::Mat(height, width, CV_8UC3, data, step);
             break;
         case PixelFormat::RGB8:
             cv::cvtColor(cv::Mat(height, width, CV_8UC3, data, step), bgr, cv::COLOR_RGB2BGR);

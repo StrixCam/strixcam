@@ -4,9 +4,9 @@
 #include <spdlog/spdlog.h>
 
 #include <cstdlib>
-#include <cstring>
 #include <string>
 
+#include "adapters/common/gstreamer/gst-frame.hpp"
 #include "adapters/storage/gstreamer/encode-fragment.hpp"
 #include "domain/streaming/models/formatter/_fmt.hpp"  // IWYU pragma: keep
 
@@ -24,13 +24,8 @@ constexpr std::size_t kBgrBytesPerPixel = 3;
 // frames before x264enc and drop-oldest under encode overload.
 constexpr int kRtspPreEncodeQueueBuffers = 2;
 
-auto FrameByteSize(const sst::capture::Frame& frame) -> std::size_t {
-    std::size_t total = 0;
-    for (const auto& plane : frame.planes) {
-        total += plane.size;
-    }
-    return total;
-}
+using sst::adapters::gst_common::FrameByteSize;
+using sst::adapters::gst_common::MakeGstBufferFromFrame;
 
 auto BuildLaunch(const sst::streaming::AppStreamConfig& cfg, bool use_vic) -> std::string {
     // Software H.264: the Orin Nano has no NVENC. do-timestamp=true stamps PTS
@@ -94,7 +89,9 @@ auto GstRtspAppStreamServer::Start(const sst::streaming::AppStreamConfig& config
     gst_rtsp_server_set_service(server_, port_str.c_str());
 
     GstRTSPMountPoints* mounts = gst_rtsp_server_get_mount_points(server_);
-    factory_ = gst_rtsp_media_factory_new();
+    // Local: the mount point owns the factory after add_factory (transfer full);
+    // the retained member was write-only.
+    GstRTSPMediaFactory* factory = gst_rtsp_media_factory_new();
 
     // VIC offload ON by default (frees CPU for the shared software encoders);
     // SST_DISABLE_VIC=1 forces the full-software path at runtime — same escape
@@ -102,13 +99,13 @@ auto GstRtspAppStreamServer::Start(const sst::streaming::AppStreamConfig& config
     const bool use_vic = std::getenv("SST_DISABLE_VIC") == nullptr;
     const std::string launch = BuildLaunch(config_, use_vic);
     spdlog::info("GstRtspAppStreamServer: launch = {}", launch);
-    gst_rtsp_media_factory_set_launch(factory_, launch.c_str());
-    gst_rtsp_media_factory_set_shared(factory_, TRUE);
+    gst_rtsp_media_factory_set_launch(factory, launch.c_str());
+    gst_rtsp_media_factory_set_shared(factory, TRUE);
 
-    g_signal_connect(factory_, "media-configure",
+    g_signal_connect(factory, "media-configure",
                      G_CALLBACK(&GstRtspAppStreamServer::OnMediaConfigureStatic), this);
 
-    gst_rtsp_mount_points_add_factory(mounts, config_.mount_point.c_str(), factory_);
+    gst_rtsp_mount_points_add_factory(mounts, config_.mount_point.c_str(), factory);
     g_object_unref(mounts);
 
     source_id_ = gst_rtsp_server_attach(server_, context_);
@@ -188,7 +185,6 @@ auto GstRtspAppStreamServer::Stop() -> void {
         g_main_context_unref(context_);
         context_ = nullptr;
     }
-    factory_ = nullptr;
 }
 
 auto GstRtspAppStreamServer::IsRunning() const -> bool { return running_; }
@@ -227,31 +223,12 @@ auto GstRtspAppStreamServer::Push(const sst::capture::Frame& frame) -> void {
         return;
     }
 
-    auto* gst_buf = gst_buffer_new_allocate(nullptr, total, nullptr);
+    // Shared frame->buffer copy; timestamps stay unset (see MakeGstBufferFromFrame).
+    auto* gst_buf = MakeGstBufferFromFrame(frame);
     if (gst_buf == nullptr) {
         gst_object_unref(target);
         return;
     }
-    GstMapInfo map{};
-    if (gst_buffer_map(gst_buf, &map, GST_MAP_WRITE) == 0) {
-        gst_buffer_unref(gst_buf);
-        gst_object_unref(target);
-        return;
-    }
-    std::size_t offset = 0;
-    for (const auto& plane : frame.planes) {
-        if (plane.data != nullptr && plane.size > 0) {
-            std::memcpy(map.data + offset, plane.data, plane.size);
-            offset += plane.size;
-        }
-    }
-    gst_buffer_unmap(gst_buf, &map);
-
-    // Leave the buffer timestamps unset: the appsrc is configured with
-    // do-timestamp=true, so it stamps a valid running-time PTS on each buffer as
-    // it is pushed. Forcing GST_CLOCK_TIME_NONE here defeats that and corrupts
-    // the x264enc software-encoded stream (nvv4l2h264enc tolerated it; x264enc
-    // does not).
 
     (void)gst_app_src_push_buffer(target, gst_buf);
     gst_object_unref(target);

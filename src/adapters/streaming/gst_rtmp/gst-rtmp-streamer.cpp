@@ -6,10 +6,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
-#include <cstring>
 #include <string>
 #include <thread>
 
+#include "adapters/common/gstreamer/gst-frame.hpp"
 #include "adapters/streaming/gst_rtmp/rtmp-launch.hpp"
 #include "domain/common/models/pixel-format.hpp"
 #include "domain/streaming/models/formatter/_fmt.hpp"  // IWYU pragma: keep
@@ -27,34 +27,12 @@ constexpr int kBackoffSliceMs = 100;
 // the pipeline.
 constexpr int kEosFlushSeconds = 5;
 
-auto FrameByteSize(const sst::capture::Frame& frame) -> std::size_t {
-    std::size_t total = 0;
-    for (const auto& plane : frame.planes) {
-        total += plane.size;
-    }
-    return total;
-}
+using sst::adapters::gst_common::MakeGstBufferFromFrame;
 
+// Shared helpers (adapters/common/gstreamer): keep this adapter's historical
+// "BGR" fallback for an out-of-enum format.
 auto GstFormatFor(sst::common::PixelFormat fmt) -> const char* {
-    switch (fmt) {
-        case sst::common::PixelFormat::BGR8:
-            return "BGR";
-        case sst::common::PixelFormat::RGB8:
-            return "RGB";
-        case sst::common::PixelFormat::BGRA8:
-            return "BGRA";
-        case sst::common::PixelFormat::RGBA8:
-            return "RGBA";
-        case sst::common::PixelFormat::GRAY8:
-            return "GRAY8";
-        case sst::common::PixelFormat::NV12:
-            return "NV12";
-        case sst::common::PixelFormat::I420:
-            return "I420";
-        case sst::common::PixelFormat::YUYV:
-            return "YUY2";
-    }
-    return "BGR";
+    return sst::adapters::gst_common::GstFormatFor(fmt, "BGR");
 }
 
 }  // namespace
@@ -225,6 +203,11 @@ auto GstRtmpStreamer::Teardown() -> void {
         appsrc_ = nullptr;
     }
     if (pipeline_ != nullptr) {
+        // NULL the pipeline before the final unref: on the PLAYING-failure
+        // rollback path it arrives here partially up, and unreffing a
+        // non-NULL-state pipeline leaks its threads/resources (the recorder's
+        // teardown does the same; already-NULL pipelines no-op).
+        gst_element_set_state(pipeline_, GST_STATE_NULL);
         gst_object_unref(pipeline_);
         pipeline_ = nullptr;
     }
@@ -259,35 +242,12 @@ auto GstRtmpStreamer::Push(const sst::capture::Frame& frame) -> void {
         gst_object_ref(src);
     }
 
-    const auto total = FrameByteSize(frame);
-    if (total == 0) {
-        gst_object_unref(src);
-        return;
-    }
-
-    auto* gst_buf = gst_buffer_new_allocate(nullptr, total, nullptr);
+    // Shared frame->buffer copy; timestamps stay unset (see MakeGstBufferFromFrame).
+    auto* gst_buf = MakeGstBufferFromFrame(frame);
     if (gst_buf == nullptr) {
         gst_object_unref(src);
         return;
     }
-    GstMapInfo map{};
-    if (gst_buffer_map(gst_buf, &map, GST_MAP_WRITE) == 0) {
-        gst_buffer_unref(gst_buf);
-        gst_object_unref(src);
-        return;
-    }
-    std::size_t offset = 0;
-    for (const auto& plane : frame.planes) {
-        if (plane.data != nullptr && plane.size > 0) {
-            std::memcpy(map.data + offset, plane.data, plane.size);
-            offset += plane.size;
-        }
-    }
-    gst_buffer_unmap(gst_buf, &map);
-
-    // Leave timestamps unset so the do-timestamp=true appsrc stamps a valid
-    // running-time PTS. Forcing GST_CLOCK_TIME_NONE corrupts the x264enc
-    // software-encoded stream (nvv4l2h264enc tolerated it; x264enc does not).
 
     (void)gst_app_src_push_buffer(GST_APP_SRC(src), gst_buf);
     gst_object_unref(src);

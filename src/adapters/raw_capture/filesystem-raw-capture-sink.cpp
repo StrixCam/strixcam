@@ -8,6 +8,7 @@
 #include <system_error>
 #include <utility>
 
+#include "adapters/common/gstreamer/gst-frame.hpp"
 #include "adapters/raw_capture/proxy-launch.hpp"
 #include "domain/raw_capture/models/raw-capture-identity.hpp"
 #include "domain/raw_capture/services/raw-capture-naming.hpp"
@@ -25,26 +26,10 @@ constexpr int kFinalizeTimeoutSeconds = 10;
 // is only a caps hint — the true capture cadence varies (30/60).
 constexpr int kProxySourceFramerateHint = 30;
 
+// Shared helper (adapters/common/gstreamer); "NV12" is this adapter's
+// historical fallback for an out-of-enum format (proxy input is NV12).
 auto GstFormatFor(sst::common::PixelFormat fmt) -> const char* {
-    switch (fmt) {
-        case sst::common::PixelFormat::BGR8:
-            return "BGR";
-        case sst::common::PixelFormat::RGB8:
-            return "RGB";
-        case sst::common::PixelFormat::BGRA8:
-            return "BGRA";
-        case sst::common::PixelFormat::RGBA8:
-            return "RGBA";
-        case sst::common::PixelFormat::GRAY8:
-            return "GRAY8";
-        case sst::common::PixelFormat::NV12:
-            return "NV12";
-        case sst::common::PixelFormat::I420:
-            return "I420";
-        case sst::common::PixelFormat::YUYV:
-            return "YUY2";
-    }
-    return "NV12";
+    return sst::adapters::gst_common::GstFormatFor(fmt, "NV12");
 }
 }  // namespace
 
