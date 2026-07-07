@@ -56,6 +56,9 @@ PipelineOrchestrator::PipelineOrchestrator(
         "SST_HEALTH_STALL_MS", static_cast<int>(config_.health_stall_threshold.count()))};
     config_.health_down_after_failed_restarts =
         EnvPositiveInt("SST_HEALTH_DOWN_RESTARTS", config_.health_down_after_failed_restarts);
+    // U4 both-mode hold cap — tuned on metal without a rebuild.
+    config_.bothmode_hold_ticks =
+        EnvPositiveInt("SST_BOTHMODE_HOLD_TICKS", config_.bothmode_hold_ticks);
 
     slots_.reserve(cameras_.size());
     failed_restarts_.reserve(cameras_.size());
@@ -249,6 +252,10 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
 }
 
 auto PipelineOrchestrator::ConsumerLoop() -> void {
+    // U4: composition hold state for the side-by-side view. Stack-local to this
+    // thread — only BuildStreamFrame (called below, same thread) touches it, so
+    // the hot path stays lock-free.
+    StreamHoldState hold;
     while (running_) {
         // The cadence camera — the one we BLOCK on to pace the loop at capture
         // rate — follows the decision's preference. ManualDecision returns the
@@ -306,7 +313,7 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
         // Build the live/broadcast stream frame. SIDE_BY_SIDE (#6 F6d): composite
         // cam0 | cam1 CLEAN (no overlay) — a "see both cameras" monitoring view.
         // Otherwise the SINGLE broadcast view with the overlay baked on.
-        auto stream_frame = BuildStreamFrame(*final_frame, latest, choice->camera_index);
+        auto stream_frame = BuildStreamFrame(*final_frame, latest, choice->camera_index, hold);
         {
             // Retain the latest stream frame for on-demand snapshots so a snapshot
             // matches what the live stream shows. It owns its pixels, so storing by
@@ -318,55 +325,23 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
     }
 }
 
-// floor-ok: linear overlay/composite/encode branching per output sink.
-// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 auto PipelineOrchestrator::BuildStreamFrame(
     const sst::capture::Frame& clean_chosen,
     const std::vector<std::optional<sst::processing::FrameBundle>>& latest,
-    std::size_t chosen_index) -> sst::capture::Frame {
+    std::size_t chosen_index, StreamHoldState& hold) -> sst::capture::Frame {
     const bool want_side_by_side =
         preview_layout_ != nullptr && compositor_ != nullptr && cameras_.size() >= 2 &&
         preview_layout_->Get() == sst::streaming::PreviewLayout::kSideBySide;
 
     if (want_side_by_side) {
-        // Composite both cameras CLEAN (no overlay) — a "see both cameras"
-        // monitoring view. The pane order is POSITIONAL: camera 0 is always the
-        // left pane and camera 1 the right, regardless of which one is the
-        // selected main feed. Changing the selection must not swap the panes.
-        // Postprocess the other camera full-frame; if it has no frame this tick
-        // or the composite fails, fall back to the clean chosen frame.
-        const std::size_t other_index = chosen_index == 0 ? 1 : 0;
-        const auto& other_slot = latest[other_index];
-        if (other_slot.has_value()) {
-            // Postprocess + composite call into OpenCV, which throws on a
-            // zero-area or mismatched Mat. Catch here so one bad frame degrades
-            // to the clean single view instead of escaping the consumer thread
-            // and tearing down record + preview with it.
-            try {
-                const sst::processing::CropRect full_frame{
-                    .x = 0,
-                    .y = 0,
-                    .width = other_slot->source_frame.geometry.width,
-                    .height = other_slot->source_frame.geometry.height};
-                if (auto other = postprocessor_->Process(other_slot->source_frame, full_frame)) {
-                    // clean_chosen is the selected camera; `other` is the non-
-                    // selected one. Order them by camera index so the lower-index
-                    // camera (0) is always the left pane.
-                    const sst::capture::Frame& left = chosen_index == 0 ? clean_chosen : *other;
-                    const sst::capture::Frame& right = chosen_index == 0 ? *other : clean_chosen;
-                    if (auto composite = compositor_->CompositeSideBySide(left, right)) {
-                        return std::move(*composite);
-                    }
-                }
-            } catch (const std::exception& e) {
-                spdlog::warn(
-                    "PipelineOrchestrator: side-by-side composite failed ({}); "
-                    "falling back to single frame",
-                    e.what());
-            }
-        }
-        return clean_chosen;
+        return BuildSideBySideFrame(clean_chosen, latest, chosen_index, hold);
     }
+
+    // Not side-by-side this tick: drop any held both-mode state so an
+    // intentional layout switch is instant (single frames flow immediately) and
+    // a later return to both-mode starts fresh instead of resurrecting a stale
+    // composite (U4).
+    hold.Reset();
 
     // SINGLE: composite the current overlay (when present) onto a copy for the
     // live/broadcast stream. A fully-transparent overlay blends to a clean frame;
@@ -379,6 +354,108 @@ auto PipelineOrchestrator::BuildStreamFrame(
         }
     }
     return clean_chosen;
+}
+
+// floor-ok: linear miss/hold/re-composition laddering — each rung is one fallback.
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
+auto PipelineOrchestrator::BuildSideBySideFrame(
+    const sst::capture::Frame& clean_chosen,
+    const std::vector<std::optional<sst::processing::FrameBundle>>& latest,
+    std::size_t chosen_index, StreamHoldState& hold) -> sst::capture::Frame {
+    // Composite both cameras CLEAN (no overlay) — a "see both cameras"
+    // monitoring view. U4 contract: NEVER emit a bare single-camera frame while
+    // the layout is side-by-side — that occasional full single-cam frame is the
+    // user-visible both-mode flicker.
+    const std::size_t other_index = chosen_index == 0 ? 1 : 0;
+    // A selection change flips which camera is "other"; a pane held from the
+    // now-chosen camera would show it twice — drop it.
+    if (hold.last_other_pane.has_value() && hold.other_pane_index != other_index) {
+        hold.last_other_pane.reset();
+    }
+
+    // Fresh path: the other camera has a frame this tick. Postprocess +
+    // composite call into OpenCV, which throws on a zero-area or mismatched
+    // Mat; catch so one bad frame follows the hold path below instead of
+    // escaping the consumer thread and tearing down record + preview with it.
+    const auto& other_slot = latest[other_index];
+    if (other_slot.has_value()) {
+        try {
+            const sst::processing::CropRect full_frame{
+                .x = 0,
+                .y = 0,
+                .width = other_slot->source_frame.geometry.width,
+                .height = other_slot->source_frame.geometry.height};
+            if (auto other = postprocessor_->Process(other_slot->source_frame, full_frame)) {
+                hold.last_other_pane = std::move(*other);
+                hold.other_pane_index = other_index;
+                if (auto composite =
+                        ComposePanes(clean_chosen, *hold.last_other_pane, chosen_index)) {
+                    hold.stale_ticks = 0;
+                    hold.last_composite = *composite;
+                    return std::move(*composite);
+                }
+            }
+        } catch (const std::exception& e) {
+            spdlog::warn(
+                "PipelineOrchestrator: side-by-side postprocess/composite failed ({}); "
+                "holding previous composite",
+                e.what());
+        }
+    }
+
+    // Miss: empty other slot, postprocess nullopt, composite nullopt, or an
+    // OpenCV throw. Short misses repeat the previous composite verbatim — both
+    // panes hold, invisible at 30fps. The counter saturates just past the cap
+    // (only "over the cap or not" matters; a days-long stall must not overflow).
+    if (hold.stale_ticks <= config_.bothmode_hold_ticks) {
+        ++hold.stale_ticks;
+    }
+    if (hold.stale_ticks <= config_.bothmode_hold_ticks && hold.last_composite.has_value()) {
+        return *hold.last_composite;
+    }
+
+    // Past the hold cap (or nothing held yet): per-tick re-composition. The
+    // live chosen camera keeps advancing in its pane while the stale pane holds
+    // its last-good frame — a sustained one-camera stall (RECOVERING can last a
+    // full serialized restart window) must not freeze the healthy pane. With no
+    // last-good pane at all, an empty Frame letterboxes to a black pane.
+    try {
+        const sst::capture::Frame empty_pane{};
+        const sst::capture::Frame& stale_pane =
+            hold.last_other_pane.has_value() ? *hold.last_other_pane : empty_pane;
+        if (auto composite = ComposePanes(clean_chosen, stale_pane, chosen_index)) {
+            hold.last_composite = *composite;
+            return std::move(*composite);
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn(
+            "PipelineOrchestrator: side-by-side re-composition failed ({}); "
+            "holding previous composite",
+            e.what());
+    }
+
+    // Re-composition itself failed. The held composite is still the best
+    // both-mode frame available — repeat it past the cap rather than degrade.
+    if (hold.last_composite.has_value()) {
+        return *hold.last_composite;
+    }
+    // No composite has ever succeeded (compositor failing from the first
+    // both-mode tick) — the bare chosen frame is the only frame left to emit.
+    spdlog::warn(
+        "PipelineOrchestrator: no composite ever produced in side-by-side mode; "
+        "emitting bare chosen frame");
+    return clean_chosen;
+}
+
+auto PipelineOrchestrator::ComposePanes(const sst::capture::Frame& chosen,
+                                        const sst::capture::Frame& other, std::size_t chosen_index)
+    -> std::optional<sst::capture::Frame> {
+    // Pane order is POSITIONAL: camera 0 is always the left pane and camera 1
+    // the right, regardless of which one is the selected main feed. Changing
+    // the selection must not swap the panes.
+    const sst::capture::Frame& left = chosen_index == 0 ? chosen : other;
+    const sst::capture::Frame& right = chosen_index == 0 ? other : chosen;
+    return compositor_->CompositeSideBySide(left, right);
 }
 
 auto PipelineOrchestrator::GrabLatest() -> std::optional<sst::capture::Frame> {

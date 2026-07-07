@@ -52,6 +52,15 @@ struct PipelineConfig {
     // metal calibration without a rebuild; env wins over these values.
     std::chrono::milliseconds health_stall_threshold{kDefaultHealthStallThresholdMs};
     int health_down_after_failed_restarts{kDefaultHealthDownFailedRestarts};
+    // Both-mode hold cap (U4). While the layout is side-by-side, this is how
+    // many consecutive other-pane misses the consumer bridges by repeating the
+    // previous successful composite (both panes hold — invisible at 30fps)
+    // before switching to per-tick re-composition, where the live chosen pane
+    // keeps advancing and the stale pane holds its last-good frame. Bounded so
+    // a sustained one-camera stall (RECOVERING can last a full serialized
+    // restart window) never freezes the healthy camera's pane. Env-overridable
+    // (SST_BOTHMODE_HOLD_TICKS) for metal tuning; env wins over this value.
+    int bothmode_hold_ticks{kDefaultBothmodeHoldTicks};
 
    private:
     static constexpr int kDefaultCaptureIdleSleepMs = 5;
@@ -59,6 +68,7 @@ struct PipelineConfig {
     static constexpr int kDefaultCaptureRestartBackoffMs = 500;
     static constexpr int kDefaultHealthStallThresholdMs = 2000;
     static constexpr int kDefaultHealthDownFailedRestarts = 3;
+    static constexpr int kDefaultBothmodeHoldTicks = 5;
 };
 
 // One capture → preprocess chain for a single camera. The orchestrator owns the
@@ -166,13 +176,60 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource {
     auto ProducerLoop(std::size_t camera_index) -> void;
     auto ConsumerLoop() -> void;
 
+    // Consumer-thread-local composition hold state (U4 both-mode flicker fix).
+    // Lives on ConsumerLoop's stack and is touched only by the consumer thread,
+    // so the hot path takes no new locks. Held Frames share pixel ownership via
+    // their `owner` shared_ptr — copies are cheap descriptor copies, never
+    // pixel copies.
+    struct StreamHoldState {
+        // Last successful side-by-side output; repeated verbatim to bridge
+        // short per-tick misses of the other pane.
+        std::optional<sst::capture::Frame> last_composite;
+        // Last successfully post-processed other-camera pane; past the hold cap
+        // it becomes the stale pane of the per-tick re-composition.
+        std::optional<sst::capture::Frame> last_other_pane;
+        // Which camera last_other_pane came from — a selection change flips
+        // which camera is "other", invalidating a held pane.
+        std::size_t other_pane_index{0};
+        // Consecutive both-mode ticks the other pane has missed.
+        int stale_ticks{0};
+
+        auto Reset() -> void {
+            last_composite.reset();
+            last_other_pane.reset();
+            stale_ticks = 0;
+        }
+    };
+
     // Produce the frame pushed to the live/broadcast stream from the clean
-    // chosen-camera frame. SIDE_BY_SIDE composites cam0 | cam1 clean; otherwise
-    // bakes the current overlay onto a copy (SINGLE broadcast view). Returns an
-    // owned frame (its pixels survive the call).
+    // chosen-camera frame. SIDE_BY_SIDE composites cam0 | cam1 clean (with U4
+    // hold semantics — see BuildSideBySideFrame); otherwise bakes the current
+    // overlay onto a copy (SINGLE broadcast view) and drops any held both-mode
+    // state so intentional layout switches stay instant. Returns an owned frame
+    // (its pixels survive the call).
     auto BuildStreamFrame(const sst::capture::Frame& clean_chosen,
                           const std::vector<std::optional<sst::processing::FrameBundle>>& latest,
-                          std::size_t chosen_index) -> sst::capture::Frame;
+                          std::size_t chosen_index, StreamHoldState& hold) -> sst::capture::Frame;
+
+    // U4: the side-by-side stream frame, never a bare single-camera frame. A
+    // per-tick miss of the other pane (empty slot, postprocess nullopt,
+    // composite nullopt, OpenCV throw) repeats the previous composite for up to
+    // bothmode_hold_ticks consecutive ticks; past the cap it re-composites
+    // every tick — the live chosen pane keeps advancing while the stale pane
+    // holds its last-good frame (black until that camera has ever produced
+    // one), so a sustained one-camera stall never freezes the healthy pane.
+    auto BuildSideBySideFrame(
+        const sst::capture::Frame& clean_chosen,
+        const std::vector<std::optional<sst::processing::FrameBundle>>& latest,
+        std::size_t chosen_index, StreamHoldState& hold) -> sst::capture::Frame;
+
+    // Composite the two panes POSITIONALLY: camera 0 is always the left pane,
+    // camera 1 the right, regardless of which one is the selected main feed.
+    // NOLINTBEGIN(bugprone-easily-swappable-parameters) // floor-ok: chosen vs
+    // other pane — the function's whole job is ordering them positionally
+    auto ComposePanes(const sst::capture::Frame& chosen, const sst::capture::Frame& other,
+                      std::size_t chosen_index) -> std::optional<sst::capture::Frame>;
+    // NOLINTEND(bugprone-easily-swappable-parameters)
 
     std::vector<CameraChain> cameras_;
     std::unique_ptr<sst::processing::IPostprocessor> postprocessor_;

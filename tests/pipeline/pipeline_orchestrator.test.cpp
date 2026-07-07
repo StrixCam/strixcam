@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -92,6 +94,15 @@ class FakeCapture final : public ICaptureFrame {
     auto SetDieAfter(std::uint64_t die_after) -> void { die_after_ = die_after; }
     [[nodiscard]] auto StartCalls() const -> int { return start_calls_.load(); }
 
+    // Runtime stall toggle (U4): flip the camera between producing and fully
+    // stalled mid-test — mirrors a sensor stall the producer watchdog is still
+    // working (RECOVERING) without killing the producer thread.
+    auto SetStall(bool stall) -> void { stall_ = stall; }
+    // Frame pacing override (U4): a camera slower than the consumer cadence
+    // makes the non-cadence TryPop miss on a steady fraction of ticks —
+    // the alternating-miss pattern behind the both-mode flicker.
+    auto SetFramePeriod(std::chrono::milliseconds period) -> void { frame_period_ = period; }
+
     auto Capture() -> std::optional<Frame> override {
         if (running_ && die_after_ > 0 && !has_died_ && next_id_.load() >= die_after_) {
             has_died_ = true;
@@ -108,14 +119,15 @@ class FakeCapture final : public ICaptureFrame {
         // Match real GStreamerAdapter behavior: pace at ~30fps so the producer
         // doesn't spin on Capture() in the test, and to give the consumer a
         // chance to drain the slot between pushes.
-        std::this_thread::sleep_for(std::chrono::milliseconds(kFramePeriodMs));
+        std::this_thread::sleep_for(frame_period_);
         return frame;
     }
 
    private:
     std::uint32_t width_{kCam0Dims.width};
     std::uint32_t height_{kCam0Dims.height};
-    bool stall_{false};
+    std::atomic<bool> stall_{false};
+    std::chrono::milliseconds frame_period_{kFramePeriodMs};
     std::uint64_t die_after_{0};  // 0 means never die
     std::atomic<bool> has_died_{false};
     std::atomic<int> start_calls_{0};
@@ -170,6 +182,7 @@ class CountingSink final : public IFrameSink {
         last_frame_id = frame.frame_id;
         last_format = frame.format;
         last_geometry = frame.geometry;
+        widths_.push_back(frame.geometry.width);
     }
 
     auto Snapshot() const
@@ -178,12 +191,25 @@ class CountingSink final : public IFrameSink {
         return {push_calls, last_frame_id, last_format, last_geometry};
     }
 
+    // U4 helpers: every pushed frame's width is recorded, so a test can assert
+    // over the WHOLE stream ("zero bare single-camera frames ever reached the
+    // sink"), not just the last frame observed.
+    auto PushCount() const -> int {
+        std::lock_guard lock(mtx_);
+        return push_calls;
+    }
+    auto CountPushesWithWidth(std::uint32_t width) const -> int {
+        std::lock_guard lock(mtx_);
+        return static_cast<int>(std::count(widths_.begin(), widths_.end(), width));
+    }
+
    private:
     mutable std::mutex mtx_;
     int push_calls{0};
     std::uint64_t last_frame_id{0};
     sst::common::PixelFormat last_format{};
     sst::capture::FrameGeometry last_geometry{};
+    std::vector<std::uint32_t> widths_;
 };
 
 // Records every CompositeSideBySide call and returns a frame stamped with a
@@ -192,18 +218,37 @@ class CountingSink final : public IFrameSink {
 constexpr Dims kCompositeDims{2222, 720};
 class FakeCompositor final : public sst::processing::IFrameCompositor {
    public:
+    // One recorded composite call: both pane ids + the right pane's geometry,
+    // so U4 tests can prove which pane advanced and which held across ticks.
+    struct PaneRecord {
+        std::uint64_t left_id{0};
+        std::uint64_t right_id{0};
+        sst::capture::FrameGeometry right_geometry{};
+    };
+
     // NOLINTBEGIN(bugprone-easily-swappable-parameters) // floor-ok: IFrameCompositor contract
     auto CompositeSideBySide(const Frame& left,
                              const Frame& right) -> std::optional<Frame> override {
         // NOLINTEND(bugprone-easily-swappable-parameters)
         std::lock_guard lock(mtx_);
         ++calls;
-        last_left_id = left.frame_id;
-        last_right_geometry = right.geometry;
+        records_.push_back(PaneRecord{.left_id = left.frame_id,
+                                      .right_id = right.frame_id,
+                                      .right_geometry = right.geometry});
+        if (fail_) {
+            return std::nullopt;  // U4: simulate CompositeSideBySide nullopt
+        }
         Frame out = left;
         out.format = sst::common::PixelFormat::BGR8;
         out.geometry = {.width = kCompositeDims.width, .height = kCompositeDims.height};
         return out;
+    }
+
+    // U4: make every subsequent composite fail (nullopt) — the orchestrator
+    // must follow the hold path instead of degrading to a single frame.
+    auto SetFail(bool fail) -> void {
+        std::lock_guard lock(mtx_);
+        fail_ = fail;
     }
 
     auto Calls() const -> int {
@@ -212,18 +257,22 @@ class FakeCompositor final : public sst::processing::IFrameCompositor {
     }
     auto LastRightGeometry() const -> sst::capture::FrameGeometry {
         std::lock_guard lock(mtx_);
-        return last_right_geometry;
+        return records_.empty() ? sst::capture::FrameGeometry{} : records_.back().right_geometry;
     }
     auto LastLeftId() const -> std::uint64_t {
         std::lock_guard lock(mtx_);
-        return last_left_id;
+        return records_.empty() ? 0 : records_.back().left_id;
+    }
+    auto Records() const -> std::vector<PaneRecord> {
+        std::lock_guard lock(mtx_);
+        return records_;
     }
 
    private:
     mutable std::mutex mtx_;
     int calls{0};
-    std::uint64_t last_left_id{0};
-    sst::capture::FrameGeometry last_right_geometry{};
+    bool fail_{false};
+    std::vector<PaneRecord> records_;
 };
 
 // ── Construction helpers ─────────────────────────────────────────────
@@ -636,13 +685,16 @@ TEST(PipelineOrchestratorTest, SideBySideCompositesBothCamerasToStream) {
     ASSERT_TRUE(orchestrator.Start());
     // Poll for the composite to flow rather than assuming a fixed sleep suffices —
     // a 300ms sleep flaked under the slower qemu CI emulation. Both cameras must
-    // capture + postprocess + composite, so wait for the sink to carry it.
+    // capture + postprocess + composite, so wait for a FRESH dual-pane composite
+    // (right pane = postprocessed cam1) to land in the sink — the first ticks may
+    // legitimately composite with an empty right pane before cam1's first frame
+    // arrives (U4 re-composition).
     constexpr auto kFlowTimeout = std::chrono::seconds(5);
     constexpr auto kPollInterval = std::chrono::milliseconds(10);
     const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
-    while (
-        std::chrono::steady_clock::now() < deadline &&
-        (compositor.Calls() == 0 || std::get<3>(sink.Snapshot()).width != kCompositeDims.width)) {
+    while (std::chrono::steady_clock::now() < deadline &&
+           (compositor.LastRightGeometry().width != kOutputDims.width ||
+            std::get<3>(sink.Snapshot()).width != kCompositeDims.width)) {
         std::this_thread::sleep_for(kPollInterval);
     }
     orchestrator.Stop();
@@ -726,6 +778,247 @@ TEST(PipelineOrchestratorTest, SideBySideKeepsCameraZeroLeftWhenCameraOneSelecte
     // though camera 1 is the selection. Positional order held.
     EXPECT_LT(compositor.LastLeftId(), kCam1IdBase);
     EXPECT_EQ(std::get<3>(sink.Snapshot()).width, kCompositeDims.width);
+}
+
+// ── U4: both-mode never degrades to a bare single-camera frame ───────
+//
+// The reported flicker: in side-by-side mode a per-tick miss of the non-cadence
+// camera (or a composite failure) used to fall back to the full single-camera
+// frame — an occasional full-frame flash in the both-mode preview. U4 semantics:
+// short misses repeat the previous composite; past the hold cap the live pane
+// keeps advancing per tick while the stale pane holds its last-good frame; the
+// stream sink NEVER carries a bare chosen-camera frame while layout=both.
+
+// Poll until a FRESH dual-pane composite (right pane = postprocessed cam1,
+// kOutputDims) has flowed to the sink, so a test starts from a known-good
+// composite before injecting its failure.
+auto WaitForFreshComposite(const FakeCompositor& compositor, const CountingSink& sink) -> bool {
+    constexpr auto kFlowTimeout = std::chrono::seconds(5);
+    constexpr auto kPollInterval = std::chrono::milliseconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (compositor.LastRightGeometry().width == kOutputDims.width &&
+            std::get<3>(sink.Snapshot()).width == kCompositeDims.width) {
+            return true;
+        }
+        std::this_thread::sleep_for(kPollInterval);
+    }
+    return false;
+}
+
+// U4 edge: the other camera misses a few ticks (short stall, within the hold
+// cap) → the previous composite is repeated, the stream keeps flowing, and no
+// push ever equals the bare chosen-camera frame.
+TEST(PipelineOrchestratorTest, SideBySideOtherCameraMissHoldsCompositeNeverBareSingle) {
+    auto cam1_owner = std::make_unique<FakeCapture>(kCam1Dims);
+    auto* cam1 = cam1_owner.get();
+    FakeCompositor compositor;
+    sst::streaming::PreviewLayoutState layout;
+    layout.Set(sst::streaming::PreviewLayout::kSideBySide);
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::move(cam1_owner), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
+
+    ASSERT_TRUE(orchestrator.Start());
+    ASSERT_TRUE(WaitForFreshComposite(compositor, sink));
+
+    // Stall the non-cadence camera for a handful of consumer ticks.
+    cam1->SetStall(true);
+    const int pushes_at_stall = sink.PushCount();
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        150));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    orchestrator.Stop();
+
+    // The stream kept flowing during the stall (held composite repeated)…
+    EXPECT_GT(sink.PushCount(), pushes_at_stall);
+    // …and NOTHING that reached the sink was ever the bare chosen frame: every
+    // push in both-mode carried the composite geometry.
+    EXPECT_EQ(sink.CountPushesWithWidth(kOutputDims.width), 0);
+    EXPECT_EQ(sink.CountPushesWithWidth(kCompositeDims.width), sink.PushCount());
+}
+
+// U4 edge: the other camera stalls PAST the hold cap → per-tick re-composition:
+// the live chosen pane keeps advancing across ticks while the stale pane holds
+// the stalled camera's last-good frame. A sustained one-camera stall (a full
+// RECOVERING restart window) must not freeze the healthy pane.
+TEST(PipelineOrchestratorTest, SideBySideSustainedStallAdvancesLivePaneAndHoldsStalePane) {
+    constexpr std::uint64_t kCam1IdBase = 1000;
+    auto cam1_owner = std::make_unique<FakeCapture>(kCam1Dims, /*stall=*/false, kCam1IdBase);
+    auto* cam1 = cam1_owner.get();
+    FakeCompositor compositor;
+    sst::streaming::PreviewLayoutState layout;
+    layout.Set(sst::streaming::PreviewLayout::kSideBySide);
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::move(cam1_owner), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
+
+    ASSERT_TRUE(orchestrator.Start());
+    ASSERT_TRUE(WaitForFreshComposite(compositor, sink));
+
+    cam1->SetStall(true);
+    const int calls_at_stall = compositor.Calls();
+    // Wait until re-composition is clearly running: several compositor calls
+    // AFTER the stall (the first ~hold-cap miss ticks repeat the held composite
+    // without calling the compositor, then re-composition calls it every tick).
+    constexpr int kRecompositions = 4;
+    constexpr auto kFlowTimeout = std::chrono::seconds(5);
+    constexpr auto kPollInterval = std::chrono::milliseconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (std::chrono::steady_clock::now() < deadline &&
+           compositor.Calls() < calls_at_stall + kRecompositions) {
+        std::this_thread::sleep_for(kPollInterval);
+    }
+    orchestrator.Stop();
+
+    const auto records = compositor.Records();
+    ASSERT_GE(records.size(), 2U);
+    const auto& previous = records[records.size() - 2];
+    const auto& last = records[records.size() - 1];
+    // Live pane advanced across ticks (chosen camera never froze)…
+    EXPECT_GT(last.left_id, previous.left_id);
+    // …while the stale pane held the SAME last-good cam1 frame (not black, not
+    // advancing).
+    EXPECT_EQ(last.right_id, previous.right_id);
+    EXPECT_GE(last.right_id, kCam1IdBase);
+    // And still zero bare single-camera frames on the stream.
+    EXPECT_EQ(sink.CountPushesWithWidth(kOutputDims.width), 0);
+}
+
+// U4 edge: CompositeSideBySide failing (nullopt) follows the same hold
+// semantics — the previous composite is repeated, never the bare chosen frame.
+TEST(PipelineOrchestratorTest, SideBySideCompositeFailureHoldsPreviousComposite) {
+    FakeCompositor compositor;
+    sst::streaming::PreviewLayoutState layout;
+    layout.Set(sst::streaming::PreviewLayout::kSideBySide);
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::make_unique<FakeCapture>(kCam1Dims), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
+
+    ASSERT_TRUE(orchestrator.Start());
+    ASSERT_TRUE(WaitForFreshComposite(compositor, sink));
+
+    compositor.SetFail(true);
+    const int pushes_at_failure = sink.PushCount();
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        250));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+    orchestrator.Stop();
+
+    // The stream kept flowing on the held composite despite every composite
+    // attempt failing…
+    EXPECT_GT(sink.PushCount(), pushes_at_failure);
+    // …and no bare single-camera frame ever reached the sink.
+    EXPECT_EQ(sink.CountPushesWithWidth(kOutputDims.width), 0);
+    EXPECT_EQ(sink.CountPushesWithWidth(kCompositeDims.width), sink.PushCount());
+}
+
+// U4 edge: an intentional layout switch to SINGLE drops the held state — single
+// frames flow immediately, and a later return to both-mode starts fresh (the
+// previously-held cam1 pane is gone: re-composition runs with an empty pane, not
+// a resurrected stale one).
+TEST(PipelineOrchestratorTest, SideBySideLayoutSwitchToSingleDropsHeldState) {
+    auto cam1_owner = std::make_unique<FakeCapture>(kCam1Dims);
+    auto* cam1 = cam1_owner.get();
+    FakeCompositor compositor;
+    sst::streaming::PreviewLayoutState layout;
+    layout.Set(sst::streaming::PreviewLayout::kSideBySide);
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::move(cam1_owner), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
+
+    ASSERT_TRUE(orchestrator.Start());
+    ASSERT_TRUE(WaitForFreshComposite(compositor, sink));
+
+    // Stall cam1 so the hold is actively bridging when the layout switches.
+    cam1->SetStall(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(
+        100));  // NOLINT(readability-magic-numbers) — self-evident gtest run/poll duration
+
+    // Switch to SINGLE: single (kOutputDims) frames must flow immediately.
+    layout.Set(sst::streaming::PreviewLayout::kSingle);
+    constexpr auto kFlowTimeout = std::chrono::seconds(5);
+    constexpr auto kPollInterval = std::chrono::milliseconds(10);
+    auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (std::chrono::steady_clock::now() < deadline &&
+           std::get<3>(sink.Snapshot()).width != kOutputDims.width) {
+        std::this_thread::sleep_for(kPollInterval);
+    }
+    EXPECT_EQ(std::get<3>(sink.Snapshot()).width, kOutputDims.width);
+
+    // Switch back to both-mode with cam1 still stalled: the held pane was
+    // dropped, so re-composition runs with an EMPTY stale pane (black), not the
+    // pre-switch cam1 frame.
+    const auto records_before_return = compositor.Records().size();
+    layout.Set(sst::streaming::PreviewLayout::kSideBySide);
+    deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (std::chrono::steady_clock::now() < deadline &&
+           compositor.Records().size() <= records_before_return) {
+        std::this_thread::sleep_for(kPollInterval);
+    }
+    orchestrator.Stop();
+
+    const auto records = compositor.Records();
+    ASSERT_GT(records.size(), records_before_return);
+    // Every post-return composite got the dropped-state empty pane: zero width,
+    // frame_id 0 — nothing held survived the layout round-trip.
+    for (std::size_t i = records_before_return; i < records.size(); ++i) {
+        EXPECT_EQ(records[i].right_geometry.width, 0U);
+        EXPECT_EQ(records[i].right_id, 0U);
+    }
+}
+
+// U4 integration: the other camera producing SLOWER than the consumer cadence
+// (alternating hit/miss at consumer rate — the exact phase pattern behind the
+// reported flicker) yields a stable all-composite stream: zero single-frame
+// interleaves.
+TEST(PipelineOrchestratorTest, SideBySideAlternatingMissesProduceStableCompositeStream) {
+    auto cam1_owner = std::make_unique<FakeCapture>(kCam1Dims);
+    // ~2.5x slower than cam0: the non-cadence TryPop misses on most ticks and
+    // hits on the rest, interleaving fresh composites with held repeats.
+    cam1_owner->SetFramePeriod(std::chrono::milliseconds(
+        80));  // NOLINT(readability-magic-numbers) — self-evident pacing choice
+    FakeCompositor compositor;
+    sst::streaming::PreviewLayoutState layout;
+    layout.Set(sst::streaming::PreviewLayout::kSideBySide);
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        TwoCameras(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>(),
+                   std::move(cam1_owner), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig(), nullptr, nullptr, &compositor, &layout);
+
+    ASSERT_TRUE(orchestrator.Start());
+    // Let a meaningful stretch of alternating hits/misses flow.
+    constexpr int kMinPushes = 12;
+    constexpr auto kFlowTimeout = std::chrono::seconds(5);
+    constexpr auto kPollInterval = std::chrono::milliseconds(10);
+    const auto deadline = std::chrono::steady_clock::now() + kFlowTimeout;
+    while (std::chrono::steady_clock::now() < deadline && sink.PushCount() < kMinPushes) {
+        std::this_thread::sleep_for(kPollInterval);
+    }
+    orchestrator.Stop();
+
+    EXPECT_GE(sink.PushCount(), kMinPushes);
+    // A stable composite stream: EVERY push carried the composite geometry —
+    // zero bare single-camera interleaves (the flicker).
+    EXPECT_EQ(sink.CountPushesWithWidth(kOutputDims.width), 0);
+    EXPECT_EQ(sink.CountPushesWithWidth(kCompositeDims.width), sink.PushCount());
 }
 
 // #6 F6d: SINGLE (default) never invokes the compositor; the stream carries the
