@@ -20,7 +20,7 @@
 #include "app/processing/ports/frame-compositor.hpp"
 #include "app/processing/ports/postprocessor.hpp"
 #include "app/processing/ports/preprocessor.hpp"
-#include "app/raw_capture/ports/raw-capture-sink.hpp"
+#include "app/storage/ports/raw-capture-sink.hpp"
 #include "domain/buffer/services/latest-only-slot.hpp"
 #include "domain/capture/models/frame.hpp"
 #include "domain/health/models/camera-health.hpp"
@@ -122,7 +122,7 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource,
                          sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
                          // NOLINTEND(bugprone-easily-swappable-parameters)
                          PipelineConfig config = PipelineConfig{},
-                         sst::raw_capture::IRawCaptureSink* raw_sink = nullptr,
+                         sst::storage::IRawCaptureSink* raw_sink = nullptr,
                          sst::overlay::IOverlayFrameSource* overlay_source = nullptr,
                          // #6 F6d dual preview: both optional. When set and the
                          // layout is SIDE_BY_SIDE, the consumer postprocesses the
@@ -248,7 +248,7 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource,
     sst::buffer::IFrameSink& record_sink_;  // CLEAN L1 (no overlay)
     sst::buffer::IFrameSink& stream_sink_;  // overlaid (live/broadcast: RTSP + RTMP)
     PipelineConfig config_;
-    sst::raw_capture::IRawCaptureSink* raw_sink_;
+    sst::storage::IRawCaptureSink* raw_sink_;
     sst::overlay::IOverlayFrameSource* overlay_source_;
     sst::processing::IFrameCompositor* compositor_;
     sst::streaming::PreviewLayoutState* preview_layout_;

@@ -10,8 +10,8 @@
 
 #include "app/control/services/handlers/health-gate.hpp"
 #include "app/control/services/handlers/streaming.handler.hpp"
-#include "app/raw_capture/ports/raw-capture-sink.hpp"
-#include "app/raw_capture/services/proxy_lifecycle/proxy-lifecycle.hpp"
+#include "app/storage/ports/raw-capture-sink.hpp"
+#include "app/storage/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
 #include "app/streaming/ports/uplink-probe.hpp"
 #include "bluetooth.pb.h"
@@ -250,7 +250,7 @@ TEST(StreamingHandlerTest, StopWhileCameraDownAccepted) {
 
 // ── Stream leg of the record-or-stream proxy ref-count (U5) ───────────────
 
-class FakeProxySink final : public sst::raw_capture::IRawCaptureSink {
+class FakeProxySink final : public sst::storage::IRawCaptureSink {
    public:
     auto Start(const std::string& capture_group_id,
                const std::filesystem::path& /*output_dir*/) -> bool override {
@@ -286,7 +286,7 @@ constexpr std::uint64_t kFixedEpochMs = 7;
 TEST(StreamingHandlerTest, StartTakesProxyHoldStopReleasesIt) {
     FakeStreaming streaming;
     FakeProxySink sink;
-    sst::raw_capture::ProxyLifecycle lifecycle(sink, [] { return kFixedEpochMs; });
+    sst::storage::ProxyLifecycle lifecycle(sink, [] { return kFixedEpochMs; });
     StreamingHandler handler(streaming, nullptr, {}, &lifecycle);
 
     ASSERT_EQ(handler.Handle(StartCmd("rtmp://ingest/live/k")).status(),
@@ -303,7 +303,7 @@ TEST(StreamingHandlerTest, StartTakesProxyHoldStopReleasesIt) {
 TEST(StreamingHandlerTest, RejectedStartTakesNoProxyHold) {
     FakeStreaming streaming;
     FakeProxySink sink;
-    sst::raw_capture::ProxyLifecycle lifecycle(sink);
+    sst::storage::ProxyLifecycle lifecycle(sink);
     StreamingHandler handler(streaming, nullptr, {}, &lifecycle);
 
     EXPECT_EQ(handler.Handle(StartCmd("")).status(), sst_cam::ResponseStatus::ERROR);
@@ -315,7 +315,7 @@ TEST(StreamingHandlerTest, RejectedStartTakesNoProxyHold) {
 TEST(StreamingHandlerTest, FailedStopReleasesNoProxyHold) {
     FakeStreaming streaming;
     FakeProxySink sink;
-    sst::raw_capture::ProxyLifecycle lifecycle(sink);
+    sst::storage::ProxyLifecycle lifecycle(sink);
     StreamingHandler handler(streaming, nullptr, {}, &lifecycle);
 
     EXPECT_EQ(handler.Handle(StopCmd()).status(), sst_cam::ResponseStatus::ERROR);

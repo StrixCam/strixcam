@@ -6,9 +6,9 @@
 #include <mutex>
 #include <string>
 
-#include "app/raw_capture/ports/raw-capture-sink.hpp"
+#include "app/storage/ports/raw-capture-sink.hpp"
 
-namespace sst::raw_capture {
+namespace sst::storage {
 
 // Record-or-stream ref-count for the training proxy: the proxy runs while a
 // recording OR a platform (RTMP) stream is active and stops on last-out, so
@@ -75,4 +75,4 @@ class ProxyLifecycle {
     std::string active_group_;
 };
 
-}  // namespace sst::raw_capture
+}  // namespace sst::storage

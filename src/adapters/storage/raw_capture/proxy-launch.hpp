@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace sst::adapters::raw_capture {
+namespace sst::adapters::storage {
 
 // Training-proxy encode: small H.264 for model training, one pipeline per
 // camera. Low bitrate (training doesn't need broadcast quality) sized to be a
@@ -34,4 +34,4 @@ inline constexpr const char* kProxyEncoderName = "enc";
 [[nodiscard]] auto BuildProxyLaunch(const std::string& output_mp4,
                                     bool use_vic = true) -> std::string;
 
-}  // namespace sst::adapters::raw_capture
+}  // namespace sst::adapters::storage

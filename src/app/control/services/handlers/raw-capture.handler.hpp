@@ -4,7 +4,7 @@
 
 #include "app/control/ports/handler.hpp"
 #include "app/control/services/handlers/health-gate.hpp"
-#include "app/raw_capture/ports/raw-capture-sink.hpp"
+#include "app/storage/ports/raw-capture-sink.hpp"
 #include "bluetooth.pb.h"
 
 namespace sst::control {
@@ -19,14 +19,14 @@ class RawCaptureHandler final : public ICommandHandler {
    public:
     // `health_gate` refuses START with DEVICE_INOPERABLE while any camera is
     // not OK (U3); STOP is never gated. Default gates nothing.
-    explicit RawCaptureHandler(sst::raw_capture::IRawCaptureSink& sink,
+    explicit RawCaptureHandler(sst::storage::IRawCaptureSink& sink,
                                StartHealthGate health_gate = {});
 
     [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
     auto Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResponse override;
 
    private:
-    sst::raw_capture::IRawCaptureSink& sink_;
+    sst::storage::IRawCaptureSink& sink_;
     StartHealthGate health_gate_;
 };
 

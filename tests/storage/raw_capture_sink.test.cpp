@@ -10,11 +10,11 @@
 #include <vector>
 
 #include "adapters/common/gstreamer/gst-frame.hpp"
-#include "adapters/raw_capture/filesystem-raw-capture-sink.hpp"
-#include "app/raw_capture/ports/raw-capture-sink.hpp"
+#include "adapters/storage/raw_capture/filesystem-raw-capture-sink.hpp"
+#include "app/storage/ports/raw-capture-sink.hpp"
 #include "domain/capture/models/frame.hpp"
-#include "domain/raw_capture/models/raw-capture-identity.hpp"
-#include "domain/raw_capture/services/raw-capture-naming.hpp"
+#include "domain/storage/models/raw-capture-identity.hpp"
+#include "domain/storage/services/raw-capture-naming.hpp"
 
 // The training-proxy sink now runs a per-camera GStreamer H.264 encode pipeline
 // (appsrc -> nvvidconv/x264enc -> mp4mux -> filesink). Tests that call Start()
@@ -26,16 +26,16 @@
 
 namespace {
 
-using sst::adapters::raw_capture::FilesystemRawCaptureSink;
+using sst::adapters::storage::FilesystemRawCaptureSink;
 using sst::capture::Frame;
 
 // R17: the raw dual-recording is NOT quality-controllable — record/stream
 // quality must never reach it. The sink's Start takes only a capture_group_id;
 // pinned at compile time so a future signature change that adds a quality knob to
 // the raw path fails the build.
-static_assert(std::is_same_v<decltype(&sst::raw_capture::IRawCaptureSink::Start),
-                             bool (sst::raw_capture::IRawCaptureSink::*)(
-                                 const std::string&, const std::filesystem::path&)>,
+static_assert(std::is_same_v<decltype(&sst::storage::IRawCaptureSink::Start),
+                             bool (sst::storage::IRawCaptureSink::*)(const std::string&,
+                                                                     const std::filesystem::path&)>,
               "raw capture Start takes a group id + output dir, no quality knob (R17)");
 
 // A unique temp directory per test, removed on destruction.
@@ -81,7 +81,7 @@ auto MakeFrame(std::uint8_t fill) -> Frame {
 
 auto ProxyPath(const std::filesystem::path& dir,
                std::uint32_t camera_index) -> std::filesystem::path {
-    namespace naming = sst::raw_capture::raw_capture_naming;
+    namespace naming = sst::storage::raw_capture_naming;
     return dir / naming::FileName({.capture_group_id = "grp-1", .camera_index = camera_index});
 }
 

@@ -4,7 +4,7 @@
 
 namespace sst::control {
 
-RawCaptureHandler::RawCaptureHandler(sst::raw_capture::IRawCaptureSink& sink,
+RawCaptureHandler::RawCaptureHandler(sst::storage::IRawCaptureSink& sink,
                                      StartHealthGate health_gate)
     : sink_(sink), health_gate_(std::move(health_gate)) {}
 

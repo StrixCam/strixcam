@@ -1,12 +1,12 @@
 #include <gtest/gtest.h>
 
-#include "domain/raw_capture/models/raw-capture-identity.hpp"
-#include "domain/raw_capture/services/raw-capture-naming.hpp"
+#include "domain/storage/models/raw-capture-identity.hpp"
+#include "domain/storage/services/raw-capture-naming.hpp"
 
 namespace {
 
-using sst::raw_capture::RawCaptureIdentity;
-namespace naming = sst::raw_capture::raw_capture_naming;
+using sst::storage::RawCaptureIdentity;
+namespace naming = sst::storage::raw_capture_naming;
 
 TEST(RawCaptureNamingTest, FileNameRoundTrips) {
     const RawCaptureIdentity identity{.capture_group_id = "abc-123-def", .camera_index = 1};

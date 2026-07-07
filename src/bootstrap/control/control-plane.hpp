@@ -17,11 +17,11 @@
 #include "app/overlay/ports/overlay-timeline-recorder.hpp"
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
-#include "app/raw_capture/ports/raw-capture-sink.hpp"
-#include "app/raw_capture/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/session/ports/session-manager.hpp"
 #include "app/storage/ports/jpeg-encoder.hpp"
+#include "app/storage/ports/raw-capture-sink.hpp"
 #include "app/storage/ports/recording-service.hpp"
+#include "app/storage/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
 #include "app/streaming/ports/uplink-probe.hpp"
 #include "domain/config/models/device.hpp"
@@ -48,8 +48,8 @@ struct ControlPlaneDeps {
     sst::storage::IRecordingService& recording_service;
     sst::streaming::IStreamingService& streaming_service;
     sst::streaming::IUplinkProbe& uplink_probe;
-    sst::raw_capture::IRawCaptureSink& raw_capture_sink;
-    sst::raw_capture::ProxyLifecycle& proxy_lifecycle;
+    sst::storage::IRawCaptureSink& raw_capture_sink;
+    sst::storage::ProxyLifecycle& proxy_lifecycle;
     sst::control::IWifiManager& wifi_manager;
     sst::control::INetworkConfigurator& network_configurator;
     sst::control::IDhcpServer& dhcp_server;

@@ -1,11 +1,11 @@
-#include "adapters/raw_capture/proxy-launch.hpp"
+#include "adapters/storage/raw_capture/proxy-launch.hpp"
 
 #include <fmt/format.h>
 
 #include "adapters/storage/gstreamer/encode-fragment.hpp"
 #include "domain/common/models/video-quality.hpp"
 
-namespace sst::adapters::raw_capture {
+namespace sst::adapters::storage {
 
 auto BuildProxyLaunch(const std::string& output_mp4, bool use_vic) -> std::string {
     // NV12 source -> scale to the internal proxy mode + I420 for x264enc, via
@@ -30,4 +30,4 @@ auto BuildProxyLaunch(const std::string& output_mp4, bool use_vic) -> std::strin
         fmt::arg("src", kProxyAppsrcName), fmt::arg("frag", fragment), fmt::arg("loc", output_mp4));
 }
 
-}  // namespace sst::adapters::raw_capture
+}  // namespace sst::adapters::storage

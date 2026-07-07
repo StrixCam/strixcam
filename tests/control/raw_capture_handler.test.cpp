@@ -8,7 +8,7 @@
 
 #include "app/control/services/handlers/health-gate.hpp"
 #include "app/control/services/handlers/raw-capture.handler.hpp"
-#include "app/raw_capture/ports/raw-capture-sink.hpp"
+#include "app/storage/ports/raw-capture-sink.hpp"
 #include "bluetooth.pb.h"
 #include "domain/capture/models/frame.hpp"
 
@@ -18,7 +18,7 @@ using sst::control::RawCaptureHandler;
 
 // Records the handler's calls into the sink and lets a test force Start/Stop
 // failure.
-class FakeRawSink final : public sst::raw_capture::IRawCaptureSink {
+class FakeRawSink final : public sst::storage::IRawCaptureSink {
    public:
     auto Start(const std::string& capture_group_id,
                const std::filesystem::path& output_dir) -> bool override {

@@ -30,13 +30,13 @@
 #include "adapters/overlay/timeline/overlay-timeline-loader.hpp"
 #include "adapters/processing/opencv/opencv-postprocessor.hpp"
 #include "adapters/processing/opencv/opencv-side-by-side-compositor.hpp"
-#include "adapters/raw_capture/filesystem-raw-capture-sink.hpp"
-#include "adapters/raw_capture/proxy-retention.hpp"
 #include "adapters/session/json/json-session-summary-store.hpp"
 #include "adapters/storage/filesystem/filesystem-disk-guard.hpp"
 #include "adapters/storage/gstreamer/gst-continuous-recorder.hpp"
 #include "adapters/storage/opencv/opencv-jpeg-encoder.hpp"
 #include "adapters/storage/opencv/opencv-thumbnail-writer.hpp"
+#include "adapters/storage/raw_capture/filesystem-raw-capture-sink.hpp"
+#include "adapters/storage/raw_capture/proxy-retention.hpp"
 #include "adapters/streaming/gst_rtmp/gst-rtmp-streamer.hpp"
 #include "adapters/streaming/gst_rtsp/gst-rtsp-app-stream-server.hpp"
 #include "app/config/services/config_loader/config-loader.hpp"
@@ -49,9 +49,9 @@
 #include "app/network/services/uplink-manager/uplink-manager.hpp"
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
-#include "app/raw_capture/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/session/services/session_cleanup/session-cleanup.hpp"
 #include "app/session/services/session_manager/session-manager.hpp"
+#include "app/storage/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/storage/services/recording_service/recording-service.hpp"
 #include "app/streaming/services/streaming_service/streaming-service.hpp"
 #include "bootstrap/control/control-plane.hpp"
@@ -151,14 +151,14 @@ auto RunFirmware() -> int {
     // chains. Constructed here, ahead of both SessionCleanup and the pipeline
     // that pushes into it, so both can reference it and DeviceHandler can report
     // its IsCapturing() state.
-    sst::adapters::raw_capture::FilesystemRawCaptureSink raw_capture_sink(
+    sst::adapters::storage::FilesystemRawCaptureSink raw_capture_sink(
         cfg.storage.video.value_or(sst::paths::kVideoRootFallback), /*camera_count=*/2);
     // Record-or-stream proxy ref-count (U5): the proxy runs while a recording OR
     // an RTMP egress is active and stops on last-out, so streaming-only matches
     // still produce training footage. RecordingHandler drives the record leg,
     // StreamingHandler the stream leg, SessionCleanup force-stops (and resets
     // both holds) at session end. The always-on RTSP preview takes no hold.
-    sst::raw_capture::ProxyLifecycle proxy_lifecycle(raw_capture_sink);
+    sst::storage::ProxyLifecycle proxy_lifecycle(raw_capture_sink);
 
     // Session-scoped UI selections. Declared here, ahead of SessionCleanup, so
     // it can reset them on disconnect: a reconnect must start from the app's
@@ -207,7 +207,7 @@ auto RunFirmware() -> int {
     // with a live download token. Off-thread so it never blocks the BLE surface
     // (owned worker, joined at shutdown); a no-op when proxy_max_total_bytes is
     // unset.
-    sst::adapters::raw_capture::ProxyRetention proxy_retention(
+    sst::adapters::storage::ProxyRetention proxy_retention(
         video_root, cfg.storage.proxy_max_total_bytes.value_or(0));
     constexpr std::chrono::minutes kProxySweepInterval{5};
     sst::common::PeriodicWorker proxy_retention_sweep(

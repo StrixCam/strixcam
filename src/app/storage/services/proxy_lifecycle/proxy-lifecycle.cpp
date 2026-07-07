@@ -1,11 +1,11 @@
-#include "app/raw_capture/services/proxy_lifecycle/proxy-lifecycle.hpp"
+#include "app/storage/services/proxy_lifecycle/proxy-lifecycle.hpp"
 
 #include <spdlog/spdlog.h>
 
 #include <chrono>
 #include <utility>
 
-namespace sst::raw_capture {
+namespace sst::storage {
 
 namespace {
 
@@ -105,4 +105,4 @@ auto ProxyLifecycle::IsProxyRunning() const -> bool {
     return proxy_running_;
 }
 
-}  // namespace sst::raw_capture
+}  // namespace sst::storage

@@ -4,7 +4,7 @@
 #include <filesystem>
 #include <functional>
 
-namespace sst::adapters::raw_capture {
+namespace sst::adapters::storage {
 
 // Bounds total training-proxy storage. The proxy writes small per-camera H.264
 // files (raw__<group>__cam<N>.mp4) into each per-match directory under the
@@ -33,4 +33,4 @@ class ProxyRetention {
     const std::uint64_t max_total_bytes_;
 };
 
-}  // namespace sst::adapters::raw_capture
+}  // namespace sst::adapters::storage

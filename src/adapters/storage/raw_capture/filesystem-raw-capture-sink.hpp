@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "app/raw_capture/ports/raw-capture-sink.hpp"
+#include "app/storage/ports/raw-capture-sink.hpp"
 #include "domain/capture/models/frame.hpp"
 
 // Forward-declared to keep the GStreamer headers out of this (widely-included)
@@ -16,7 +16,7 @@
 // NOLINTNEXTLINE(bugprone-reserved-identifier) floor-ok: _GstElement is GStreamer's own struct tag
 using GstElement = struct _GstElement;
 
-namespace sst::adapters::raw_capture {
+namespace sst::adapters::storage {
 
 // Per-camera training-proxy sink. One small H.264 MP4 per camera under
 // `video_dir`, named raw__<group>__cam<N>.mp4 (see raw-capture-naming.hpp), each
@@ -31,7 +31,7 @@ namespace sst::adapters::raw_capture {
 // encode overload, and uses try_to_lock so a concurrent Start/Stop can never
 // stall capture. Stop detaches the pipelines under the lock (O(1)) and does the
 // EOS + moov-finalize wait OUTSIDE the lock so it never freezes the fan-out.
-class FilesystemRawCaptureSink final : public sst::raw_capture::IRawCaptureSink {
+class FilesystemRawCaptureSink final : public sst::storage::IRawCaptureSink {
    public:
     FilesystemRawCaptureSink(std::filesystem::path video_dir, std::uint32_t camera_count);
     ~FilesystemRawCaptureSink() override;
@@ -71,4 +71,4 @@ class FilesystemRawCaptureSink final : public sst::raw_capture::IRawCaptureSink 
     std::vector<std::unique_ptr<CameraWriter>> writers_;
 };
 
-}  // namespace sst::adapters::raw_capture
+}  // namespace sst::adapters::storage

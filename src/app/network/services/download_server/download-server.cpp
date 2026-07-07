@@ -9,7 +9,7 @@
 
 #include "app/network/services/download_server/mp4-duration.hpp"
 #include "domain/common/utils/uuid.hpp"
-#include "domain/raw_capture/services/raw-capture-naming.hpp"
+#include "domain/storage/services/raw-capture-naming.hpp"
 
 namespace sst::network {
 
@@ -65,7 +65,7 @@ auto DownloadServer::Enumerate() const -> std::vector<RecordingSummary> {
         // discriminator — proxies carry it, final recordings do not (both live
         // inside the per-match subdirs; the walk above is recursive).
         const auto identity =
-            sst::raw_capture::raw_capture_naming::ParseFileName(path.filename().string());
+            sst::storage::raw_capture_naming::ParseFileName(path.filename().string());
         if (identity) {
             // Raw dual-camera training proxy: parse identity so the app can group
             // the cam-0/cam-1 pair by capture_group_id.

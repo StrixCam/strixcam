@@ -1,4 +1,4 @@
-#include "adapters/raw_capture/proxy-retention.hpp"
+#include "adapters/storage/raw_capture/proxy-retention.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -10,9 +10,9 @@
 #include <utility>
 #include <vector>
 
-#include "domain/raw_capture/services/raw-capture-naming.hpp"
+#include "domain/storage/services/raw-capture-naming.hpp"
 
-namespace sst::adapters::raw_capture {
+namespace sst::adapters::storage {
 
 namespace fs = std::filesystem;
 
@@ -62,7 +62,7 @@ auto ProxyRetention::Sweep(
             continue;
         }
         const auto identity =
-            sst::raw_capture::raw_capture_naming::ParseFileName(it->path().filename().string());
+            sst::storage::raw_capture_naming::ParseFileName(it->path().filename().string());
         if (!identity) {
             continue;  // final recordings / other files are not proxy footage
         }
@@ -119,4 +119,4 @@ auto ProxyRetention::Sweep(
     return freed;
 }
 
-}  // namespace sst::adapters::raw_capture
+}  // namespace sst::adapters::storage

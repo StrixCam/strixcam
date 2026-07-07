@@ -10,7 +10,7 @@ namespace sst::control {
 StreamingHandler::StreamingHandler(sst::streaming::IStreamingService& streaming,
                                    sst::streaming::IUplinkProbe* uplink_probe,
                                    StartHealthGate health_gate,
-                                   sst::raw_capture::ProxyLifecycle* proxy_lifecycle)
+                                   sst::storage::ProxyLifecycle* proxy_lifecycle)
     : streaming_(streaming),
       uplink_probe_(uplink_probe),
       health_gate_(std::move(health_gate)),

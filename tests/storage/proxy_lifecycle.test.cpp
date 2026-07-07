@@ -13,14 +13,14 @@
 #include <thread>
 #include <vector>
 
-#include "app/raw_capture/ports/raw-capture-sink.hpp"
-#include "app/raw_capture/services/proxy_lifecycle/proxy-lifecycle.hpp"
+#include "app/storage/ports/raw-capture-sink.hpp"
+#include "app/storage/services/proxy_lifecycle/proxy-lifecycle.hpp"
 
 namespace {
 
-using sst::raw_capture::ProxyLifecycle;
+using sst::storage::ProxyLifecycle;
 
-class FakeSink final : public sst::raw_capture::IRawCaptureSink {
+class FakeSink final : public sst::storage::IRawCaptureSink {
    public:
     auto Start(const std::string& capture_group_id,
                const std::filesystem::path& output_dir) -> bool override {

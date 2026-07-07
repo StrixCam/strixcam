@@ -4,7 +4,7 @@ namespace sst::session {
 
 SessionCleanup::SessionCleanup(sst::storage::IRecordingService& recording,
                                sst::streaming::IStreamingService& streaming,
-                               sst::raw_capture::ProxyLifecycle& proxy,
+                               sst::storage::ProxyLifecycle& proxy,
                                sst::overlay::IOverlayTimelineRecorder& timeline,
                                sst::control::IWifiManager& wifi, sst::control::IDhcpServer& dhcp,
                                sst::decision::ManualCameraState& camera_state,

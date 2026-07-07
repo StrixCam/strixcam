@@ -8,15 +8,15 @@
 #include <fstream>
 #include <string>
 
-#include "adapters/raw_capture/proxy-retention.hpp"
-#include "domain/raw_capture/models/raw-capture-identity.hpp"
-#include "domain/raw_capture/services/raw-capture-naming.hpp"
+#include "adapters/storage/raw_capture/proxy-retention.hpp"
+#include "domain/storage/models/raw-capture-identity.hpp"
+#include "domain/storage/services/raw-capture-naming.hpp"
 
 namespace {
 
 namespace fs = std::filesystem;
-using sst::adapters::raw_capture::ProxyRetention;
-namespace naming = sst::raw_capture::raw_capture_naming;
+using sst::adapters::storage::ProxyRetention;
+namespace naming = sst::storage::raw_capture_naming;
 
 class TempDir {
    public:

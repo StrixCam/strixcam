@@ -7,9 +7,9 @@
 #include "app/control/ports/handler.hpp"
 #include "app/control/services/handlers/health-gate.hpp"
 #include "app/overlay/ports/overlay-timeline-recorder.hpp"
-#include "app/raw_capture/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/session/ports/session-manager.hpp"
 #include "app/storage/ports/recording-service.hpp"
+#include "app/storage/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "bluetooth.pb.h"
 
 namespace sst::control {
@@ -32,7 +32,7 @@ class RecordingHandler final : public ICommandHandler {
     RecordingHandler(sst::session::ISessionManager& session,
                      sst::storage::IRecordingService& recording,
                      sst::overlay::IOverlayTimelineRecorder& timeline,
-                     sst::raw_capture::ProxyLifecycle& proxy, Clock now_ms,
+                     sst::storage::ProxyLifecycle& proxy, Clock now_ms,
                      StartHealthGate health_gate = {});
 
     [[nodiscard]] auto HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> override;
@@ -42,7 +42,7 @@ class RecordingHandler final : public ICommandHandler {
     sst::session::ISessionManager& session_;
     sst::storage::IRecordingService& recording_;
     sst::overlay::IOverlayTimelineRecorder& timeline_;
-    sst::raw_capture::ProxyLifecycle& proxy_;
+    sst::storage::ProxyLifecycle& proxy_;
     Clock now_ms_;
     StartHealthGate health_gate_;
 };

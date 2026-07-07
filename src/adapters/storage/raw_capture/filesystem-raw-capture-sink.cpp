@@ -1,4 +1,4 @@
-#include "adapters/raw_capture/filesystem-raw-capture-sink.hpp"
+#include "adapters/storage/raw_capture/filesystem-raw-capture-sink.hpp"
 
 #include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
@@ -9,11 +9,11 @@
 #include <utility>
 
 #include "adapters/common/gstreamer/gst-frame.hpp"
-#include "adapters/raw_capture/proxy-launch.hpp"
-#include "domain/raw_capture/models/raw-capture-identity.hpp"
-#include "domain/raw_capture/services/raw-capture-naming.hpp"
+#include "adapters/storage/raw_capture/proxy-launch.hpp"
+#include "domain/storage/models/raw-capture-identity.hpp"
+#include "domain/storage/services/raw-capture-naming.hpp"
 
-namespace sst::adapters::raw_capture {
+namespace sst::adapters::storage {
 
 namespace {
 // Bound the wait for mp4mux to flush its moov on Stop so a stuck proxy pipeline
@@ -81,7 +81,7 @@ auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id,
     // fail loudly instead of silently destroying training footage.
     for (std::uint32_t i = 0; i < camera_count_; ++i) {
         const auto name =
-            sst::raw_capture::raw_capture_naming::FileName(sst::raw_capture::RawCaptureIdentity{
+            sst::storage::raw_capture_naming::FileName(sst::storage::RawCaptureIdentity{
                 .capture_group_id = capture_group_id, .camera_index = i});
         if (std::filesystem::exists(dir / name)) {
             spdlog::error("RawCaptureSink::Start: group {} already has files on disk — refusing",
@@ -94,7 +94,7 @@ auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id,
     writers.reserve(camera_count_);
     for (std::uint32_t i = 0; i < camera_count_; ++i) {
         const auto name =
-            sst::raw_capture::raw_capture_naming::FileName(sst::raw_capture::RawCaptureIdentity{
+            sst::storage::raw_capture_naming::FileName(sst::storage::RawCaptureIdentity{
                 .capture_group_id = capture_group_id, .camera_index = i});
         const auto path = dir / name;
 
@@ -234,4 +234,4 @@ auto FilesystemRawCaptureSink::TeardownWriter(CameraWriter& writer) -> void {
     }
 }
 
-}  // namespace sst::adapters::raw_capture
+}  // namespace sst::adapters::storage

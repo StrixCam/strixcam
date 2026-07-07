@@ -10,7 +10,7 @@ namespace sst::control {
 RecordingHandler::RecordingHandler(sst::session::ISessionManager& session,
                                    sst::storage::IRecordingService& recording,
                                    sst::overlay::IOverlayTimelineRecorder& timeline,
-                                   sst::raw_capture::ProxyLifecycle& proxy, Clock now_ms,
+                                   sst::storage::ProxyLifecycle& proxy, Clock now_ms,
                                    StartHealthGate health_gate)
     : session_(session),
       recording_(recording),

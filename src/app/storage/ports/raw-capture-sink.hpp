@@ -6,7 +6,7 @@
 
 #include "domain/capture/models/frame.hpp"
 
-namespace sst::raw_capture {
+namespace sst::storage {
 
 // Records raw frames from BOTH cameras to per-camera files, independently of the
 // final (cam-0) recording. Driven by RawCaptureControlCommand: Start opens the
@@ -45,4 +45,4 @@ class IRawCaptureSink {
     [[nodiscard]] virtual auto IsCapturing() const -> bool = 0;
 };
 
-}  // namespace sst::raw_capture
+}  // namespace sst::storage

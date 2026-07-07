@@ -5,12 +5,12 @@
 
 #include <string>
 
-#include "adapters/raw_capture/proxy-launch.hpp"
+#include "adapters/storage/raw_capture/proxy-launch.hpp"
 #include "domain/common/models/video-quality.hpp"
 
 namespace {
 
-using sst::adapters::raw_capture::BuildProxyLaunch;
+using sst::adapters::storage::BuildProxyLaunch;
 
 auto Contains(const std::string& haystack, const std::string& needle) -> bool {
     return haystack.find(needle) != std::string::npos;
