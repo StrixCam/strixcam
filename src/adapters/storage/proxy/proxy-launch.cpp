@@ -1,4 +1,4 @@
-#include "adapters/storage/raw_capture/proxy-launch.hpp"
+#include "adapters/storage/proxy/proxy-launch.hpp"
 
 #include <fmt/format.h>
 

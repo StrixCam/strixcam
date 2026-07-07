@@ -94,7 +94,6 @@ auto SessionSnapshotHandler::Handle(const sst_cam::Command& /*cmd*/) -> sst_cam:
     // handshake and the 1 Hz poll can never disagree.
     snap->set_is_recording(providers_.is_recording && providers_.is_recording());
     snap->set_is_streaming(providers_.is_streaming && providers_.is_streaming());
-    snap->set_is_raw_capturing(providers_.is_raw_capturing && providers_.is_raw_capturing());
 
     // Monotonic recording clock — present only while a recording runs (the
     // contract pins "absent when not recording"; epoch math is never used, the

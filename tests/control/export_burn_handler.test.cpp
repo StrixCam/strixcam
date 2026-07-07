@@ -36,14 +36,13 @@ auto MakeManager(FakeBurner& burner) -> sst::exportjob::ExportJobManager {
     return sst::exportjob::ExportJobManager(
         burner, [](const std::string&) { return std::optional<fs::path>{"/v/match.mp4"}; },
         [](const fs::path&) { return sst::overlay::OverlayTimeline{}; },
-        [](const fs::path&, const std::string& download_id) {
+        [](const fs::path&, const std::string& file_id) {
             sst::network::DownloadToken token;
-            token.recording_id = download_id;
+            token.recording_id = file_id;
             token.token = "tok";
             token.expires_at_unix = 1;
             return std::optional{token};
-        },
-        fs::temp_directory_path() / "sst-export-handler-test");
+        });
 }
 
 auto ExportCmd(const std::string& recording_id) -> sst_cam::Command {

@@ -17,20 +17,31 @@ auto SystemEpochMs() -> std::uint64_t {
 
 }  // namespace
 
-ProxyLifecycle::ProxyLifecycle(IRawCaptureSink& sink, Clock now_ms)
-    : sink_(sink), now_ms_(std::move(now_ms)) {}
+ProxyLifecycle::ProxyLifecycle(IProxySink& sink, SessionInfoProvider session_info, Clock now_ms)
+    : sink_(sink), session_info_(std::move(session_info)), now_ms_(std::move(now_ms)) {}
 
-auto ProxyLifecycle::StartLocked(const std::string& group_id,
+auto ProxyLifecycle::CurrentSessionInfo() const -> std::optional<ProxySessionInfo> {
+    if (!session_info_) {
+        return std::nullopt;
+    }
+    auto info = session_info_();
+    if (!info || info->match_uuid.empty()) {
+        return std::nullopt;
+    }
+    return info;
+}
+
+auto ProxyLifecycle::StartLocked(const std::string& match_uuid,
                                  const std::filesystem::path& output_dir) -> void {
-    proxy_running_ = sink_.Start(group_id, output_dir);
+    proxy_running_ = sink_.Start(match_uuid, output_dir);
     if (proxy_running_) {
-        active_group_ = group_id;
+        active_match_ = match_uuid;
     } else {
         // Non-fatal by contract: the match record / stream must proceed without
-        // training footage rather than fail on it.
-        spdlog::warn("ProxyLifecycle: training proxy failed to start for group {} (continuing)",
-                     group_id);
-        active_group_.clear();
+        // development footage rather than fail on it.
+        spdlog::warn("ProxyLifecycle: internal proxy failed to start for {} (continuing)",
+                     match_uuid);
+        active_match_.clear();
     }
 }
 
@@ -40,28 +51,28 @@ auto ProxyLifecycle::StopIfIdleLocked() -> void {
     }
     sink_.Stop();
     proxy_running_ = false;
-    active_group_.clear();
+    active_match_.clear();
 }
 
-auto ProxyLifecycle::OnRecordingStart(const std::string& capture_group_id,
-                                      const std::filesystem::path& output_dir) -> void {
+auto ProxyLifecycle::OnRecordingStart() -> void {
     std::lock_guard lock(mtx_);
     record_active_ = true;
-    if (capture_group_id.empty()) {
-        return;  // hold only — no proxy identity from this record
+    const auto info = CurrentSessionInfo();
+    if (!info) {
+        return;  // hold only — no session identity to pair a proxy with
     }
-    if (proxy_running_ && active_group_ == capture_group_id) {
+    if (proxy_running_ && active_match_ == info->match_uuid) {
         return;
     }
     if (proxy_running_) {
-        // Rebind: the app-minted match id is the download-grouping contract, so
+        // Rebind: the session's match_uuid is the on-device pairing contract, so
         // an interim (stream-minted) or stale-match proxy restarts under it —
-        // the momentary gap is preferable to mis-grouped training footage.
-        spdlog::info("ProxyLifecycle: rebinding proxy {} -> {}", active_group_, capture_group_id);
+        // the momentary gap is preferable to mis-paired development footage.
+        spdlog::info("ProxyLifecycle: rebinding proxy {} -> {}", active_match_, info->match_uuid);
         sink_.Stop();
         proxy_running_ = false;
     }
-    StartLocked(capture_group_id, output_dir);
+    StartLocked(info->match_uuid, info->output_dir);
 }
 
 auto ProxyLifecycle::OnRecordingStop() -> void {
@@ -76,8 +87,14 @@ auto ProxyLifecycle::OnStreamingStart() -> void {
     if (proxy_running_) {
         return;
     }
-    // Stream-only: no app-minted id and no per-match dir exist, so mint an
-    // interim id (a record START later rebinds to the real match id).
+    // Stream-only sessions still carry the pushed match identity when one
+    // exists; with no session config there is no match id and no per-match dir,
+    // so mint an interim id at the sink root (a record start later rebinds to
+    // the real match id).
+    if (const auto info = CurrentSessionInfo()) {
+        StartLocked(info->match_uuid, info->output_dir);
+        return;
+    }
     const std::uint64_t stamp = now_ms_ ? now_ms_() : SystemEpochMs();
     StartLocked("stream-" + std::to_string(stamp), {});
 }
@@ -93,11 +110,11 @@ auto ProxyLifecycle::ForceStop() -> void {
     record_active_ = false;
     stream_active_ = false;
     // Unconditional sink stop (idempotent, a no-op when idle): session end must
-    // also close a standalone raw capture the lifecycle never started —
-    // preserving the pre-ref-count SessionCleanup behaviour.
+    // close the proxy even if a hold was left inconsistent — never leak two
+    // x264 encodes past the session.
     sink_.Stop();
     proxy_running_ = false;
-    active_group_.clear();
+    active_match_.clear();
 }
 
 auto ProxyLifecycle::IsProxyRunning() const -> bool {

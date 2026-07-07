@@ -1,4 +1,4 @@
-#include "adapters/storage/raw_capture/filesystem-raw-capture-sink.hpp"
+#include "adapters/storage/proxy/filesystem-proxy-sink.hpp"
 
 #include <gst/app/gstappsrc.h>
 #include <gst/gst.h>
@@ -9,9 +9,9 @@
 #include <utility>
 
 #include "adapters/common/gstreamer/gst-frame.hpp"
-#include "adapters/storage/raw_capture/proxy-launch.hpp"
-#include "domain/storage/models/raw-capture-identity.hpp"
-#include "domain/storage/services/raw-capture-naming.hpp"
+#include "adapters/storage/proxy/proxy-launch.hpp"
+#include "domain/storage/models/proxy-identity.hpp"
+#include "domain/storage/services/proxy-naming.hpp"
 
 namespace sst::adapters::storage {
 
@@ -33,8 +33,8 @@ auto GstFormatFor(sst::common::PixelFormat fmt) -> const char* {
 }
 }  // namespace
 
-FilesystemRawCaptureSink::FilesystemRawCaptureSink(std::filesystem::path video_dir,
-                                                   std::uint32_t camera_count)
+FilesystemProxySink::FilesystemProxySink(std::filesystem::path video_dir,
+                                         std::uint32_t camera_count)
     : video_dir_(std::move(video_dir)),
       camera_count_(camera_count),
       // VIC offload on by default; SST_DISABLE_VIC=1 forces software scale/convert
@@ -43,7 +43,7 @@ FilesystemRawCaptureSink::FilesystemRawCaptureSink(std::filesystem::path video_d
     gst_init(nullptr, nullptr);
 }
 
-FilesystemRawCaptureSink::~FilesystemRawCaptureSink() {
+FilesystemProxySink::~FilesystemProxySink() {
     if (capturing_.load()) {
         (void)Stop();
     }
@@ -51,15 +51,15 @@ FilesystemRawCaptureSink::~FilesystemRawCaptureSink() {
 
 // floor-ok: linear per-camera GStreamer proxy setup + validation guards.
 // NOLINTNEXTLINE(readability-function-cognitive-complexity)
-auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id,
-                                     const std::filesystem::path& output_dir) -> bool {
+auto FilesystemProxySink::Start(const std::string& match_uuid,
+                                const std::filesystem::path& output_dir) -> bool {
     std::lock_guard lock(mtx_);
     if (capturing_.load()) {
-        spdlog::warn("RawCaptureSink::Start: already capturing");
+        spdlog::warn("ProxySink::Start: already capturing");
         return false;
     }
-    if (capture_group_id.empty()) {
-        spdlog::error("RawCaptureSink::Start: empty capture_group_id");
+    if (match_uuid.empty()) {
+        spdlog::error("ProxySink::Start: empty match_uuid");
         return false;
     }
 
@@ -71,38 +71,26 @@ auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id,
     std::error_code err;
     std::filesystem::create_directories(dir, err);
     if (err) {
-        spdlog::error("RawCaptureSink::Start: cannot create {}: {}", dir.string(), err.message());
+        spdlog::error("ProxySink::Start: cannot create {}: {}", dir.string(), err.message());
         return false;
     }
 
-    // Group-id collision guard: reject a reused capture_group_id rather than
-    // truncate-overwrite a prior group's (possibly not-yet-downloaded) proxy
-    // files. The app mints UUIDs so a collision means a retry/reconnect resend —
-    // fail loudly instead of silently destroying training footage.
-    for (std::uint32_t i = 0; i < camera_count_; ++i) {
-        const auto name =
-            sst::storage::raw_capture_naming::FileName(sst::storage::RawCaptureIdentity{
-                .capture_group_id = capture_group_id, .camera_index = i});
-        if (std::filesystem::exists(dir / name)) {
-            spdlog::error("RawCaptureSink::Start: group {} already has files on disk — refusing",
-                          capture_group_id);
-            return false;
-        }
-    }
-
+    // A re-run for the same match (stop + start within one match session)
+    // truncate-overwrites the previous proxy pair via filesink, mirroring the L1
+    // recorder writing the same <match>.mp4 — the proxy always mirrors its
+    // match's latest take.
     std::vector<std::unique_ptr<CameraWriter>> writers;
     writers.reserve(camera_count_);
     for (std::uint32_t i = 0; i < camera_count_; ++i) {
-        const auto name =
-            sst::storage::raw_capture_naming::FileName(sst::storage::RawCaptureIdentity{
-                .capture_group_id = capture_group_id, .camera_index = i});
+        const auto name = sst::storage::proxy_naming::FileName(
+            sst::storage::ProxyIdentity{.match_uuid = match_uuid, .camera_index = i});
         const auto path = dir / name;
 
         const std::string desc = BuildProxyLaunch(path.string(), use_vic_);
         GError* gerr = nullptr;
         GstElement* pipeline = gst_parse_launch(desc.c_str(), &gerr);
         if (pipeline == nullptr || gerr != nullptr) {
-            spdlog::error("RawCaptureSink::Start: parse failed for cam{}: {}", i,
+            spdlog::error("ProxySink::Start: parse failed for cam{}: {}", i,
                           gerr != nullptr ? gerr->message : "unknown");
             if (gerr != nullptr) {
                 g_error_free(gerr);
@@ -121,7 +109,7 @@ auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id,
         writer->appsrc = gst_bin_get_by_name(GST_BIN(pipeline), kProxyAppsrcName);
         if (writer->appsrc == nullptr ||
             gst_element_set_state(pipeline, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
-            spdlog::error("RawCaptureSink::Start: cam{} appsrc/PLAYING failed", i);
+            spdlog::error("ProxySink::Start: cam{} appsrc/PLAYING failed", i);
             TeardownWriter(*writer);
             for (auto& built : writers) {
                 TeardownWriter(*built);
@@ -132,15 +120,15 @@ auto FilesystemRawCaptureSink::Start(const std::string& capture_group_id,
     }
 
     writers_ = std::move(writers);
-    capture_group_id_ = capture_group_id;
+    match_uuid_ = match_uuid;
     capturing_.store(true);
-    spdlog::info("RawCaptureSink: started group={} cameras={} (vic={})", capture_group_id,
-                 camera_count_, use_vic_);
+    spdlog::info("ProxySink: started match={} cameras={} (vic={})", match_uuid, camera_count_,
+                 use_vic_);
     return true;
 }
 
-auto FilesystemRawCaptureSink::PushCamera(std::uint32_t camera_index,
-                                          const sst::capture::Frame& frame) -> void {
+auto FilesystemProxySink::PushCamera(std::uint32_t camera_index,
+                                     const sst::capture::Frame& frame) -> void {
     if (frame.planes.empty()) {
         return;
     }
@@ -179,13 +167,13 @@ auto FilesystemRawCaptureSink::PushCamera(std::uint32_t camera_index,
     (void)gst_app_src_push_buffer(GST_APP_SRC(writer.appsrc), buffer);
 }
 
-auto FilesystemRawCaptureSink::Stop() -> bool {
+auto FilesystemProxySink::Stop() -> bool {
     // Flip state + detach pipelines under the lock (O(1) move), then do the slow
     // EOS/moov-finalize work on the local copy OUTSIDE the lock so PushCamera
     // never contends with finalize. After the move, writers_ is empty and
     // capturing_ is false, so concurrent PushCamera calls no-op safely.
     std::vector<std::unique_ptr<CameraWriter>> draining;
-    std::string group_id;
+    std::string match_uuid;
     {
         std::lock_guard lock(mtx_);
         if (!capturing_.load()) {
@@ -193,20 +181,20 @@ auto FilesystemRawCaptureSink::Stop() -> bool {
         }
         capturing_.store(false);  // PushCamera no-ops from here
         draining = std::move(writers_);
-        group_id = std::move(capture_group_id_);
-        capture_group_id_.clear();
+        match_uuid = std::move(match_uuid_);
+        match_uuid_.clear();
     }
 
     for (auto& writer : draining) {
         TeardownWriter(*writer);
     }
-    spdlog::info("RawCaptureSink: stopped + finalized group={}", group_id);
+    spdlog::info("ProxySink: stopped + finalized match={}", match_uuid);
     return true;
 }
 
-auto FilesystemRawCaptureSink::IsCapturing() const -> bool { return capturing_.load(); }
+auto FilesystemProxySink::IsCapturing() const -> bool { return capturing_.load(); }
 
-auto FilesystemRawCaptureSink::TeardownWriter(CameraWriter& writer) -> void {
+auto FilesystemProxySink::TeardownWriter(CameraWriter& writer) -> void {
     if (writer.appsrc != nullptr) {
         gst_app_src_end_of_stream(GST_APP_SRC(writer.appsrc));
     }

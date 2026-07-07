@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -35,8 +36,8 @@
 #include "adapters/storage/gstreamer/gst-continuous-recorder.hpp"
 #include "adapters/storage/opencv/opencv-jpeg-encoder.hpp"
 #include "adapters/storage/opencv/opencv-thumbnail-writer.hpp"
-#include "adapters/storage/raw_capture/filesystem-raw-capture-sink.hpp"
-#include "adapters/storage/raw_capture/proxy-retention.hpp"
+#include "adapters/storage/proxy/filesystem-proxy-sink.hpp"
+#include "adapters/storage/proxy/proxy-retention.hpp"
 #include "adapters/streaming/gst_rtmp/gst-rtmp-streamer.hpp"
 #include "adapters/streaming/gst_rtsp/gst-rtsp-app-stream-server.hpp"
 #include "app/config/services/config_loader/config-loader.hpp"
@@ -49,6 +50,7 @@
 #include "app/network/services/uplink-manager/uplink-manager.hpp"
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
+#include "app/session/ports/session-manager.hpp"
 #include "app/session/services/session_cleanup/session-cleanup.hpp"
 #include "app/session/services/session_manager/session-manager.hpp"
 #include "app/storage/services/proxy_lifecycle/proxy-lifecycle.hpp"
@@ -147,18 +149,37 @@ auto RunFirmware() -> int {
     std::jthread uplink_boot_apply(
         [&uplink_manager, boot_cfg = cfg.uplink]() mutable { uplink_manager.Apply(boot_cfg); });
 
-    // Training-proxy sink — per-camera H.264 proxy, taps both materialized camera
-    // chains. Constructed here, ahead of both SessionCleanup and the pipeline
-    // that pushes into it, so both can reference it and DeviceHandler can report
-    // its IsCapturing() state.
-    sst::adapters::storage::FilesystemRawCaptureSink raw_capture_sink(
+    // Internal-proxy sink — per-camera H.264 development proxy, taps both
+    // materialized camera chains. Firmware-automatic and invisible to the app
+    // (no wire command / telemetry); proxy footage is retrieved on-device by
+    // match id. Constructed here, ahead of both SessionCleanup and the pipeline
+    // that pushes into it, so both can reference it.
+    sst::adapters::storage::FilesystemProxySink proxy_sink(
         cfg.storage.video.value_or(sst::paths::kVideoRootFallback), /*camera_count=*/2);
-    // Record-or-stream proxy ref-count (U5): the proxy runs while a recording OR
-    // an RTMP egress is active and stops on last-out, so streaming-only matches
-    // still produce training footage. RecordingHandler drives the record leg,
+    // Record-or-stream proxy ref-count: the proxy runs while a recording OR an
+    // RTMP egress is active and stops on last-out, so streaming-only matches
+    // still produce development footage. RecordingHandler drives the record leg,
     // StreamingHandler the stream leg, SessionCleanup force-stops (and resets
     // both holds) at session end. The always-on RTSP preview takes no hold.
-    sst::storage::ProxyLifecycle proxy_lifecycle(raw_capture_sink);
+    // The proxy pairs with its match by the session's match_uuid, read through
+    // the session-info provider from the SessionManager's pushed config — the
+    // SessionManager is constructed BELOW (it needs SessionCleanup, which needs
+    // this lifecycle), so the provider binds through a pointer filled right
+    // after that construction. The provider is only invoked by the record/
+    // stream handlers at runtime, long after wiring completes.
+    sst::session::ISessionManager* session_for_proxy = nullptr;
+    sst::storage::ProxyLifecycle proxy_lifecycle(
+        proxy_sink, [&session_for_proxy]() -> std::optional<sst::storage::ProxySessionInfo> {
+            if (session_for_proxy == nullptr) {
+                return std::nullopt;
+            }
+            const auto state = session_for_proxy->Snapshot();
+            if (!state.config || state.config->match_uuid.empty()) {
+                return std::nullopt;
+            }
+            return sst::storage::ProxySessionInfo{.match_uuid = state.config->match_uuid,
+                                                  .output_dir = state.config->video_output_path};
+        });
 
     // Session-scoped UI selections. Declared here, ahead of SessionCleanup, so
     // it can reset them on disconnect: a reconnect must start from the app's
@@ -184,6 +205,9 @@ auto RunFirmware() -> int {
     sst::adapters::session::JsonSessionSummaryStore session_summary_store(
         std::string(sst::paths::kConfigDir) + "/last-session.json");
     sst::session::SessionManager session_manager(cleanup, &session_summary_store);
+    // Close the proxy-identity loop declared above: the lifecycle's provider
+    // now reads this SessionManager's live config.
+    session_for_proxy = &session_manager;
 
     // ── Overlay (scene -> Cairo/Pango RGBA -> caching sink) ────────────
     // The controller renders on change into the caching sink; the pipeline
@@ -201,12 +225,12 @@ auto RunFirmware() -> int {
     sst::network::DownloadServer download_server(video_root, thumbnail_root,
                                                  sst::bootstrap::NowUnixSeconds);
 
-    // Training-proxy retention (U7): a periodic sweep bounds total proxy footage
-    // (the raw__*.mp4 pairs accumulate one per match). Delete-oldest, protected
-    // against the actively-writing group (mtime grace inside Sweep) and any file
-    // with a live download token. Off-thread so it never blocks the BLE surface
-    // (owned worker, joined at shutdown); a no-op when proxy_max_total_bytes is
-    // unset.
+    // Internal-proxy retention: a periodic sweep bounds total proxy footage
+    // (the proxy__*.mp4 pairs accumulate one per match). Delete-oldest,
+    // protected against the actively-writing pair (mtime grace inside Sweep)
+    // and any file with a live download token. Off-thread so it never blocks
+    // the BLE surface (owned worker, joined at shutdown); a no-op when
+    // proxy_max_total_bytes is unset.
     sst::adapters::storage::ProxyRetention proxy_retention(
         video_root, cfg.storage.proxy_max_total_bytes.value_or(0));
     constexpr std::chrono::minutes kProxySweepInterval{5};
@@ -234,9 +258,10 @@ auto RunFirmware() -> int {
         });
 
     // ── Overlay export (on-demand burn, #6 F6c) ─────────────────────────
-    // Burns the recorded overlay timeline onto a clean L1 into an L2 living
-    // OUTSIDE the video root (so it never shows up in the recordings list),
-    // tokened for download exactly like a normal recording.
+    // Burns the recorded overlay timeline onto a clean L1 into a PERSISTENT L2
+    // (<match>-overlay.mp4) in the SAME match folder as the L1 — no exports
+    // dir, no post-download deletion. The L2 enumerates and downloads like any
+    // recording; a re-export returns the existing file.
     sst::adapters::overlay::OpenCvOverlayBurner overlay_burner;
     sst::exportjob::ExportJobManager export_manager(
         overlay_burner,
@@ -249,11 +274,10 @@ auto RunFirmware() -> int {
             return sst::adapters::overlay::LoadOverlayTimeline(timeline_path)
                 .value_or(sst::overlay::OverlayTimeline{});
         },
-        [&download_server](const std::filesystem::path& l2_path, const std::string& job_id) {
+        [&download_server](const std::filesystem::path& l2_path, const std::string& file_id) {
             return download_server.MintTokenForFile(
-                l2_path, job_id, sst::runtime_defaults::kDownloadTokenTtlSeconds);
-        },
-        video_root.parent_path() / "exports");
+                l2_path, file_id, sst::runtime_defaults::kDownloadTokenTtlSeconds);
+        });
 
     // ── Pipeline (capture -> preprocess -> buffer -> postprocess -> split) ──
     // Constructed BEFORE the control plane below: the telemetry / snapshot
@@ -266,7 +290,7 @@ auto RunFirmware() -> int {
 
     // Two camera chains (sensor-id 0 and 1). Both run; ManualDecision presents
     // one camera full-frame (the intelligence seam), the other ages out unchosen
-    // but stays live so raw dual capture can tap it.
+    // but stays live so the internal dual-camera proxy can tap it.
     const sst::capture::CameraConfig camera_cfg{};
     auto camera_chains =
         sst::bootstrap::BuildCameraChains(camera_cfg, cfg.device.model.value_or(""));
@@ -303,7 +327,7 @@ auto RunFirmware() -> int {
 
     sst::pipeline::PipelineOrchestrator pipeline(
         std::move(camera_chains), std::move(postprocessor), std::move(decision), recording_service,
-        streaming_service, sst::pipeline::PipelineConfig{}, &raw_capture_sink, &overlay_sink,
+        streaming_service, sst::pipeline::PipelineConfig{}, &proxy_sink, &overlay_sink,
         &side_by_side_compositor, &preview_layout_state);
     // Mid-recording camera death (U3): fired exactly when a camera's Nth
     // consecutive watchdog restart completes and fails (the RECOVERING window
@@ -355,7 +379,6 @@ auto RunFirmware() -> int {
                                                      .recording_service = recording_service,
                                                      .streaming_service = streaming_service,
                                                      .uplink_probe = uplink_probe,
-                                                     .raw_capture_sink = raw_capture_sink,
                                                      .proxy_lifecycle = proxy_lifecycle,
                                                      .wifi_manager = wifi_manager,
                                                      .network_configurator = network_configurator,

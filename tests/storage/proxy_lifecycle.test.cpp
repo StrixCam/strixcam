@@ -1,35 +1,38 @@
-// Record-or-stream proxy ref-count (state-health cycle U5): the training proxy
-// runs while a recording OR a platform stream is active and stops on last-out.
-// Pure — fake IRawCaptureSink counting transitions and flagging any
-// double-start (Start while already capturing), which the lifecycle's single
-// mutex must make impossible.
+// Record-or-stream ref-count for the internal dual-camera proxy: the proxy runs
+// while a recording OR a platform stream is active and stops on last-out, named
+// by the session's match_uuid read through the session-info provider. Pure —
+// fake IProxySink counting transitions and flagging any double-start (Start
+// while already capturing), which the lifecycle's single mutex must make
+// impossible.
 
 #include <gtest/gtest.h>
 
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include "app/storage/ports/raw-capture-sink.hpp"
+#include "app/storage/ports/proxy-sink.hpp"
 #include "app/storage/services/proxy_lifecycle/proxy-lifecycle.hpp"
 
 namespace {
 
 using sst::storage::ProxyLifecycle;
+using sst::storage::ProxySessionInfo;
 
-class FakeSink final : public sst::storage::IRawCaptureSink {
+class FakeSink final : public sst::storage::IProxySink {
    public:
-    auto Start(const std::string& capture_group_id,
+    auto Start(const std::string& match_uuid,
                const std::filesystem::path& output_dir) -> bool override {
         if (capturing_.load()) {
             ++double_start_violations;  // lifecycle must never do this
             return false;
         }
         ++starts;
-        last_group = capture_group_id;
+        last_match = match_uuid;
         last_dir = output_dir;
         capturing_ = start_ok;
         return start_ok;
@@ -48,30 +51,46 @@ class FakeSink final : public sst::storage::IRawCaptureSink {
     std::atomic<int> starts{0};
     std::atomic<int> stops{0};
     std::atomic<int> double_start_violations{0};
-    std::string last_group;
+    std::string last_match;
     std::filesystem::path last_dir;
 
    private:
     std::atomic<bool> capturing_{false};
 };
 
-// Deterministic epoch-ms clock so the interim stream-minted group id is
-// assertable ("stream-42").
+// A settable session-info source standing in for the SessionManager config
+// (match_uuid + per-match output dir). nullopt = no session config pushed.
+struct FakeSession {
+    std::optional<ProxySessionInfo> info;
+
+    auto Provider() -> ProxyLifecycle::SessionInfoProvider {
+        return [this] { return info; };
+    }
+};
+
+// Deterministic epoch-ms clock so the interim stream-minted id is assertable
+// ("stream-42").
 constexpr std::uint64_t kFixedEpochMs = 42;
 
 auto FixedClock() -> std::uint64_t { return kFixedEpochMs; }
 
-// The plan's truth table: record start -> up; stream start -> still up (no
-// second start); record stop -> still up (stream holds); stream stop -> down.
+auto MatchInfo(const std::string& match) -> ProxySessionInfo {
+    return {.match_uuid = match, .output_dir = "/videos/user/" + match};
+}
+
+// The truth table: record start -> up (named by the session's match_uuid, in
+// the per-match dir); stream start -> still up (no second start); record stop
+// -> still up (stream holds); stream stop -> down.
 TEST(ProxyLifecycleTest, RecordOrStreamTruthTable) {
     FakeSink sink;
-    ProxyLifecycle lifecycle(sink, FixedClock);
+    FakeSession session{.info = MatchInfo("match-1")};
+    ProxyLifecycle lifecycle(sink, session.Provider(), FixedClock);
 
-    lifecycle.OnRecordingStart("match-1", "/videos/match-1");
+    lifecycle.OnRecordingStart();
     EXPECT_TRUE(sink.IsCapturing());
     EXPECT_EQ(sink.starts, 1);
-    EXPECT_EQ(sink.last_group, "match-1");
-    EXPECT_EQ(sink.last_dir, std::filesystem::path{"/videos/match-1"});
+    EXPECT_EQ(sink.last_match, "match-1");
+    EXPECT_EQ(sink.last_dir, std::filesystem::path{"/videos/user/match-1"});
 
     lifecycle.OnStreamingStart();
     EXPECT_TRUE(sink.IsCapturing());
@@ -86,36 +105,56 @@ TEST(ProxyLifecycleTest, RecordOrStreamTruthTable) {
     EXPECT_EQ(sink.stops, 1);
 }
 
-// Streaming-only session: the lifecycle mints an interim `stream-<epoch-ms>`
-// id (no app-minted group, no per-match dir) so training footage still exists.
-TEST(ProxyLifecycleTest, StreamOnlyMintsInterimGroupAtSinkRoot) {
+// Stream-only start WITH a pushed session config pairs the proxy with the
+// match, exactly like the record leg — streaming-only matches still land their
+// development footage in the match folder.
+TEST(ProxyLifecycleTest, StreamOnlyWithSessionUsesMatchIdentity) {
     FakeSink sink;
-    ProxyLifecycle lifecycle(sink, FixedClock);
+    FakeSession session{.info = MatchInfo("match-3")};
+    ProxyLifecycle lifecycle(sink, session.Provider(), FixedClock);
 
     lifecycle.OnStreamingStart();
     EXPECT_TRUE(sink.IsCapturing());
-    EXPECT_EQ(sink.last_group, "stream-42");
+    EXPECT_EQ(sink.last_match, "match-3");
+    EXPECT_EQ(sink.last_dir, std::filesystem::path{"/videos/user/match-3"});
+
+    lifecycle.OnStreamingStop();
+    EXPECT_FALSE(sink.IsCapturing());
+}
+
+// Stream-only with NO session config: the lifecycle mints an interim
+// `stream-<epoch-ms>` id at the sink root (no match id, no per-match dir).
+TEST(ProxyLifecycleTest, StreamOnlyWithoutSessionMintsInterimIdAtSinkRoot) {
+    FakeSink sink;
+    FakeSession session;  // no config pushed
+    ProxyLifecycle lifecycle(sink, session.Provider(), FixedClock);
+
+    lifecycle.OnStreamingStart();
+    EXPECT_TRUE(sink.IsCapturing());
+    EXPECT_EQ(sink.last_match, "stream-42");
     EXPECT_TRUE(sink.last_dir.empty());  // sink construction root
 
     lifecycle.OnStreamingStop();
     EXPECT_FALSE(sink.IsCapturing());
 }
 
-// A record START with the app-minted match id rebinds an interim
-// (stream-minted) proxy: the match id is the download-grouping contract.
-TEST(ProxyLifecycleTest, RecordStartRebindsInterimProxyToMatchGroup) {
+// A record start rebinds an interim (stream-minted) proxy to the session's
+// match_uuid: the match id is the on-device pairing contract.
+TEST(ProxyLifecycleTest, RecordStartRebindsInterimProxyToMatch) {
     FakeSink sink;
-    ProxyLifecycle lifecycle(sink, FixedClock);
+    FakeSession session;  // stream starts before any config exists
+    ProxyLifecycle lifecycle(sink, session.Provider(), FixedClock);
 
     lifecycle.OnStreamingStart();
-    ASSERT_EQ(sink.last_group, "stream-42");
+    ASSERT_EQ(sink.last_match, "stream-42");
 
-    lifecycle.OnRecordingStart("match-7", "/videos/match-7");
+    session.info = MatchInfo("match-7");  // config pushed, then record starts
+    lifecycle.OnRecordingStart();
     EXPECT_TRUE(sink.IsCapturing());
     EXPECT_EQ(sink.starts, 2);  // stopped + restarted under the match id
     EXPECT_EQ(sink.stops, 1);
-    EXPECT_EQ(sink.last_group, "match-7");
-    EXPECT_EQ(sink.last_dir, std::filesystem::path{"/videos/match-7"});
+    EXPECT_EQ(sink.last_match, "match-7");
+    EXPECT_EQ(sink.last_dir, std::filesystem::path{"/videos/user/match-7"});
 
     // Both legs still hold; releasing them one by one stops on last-out only.
     lifecycle.OnStreamingStop();
@@ -124,13 +163,28 @@ TEST(ProxyLifecycleTest, RecordStartRebindsInterimProxyToMatchGroup) {
     EXPECT_FALSE(sink.IsCapturing());
 }
 
-// A record with NO group id starts nothing (pre-coupling contract) but still
-// HOLDS a stream-started proxy: proxy runs while recording OR streaming.
-TEST(ProxyLifecycleTest, GrouplessRecordHoldsButNeverStartsProxy) {
+// A record start already running under the SAME match does not restart the
+// proxy (idempotent re-entry, e.g. a same-match config re-push).
+TEST(ProxyLifecycleTest, RecordStartUnderSameMatchDoesNotRestart) {
     FakeSink sink;
-    ProxyLifecycle lifecycle(sink, FixedClock);
+    FakeSession session{.info = MatchInfo("match-1")};
+    ProxyLifecycle lifecycle(sink, session.Provider(), FixedClock);
 
-    lifecycle.OnRecordingStart("", "/videos/m");
+    lifecycle.OnStreamingStart();  // proxy up under match-1 already
+    lifecycle.OnRecordingStart();
+    EXPECT_EQ(sink.starts, 1);  // no rebind — same identity
+    EXPECT_EQ(sink.stops, 0);
+}
+
+// A record start with NO session info starts nothing (there is no match to
+// pair with — defensive) but still HOLDS a stream-started proxy: the proxy
+// runs while recording OR streaming.
+TEST(ProxyLifecycleTest, SessionlessRecordHoldsButNeverStartsProxy) {
+    FakeSink sink;
+    FakeSession session;
+    ProxyLifecycle lifecycle(sink, session.Provider(), FixedClock);
+
+    lifecycle.OnRecordingStart();
     EXPECT_FALSE(sink.IsCapturing());
     EXPECT_EQ(sink.starts, 0);
 
@@ -138,7 +192,7 @@ TEST(ProxyLifecycleTest, GrouplessRecordHoldsButNeverStartsProxy) {
     EXPECT_TRUE(sink.IsCapturing());
 
     lifecycle.OnStreamingStop();
-    EXPECT_TRUE(sink.IsCapturing());  // the groupless record still holds
+    EXPECT_TRUE(sink.IsCapturing());  // the sessionless record still holds
 
     lifecycle.OnRecordingStop();
     EXPECT_FALSE(sink.IsCapturing());
@@ -148,9 +202,10 @@ TEST(ProxyLifecycleTest, GrouplessRecordHoldsButNeverStartsProxy) {
 // with the sink stop — the next session's first start must hit 0->1 again.
 TEST(ProxyLifecycleTest, ForceStopResetsHoldsSoNextStartRetriggers) {
     FakeSink sink;
-    ProxyLifecycle lifecycle(sink, FixedClock);
+    FakeSession session{.info = MatchInfo("match-1")};
+    ProxyLifecycle lifecycle(sink, session.Provider(), FixedClock);
 
-    lifecycle.OnRecordingStart("match-1", "/videos/match-1");
+    lifecycle.OnRecordingStart();
     lifecycle.OnStreamingStart();
     ASSERT_TRUE(sink.IsCapturing());
 
@@ -159,16 +214,18 @@ TEST(ProxyLifecycleTest, ForceStopResetsHoldsSoNextStartRetriggers) {
     EXPECT_FALSE(lifecycle.IsProxyRunning());
 
     // Stale holds gone: a fresh record start re-triggers the proxy.
-    lifecycle.OnRecordingStart("match-2", "/videos/match-2");
+    session.info = MatchInfo("match-2");
+    lifecycle.OnRecordingStart();
     EXPECT_TRUE(sink.IsCapturing());
-    EXPECT_EQ(sink.last_group, "match-2");
+    EXPECT_EQ(sink.last_match, "match-2");
 }
 
 // Every leg is idempotent: doubled starts/stops never double-start the sink or
 // double-release the hold.
 TEST(ProxyLifecycleTest, DoubledLegCallsAreIdempotent) {
     FakeSink sink;
-    ProxyLifecycle lifecycle(sink, FixedClock);
+    FakeSession session;
+    ProxyLifecycle lifecycle(sink, session.Provider(), FixedClock);
 
     lifecycle.OnStreamingStart();
     lifecycle.OnStreamingStart();
@@ -181,14 +238,15 @@ TEST(ProxyLifecycleTest, DoubledLegCallsAreIdempotent) {
     EXPECT_FALSE(sink.IsCapturing());
 }
 
-// A failed sink Start (best-effort training footage) neither wedges the
+// A failed sink Start (best-effort development footage) neither wedges the
 // lifecycle nor blocks a later successful start.
 TEST(ProxyLifecycleTest, StartFailureDoesNotWedge) {
     FakeSink sink;
     sink.start_ok = false;
-    ProxyLifecycle lifecycle(sink, FixedClock);
+    FakeSession session{.info = MatchInfo("match-1")};
+    ProxyLifecycle lifecycle(sink, session.Provider(), FixedClock);
 
-    lifecycle.OnRecordingStart("match-1", "/videos/match-1");
+    lifecycle.OnRecordingStart();
     EXPECT_FALSE(sink.IsCapturing());
     EXPECT_FALSE(lifecycle.IsProxyRunning());
 
@@ -203,12 +261,13 @@ TEST(ProxyLifecycleTest, StartFailureDoesNotWedge) {
 // capturing after both legs released + ForceStop).
 TEST(ProxyLifecycleTest, RapidInterleavingsNeverDoubleStartOrOrphan) {
     FakeSink sink;
-    ProxyLifecycle lifecycle(sink, FixedClock);
+    FakeSession session{.info = MatchInfo("match-1")};
+    ProxyLifecycle lifecycle(sink, session.Provider(), FixedClock);
 
     constexpr int kIterations = 500;
     std::thread record_leg([&lifecycle] {
         for (int i = 0; i < kIterations; ++i) {
-            lifecycle.OnRecordingStart("match-" + std::to_string(i), "/videos/m");
+            lifecycle.OnRecordingStart();
             lifecycle.OnRecordingStop();
         }
     });

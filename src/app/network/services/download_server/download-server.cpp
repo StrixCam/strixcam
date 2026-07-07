@@ -9,7 +9,7 @@
 
 #include "app/network/services/download_server/mp4-duration.hpp"
 #include "domain/common/utils/uuid.hpp"
-#include "domain/storage/services/raw-capture-naming.hpp"
+#include "domain/storage/services/proxy-naming.hpp"
 
 namespace sst::network {
 
@@ -59,26 +59,21 @@ auto DownloadServer::Enumerate() const -> std::vector<RecordingSummary> {
         if (ext != kMp4Extension) {
             continue;
         }
-        RecordingSummary summary;
-        // Both the training proxy and the final recording are .mp4 now; the
-        // `raw__<group>__cam<N>` filename prefix (parsed here) is the sole
-        // discriminator — proxies carry it, final recordings do not (both live
-        // inside the per-match subdirs; the walk above is recursive).
-        const auto identity =
-            sst::storage::raw_capture_naming::ParseFileName(path.filename().string());
-        if (identity) {
-            // Raw dual-camera training proxy: parse identity so the app can group
-            // the cam-0/cam-1 pair by capture_group_id.
-            summary.recording_id = path.stem().string();
-            summary.is_raw = true;
-            summary.camera_index = identity->camera_index;
-            summary.capture_group_id = identity->capture_group_id;
-        } else {
-            // Final-match recording: is_raw stays false, raw identity unset.
-            summary.recording_id = path.stem().string();
-            summary.thumbnail_id = summary.recording_id;
-            summary.duration_s = ProbeMp4DurationSeconds(path);
+        // The internal proxy and the final recording are both .mp4 in the same
+        // per-match subdirs (the walk above is recursive); the
+        // `proxy__<match>__cam<N>` filename convention (parsed here) is the sole
+        // discriminator. Proxy files are firmware-internal development artifacts
+        // and are EXCLUDED from enumeration — retrieval is on-device (ssh, by
+        // match id), never over the app contract. Overlay exports
+        // (<match>-overlay.mp4) carry no proxy prefix and enumerate like any
+        // recording.
+        if (sst::storage::proxy_naming::ParseFileName(path.filename().string())) {
+            continue;
         }
+        RecordingSummary summary;
+        summary.recording_id = path.stem().string();
+        summary.thumbnail_id = summary.recording_id;
+        summary.duration_s = ProbeMp4DurationSeconds(path);
         std::error_code size_ec;
         summary.size_bytes = static_cast<std::uint64_t>(fs::file_size(path, size_ec));
         summary.started_at_unix = LastWriteUnix(path);

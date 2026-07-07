@@ -19,7 +19,6 @@
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
 #include "app/session/ports/session-manager.hpp"
 #include "app/storage/ports/jpeg-encoder.hpp"
-#include "app/storage/ports/raw-capture-sink.hpp"
 #include "app/storage/ports/recording-service.hpp"
 #include "app/storage/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
@@ -48,7 +47,6 @@ struct ControlPlaneDeps {
     sst::storage::IRecordingService& recording_service;
     sst::streaming::IStreamingService& streaming_service;
     sst::streaming::IUplinkProbe& uplink_probe;
-    sst::storage::IRawCaptureSink& raw_capture_sink;
     sst::storage::ProxyLifecycle& proxy_lifecycle;
     sst::control::IWifiManager& wifi_manager;
     sst::control::INetworkConfigurator& network_configurator;

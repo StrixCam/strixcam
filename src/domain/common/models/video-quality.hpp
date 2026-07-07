@@ -26,8 +26,8 @@ struct VideoQuality {
 // the Orin Nano (no NVENC). This is the single source of truth for two things:
 //   1. what DeviceInfoResponse.supported_modes advertises to the app, and
 //   2. what an app-requested record/stream quality is validated against.
-// The fixed-resolution raw dual-recording is deliberately NOT in this set — it
-// is not app-controllable (720p, see IRawCaptureSink).
+// The fixed-resolution internal dual-camera proxy is deliberately NOT in this
+// set — it is not app-controllable (854x480@15, see IProxySink).
 //
 // 1080p60 is deliberately EXCLUDED: on-device measurement showed software
 // x264enc encodes 1080p60 at ~0.64x realtime (no NVENC), so the appsrc backlog
@@ -40,9 +40,9 @@ inline constexpr std::array<VideoQuality, 3> kSupportedVideoModes{{
     {1280, 720, 30},
 }};
 
-// The always-on dual-camera training proxy encodes at a fixed, low internal
-// resolution/fps. Like the raw dual-recording, this is NOT app-controllable: it
-// is deliberately kept OUT of kSupportedVideoModes so it never surfaces in
+// The internal dual-camera proxy encodes at a fixed, low resolution/fps. It is
+// NOT app-controllable (the proxy is a firmware-internal development artifact):
+// it is deliberately kept OUT of kSupportedVideoModes so it never surfaces in
 // DeviceInfoResponse.supported_modes nor passes app record/stream validation.
 // The proxy encode builder (see proxy-launch) references this constant directly.
 // Kept small + low-fps so the proxy is a cheap ADDITIONAL concurrent x264 encode

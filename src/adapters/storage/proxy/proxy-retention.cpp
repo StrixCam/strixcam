@@ -1,4 +1,4 @@
-#include "adapters/storage/raw_capture/proxy-retention.hpp"
+#include "adapters/storage/proxy/proxy-retention.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include "domain/storage/services/raw-capture-naming.hpp"
+#include "domain/storage/services/proxy-naming.hpp"
 
 namespace sst::adapters::storage {
 
@@ -45,7 +45,7 @@ auto ProxyRetention::Sweep(
         return 0;
     }
 
-    // Group the raw__<group>__cam<N>.mp4 files by capture_group_id. Recursive:
+    // Group the proxy__<match_uuid>__cam<N>.mp4 files by match_uuid. Recursive:
     // proxies live inside each per-match dir (beside the final MP4), not flat at
     // the root, so the sweep must descend to find them.
     std::map<std::string, Group> groups;
@@ -62,7 +62,7 @@ auto ProxyRetention::Sweep(
             continue;
         }
         const auto identity =
-            sst::storage::raw_capture_naming::ParseFileName(it->path().filename().string());
+            sst::storage::proxy_naming::ParseFileName(it->path().filename().string());
         if (!identity) {
             continue;  // final recordings / other files are not proxy footage
         }
@@ -74,7 +74,7 @@ auto ProxyRetention::Sweep(
         if (stat_ec) {
             continue;
         }
-        auto& group = groups[identity->capture_group_id];
+        auto& group = groups[identity->match_uuid];
         group.bytes += size;
         group.files.push_back(it->path());
         group.newest = std::max(group.newest, mtime);
@@ -105,7 +105,7 @@ auto ProxyRetention::Sweep(
             continue;  // still being captured — leave it
         }
         if (std::ranges::any_of(group->files, is_path_protected)) {
-            continue;  // a live download token (or other caller hold) on this group
+            continue;  // a caller-side hold on this match's pair
         }
         for (const auto& file : group->files) {
             std::error_code rm_err;
@@ -113,8 +113,10 @@ auto ProxyRetention::Sweep(
         }
         total -= group->bytes;
         freed += group->bytes;
-        spdlog::info("ProxyRetention: evicted proxy group {} ({} bytes) — over the {} byte cap",
-                     gid, group->bytes, max_total_bytes_);
+        spdlog::info(
+            "ProxyRetention: evicted proxy pair for match {} ({} bytes) — over the {} "
+            "byte cap",
+            gid, group->bytes, max_total_bytes_);
     }
     return freed;
 }

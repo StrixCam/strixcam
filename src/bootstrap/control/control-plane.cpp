@@ -19,7 +19,6 @@
 #include "app/control/services/handlers/network.handler.hpp"
 #include "app/control/services/handlers/overlay.handler.hpp"
 #include "app/control/services/handlers/preview-layout.handler.hpp"
-#include "app/control/services/handlers/raw-capture.handler.hpp"
 #include "app/control/services/handlers/reboot.handler.hpp"
 #include "app/control/services/handlers/recording.handler.hpp"
 #include "app/control/services/handlers/session-snapshot.handler.hpp"
@@ -48,24 +47,22 @@ auto RegisterControlPlane(sst::control::CommandDispatcher& dispatcher, const Con
         const auto health = pipeline.CameraHealthStatus(1);
         return health ? std::optional{sst::control::ToWireHealth(*health)} : std::nullopt;
     };
-    // Refuses start-class commands (record / stream / raw capture) with
-    // DEVICE_INOPERABLE while any camera is not OK. Stop/finalize, downloads,
-    // wifi-direct, reboot and diagnostics reads are never gated. Handlers copy
-    // the gate, so this local does not need to outlive the registration.
+    // Refuses start-class commands (record / stream) with DEVICE_INOPERABLE
+    // while any camera is not OK. Stop/finalize, downloads, wifi-direct,
+    // reboot and diagnostics reads are never gated. Handlers copy the gate,
+    // so this local does not need to outlive the registration.
     const sst::control::StartHealthGate start_health_gate(camera0_health, camera1_health);
 
     // Shared activity providers: telemetry and the session snapshot read the
     // SAME sources, so the two surfaces can never disagree.
     auto& recording_service = deps.recording_service;
     auto& streaming_service = deps.streaming_service;
-    auto& raw_capture_sink = deps.raw_capture_sink;
     const auto is_recording = [&recording_service] {
         return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
     };
     const auto is_streaming = [&streaming_service] {
         return !streaming_service.ListActivePlatformStreams().empty();
     };
-    const auto is_raw_capturing = [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); };
 
     // ── Device identity, telemetry + reconnect handshake ───────────────
     auto& wifi_manager = deps.wifi_manager;
@@ -75,7 +72,6 @@ auto RegisterControlPlane(sst::control::CommandDispatcher& dispatcher, const Con
         sst::control::DeviceHandler::Providers{
             .is_recording = is_recording,
             .is_streaming = is_streaming,
-            .is_raw_capturing = is_raw_capturing,
             .wifi_state = [&wifi_manager] { return wifi_manager.State(); },
             .internet_reachable =
                 [&telemetry_probe] { return telemetry_probe.InternetReachable(); },
@@ -88,7 +84,6 @@ auto RegisterControlPlane(sst::control::CommandDispatcher& dispatcher, const Con
         deps.session_manager, deps.manual_camera_state, deps.preview_layout_state,
         sst::control::SessionSnapshotHandler::Providers{.is_recording = is_recording,
                                                         .is_streaming = is_streaming,
-                                                        .is_raw_capturing = is_raw_capturing,
                                                         .camera0_health = camera0_health,
                                                         .camera1_health = camera1_health},
         NowEpochMs));
@@ -123,14 +118,14 @@ auto RegisterControlPlane(sst::control::CommandDispatcher& dispatcher, const Con
         deps.session_manager, deps.overlay_controller, NowMs);
     dispatcher.Register(match_handler);
 
-    // ── Capture outputs: recording / streaming / raw proxy / thumbnail ─
+    // ── Capture outputs: recording / streaming / thumbnail ─────────────
+    // The internal dual-camera proxy has NO handler: it rides the record/stream
+    // lifecycle automatically (ProxyLifecycle) and is invisible to the app.
     dispatcher.Register(std::make_shared<sst::control::RecordingHandler>(
         deps.session_manager, recording_service, deps.overlay_timeline, deps.proxy_lifecycle, NowMs,
         start_health_gate));
     dispatcher.Register(std::make_shared<sst::control::StreamingHandler>(
         streaming_service, &deps.uplink_probe, start_health_gate, &deps.proxy_lifecycle));
-    dispatcher.Register(
-        std::make_shared<sst::control::RawCaptureHandler>(raw_capture_sink, start_health_gate));
     // On-demand thumbnail: snapshot the latest pipeline frame + encode to JPEG
     // in memory.
     dispatcher.Register(std::make_shared<sst::control::ThumbnailHandler>(

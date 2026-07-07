@@ -21,8 +21,8 @@
 
 #include "adapters/network/http/http-download-server.hpp"
 #include "app/network/services/download_server/download-server.hpp"
-#include "domain/storage/models/raw-capture-identity.hpp"
-#include "domain/storage/services/raw-capture-naming.hpp"
+#include "domain/storage/models/proxy-identity.hpp"
+#include "domain/storage/services/proxy-naming.hpp"
 #include "httplib.h"
 
 namespace fs = std::filesystem;
@@ -64,13 +64,13 @@ auto WriteRecording(const fs::path& root, const RecordingFile& recording) -> voi
     out << recording.body;
 }
 
-// Write a raw dual-camera file under the naming convention.
-auto WriteRawFile(const fs::path& root, const std::string& group, std::uint32_t camera_index,
-                  const std::string& body) -> void {
-    fs::create_directories(root);
-    const auto name = sst::storage::raw_capture_naming::FileName(
-        sst::storage::RawCaptureIdentity{.capture_group_id = group, .camera_index = camera_index});
-    std::ofstream out(root / name, std::ios::binary);
+// Write an internal-proxy file under the naming convention, inside `dir`.
+auto WriteProxyFile(const fs::path& dir, const std::string& match, std::uint32_t camera_index,
+                    const std::string& body) -> void {
+    fs::create_directories(dir);
+    const auto name = sst::storage::proxy_naming::FileName(
+        sst::storage::ProxyIdentity{.match_uuid = match, .camera_index = camera_index});
+    std::ofstream out(dir / name, std::ios::binary);
     out << body;
 }
 
@@ -101,45 +101,34 @@ TEST(DownloadServerTest, EnumeratesRecordings) {
     fs::remove_all(root);
 }
 
-// Raw capture files enumerate as a pair sharing capture_group_id with distinct
-// camera_index + is_raw=true; final recordings stay is_raw=false. A raw file
-// also resolves to a download token.
-// gtest EXPECT_* macro expansion inflates cognitive complexity; the body is a
-// linear arrange/act/assert, so the metric is suppressed here.
-// NOLINTBEGIN(readability-function-cognitive-complexity)
-TEST(DownloadServerTest, EnumeratesRawCapturePairAndFinalRecording) {
+// Internal proxy files are EXCLUDED from enumeration (by the proxy__ naming
+// convention — the sole discriminator): they are firmware-internal development
+// artifacts retrieved on-device by match id, never over the app contract. The
+// overlay export (L2, <match>-overlay.mp4) beside the same L1 carries no proxy
+// prefix and enumerates like any recording.
+TEST(DownloadServerTest, ExcludesProxyFilesFromEnumeration) {
     const fs::path root = MakeRoot();
     WriteRecording(root, {.match = "match-final", .body = "final-bytes"});
-    WriteRawFile(root, "grp-9", 0, "cam0-raw-bytes");
-    WriteRawFile(root, "grp-9", 1, "cam1-raw-bytes");
+    const fs::path match_dir = root / "user" / "match-final";  // beside the L1
+    WriteProxyFile(match_dir, "match-final", 0, "cam0-proxy-bytes");
+    WriteProxyFile(match_dir, "match-final", 1, "cam1-proxy-bytes");
+    {
+        std::ofstream out(match_dir / "match-final-overlay.mp4", std::ios::binary);
+        out << "l2-bytes";
+    }
     DownloadServer server(root, root, [] { return std::uint64_t{0}; });
 
     auto recs = server.Enumerate();
-    ASSERT_EQ(recs.size(), 3U);
-
-    int raw_count = 0;
-    int final_count = 0;
+    ASSERT_EQ(recs.size(), 2U);  // the L1 + its overlay export; no proxy files
+    int overlay_count = 0;
     for (const auto& rec : recs) {
-        if (rec.is_raw) {
-            ++raw_count;
-            EXPECT_EQ(rec.capture_group_id, "grp-9");
-            EXPECT_TRUE(rec.camera_index == 0U || rec.camera_index == 1U);
-        } else {
-            ++final_count;
-            EXPECT_EQ(rec.recording_id, "match-final");
-            EXPECT_TRUE(rec.capture_group_id.empty());
-        }
+        EXPECT_TRUE(rec.recording_id == "match-final" || rec.recording_id == "match-final-overlay");
+        overlay_count += rec.recording_id == "match-final-overlay" ? 1 : 0;
     }
-    EXPECT_EQ(raw_count, 2);
-    EXPECT_EQ(final_count, 1);
-
-    // A raw file is downloadable too (token resolves by stem).
-    auto token = server.MintToken("raw__grp-9__cam0", /*ttl_seconds=*/kTokenTtlSeconds);
-    EXPECT_TRUE(token.has_value());
+    EXPECT_EQ(overlay_count, 1);
 
     fs::remove_all(root);
 }
-// NOLINTEND(readability-function-cognitive-complexity)
 
 // ResolveThumbnailPath finds <id>.jpg under the thumbnail root by stem, and
 // returns nullopt for an unknown id or an empty id. Pure filesystem logic —

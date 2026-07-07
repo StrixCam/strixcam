@@ -38,7 +38,6 @@ class SessionSnapshotHandler final : public ICommandHandler {
     struct Providers {
         FlagProvider is_recording;
         FlagProvider is_streaming;
-        FlagProvider is_raw_capturing;
         HealthProvider camera0_health;
         HealthProvider camera1_health;
     };

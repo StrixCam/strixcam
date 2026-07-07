@@ -44,13 +44,6 @@ auto DownloadHandler::HandleList() -> sst_cam::CommandResponse {
         meta->set_thumbnail_id(rec.thumbnail_id);
         meta->set_sport(rec.sport);
         meta->set_teams(rec.teams);
-        // Raw dual-camera identity. Joint invariant (proto contract): set all
-        // three together when raw, leave all absent for final recordings.
-        if (rec.is_raw) {
-            meta->set_is_raw(true);
-            meta->set_camera_index(rec.camera_index);
-            meta->set_capture_group_id(rec.capture_group_id);
-        }
     }
     return resp;
 }

@@ -115,18 +115,15 @@ struct Fixture {
     sst::streaming::PreviewLayoutState preview_layout;
     bool recording{false};
     bool streaming{false};
-    bool raw_capturing{false};
     SessionSnapshotHandler handler;
 
     explicit Fixture(sst::session::ISessionSummaryStore* store = nullptr, SessionTiming timing = {})
         : manager(cleanup, store, timing),
           handler(manager, active_camera, preview_layout,
-                  SessionSnapshotHandler::Providers{
-                      .is_recording = [this] { return recording; },
-                      .is_streaming = [this] { return streaming; },
-                      .is_raw_capturing = [this] { return raw_capturing; },
-                      .camera0_health = {},
-                      .camera1_health = {}},
+                  SessionSnapshotHandler::Providers{.is_recording = [this] { return recording; },
+                                                    .is_streaming = [this] { return streaming; },
+                                                    .camera0_health = {},
+                                                    .camera1_health = {}},
                   [] { return kEpochStamp; }) {}
 
     // Drive the axes to session=Recording through the ordered F1 flow.
@@ -164,7 +161,6 @@ TEST(SessionSnapshotHandlerTest,  // NOLINT(readability-function-cognitive-compl
     EXPECT_EQ(snap.session_phase(), sst_cam::SESSION_RECORDING);
     EXPECT_TRUE(snap.is_recording());
     EXPECT_FALSE(snap.is_streaming());
-    EXPECT_FALSE(snap.is_raw_capturing());
     EXPECT_TRUE(snap.has_recording_elapsed_seconds());
     EXPECT_TRUE(snap.wifi_group_up());
     // Absolute match state, incl. the unclamped monotonic clock (9), the
@@ -293,7 +289,6 @@ TEST(SessionSnapshotHandlerTest, HealthProviderSeamSurfacesReadings) {
         SessionSnapshotHandler::Providers{
             .is_recording = {},
             .is_streaming = {},
-            .is_raw_capturing = {},
             .camera0_health = [] { return std::optional{sst_cam::CAMERA_HEALTH_RECOVERING}; },
             .camera1_health = [] { return std::optional<sst_cam::CameraHealth>{}; }},
         [] { return kEpochStamp; });

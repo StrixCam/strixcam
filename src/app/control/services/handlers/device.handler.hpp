@@ -29,7 +29,7 @@ class DeviceHandler final : public ICommandHandler {
     // never a fabricated OK. Same seam shape as the session snapshot's.
     using HealthProvider = std::function<std::optional<sst_cam::CameraHealth>()>;
 
-    // The live telemetry sources, grouped and named. Four of these are the same
+    // The live telemetry sources, grouped and named. Three of these are the same
     // FlagProvider type and are not adjacent, so passing them positionally invited
     // a silent transposition bug (report the wrong flag, compiles clean). Callers
     // wire them with designated initializers instead:
@@ -37,7 +37,6 @@ class DeviceHandler final : public ICommandHandler {
     struct Providers {
         FlagProvider is_recording;
         FlagProvider is_streaming;
-        FlagProvider is_raw_capturing;
         WifiStateProvider wifi_state;
         // True when the camera has an internet uplink (default route). Distinct
         // from the WiFi-Direct GO link (link-local).

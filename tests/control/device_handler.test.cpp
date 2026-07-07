@@ -125,19 +125,18 @@ TEST(DeviceHandlerTest, DeviceInfoAdvertisesSupportedModes) {
     }
 }
 
-// is_recording / is_streaming / is_raw_capturing reflect the injected providers,
-// each independently (is_raw_capturing is wire field 14, set independently of
-// is_recording — the app reads it to show raw-capture running state).
+// is_recording / is_streaming reflect the injected providers, each
+// independently. (The retired is_raw_capturing field 14 stays absent: the
+// internal proxy is invisible to the app.)
 // A flat sequence of EXPECT_* assertions; the cognitive-complexity score is
 // inflated by gtest macro expansion, and splitting the spec-style assertion list
 // into helpers would hurt readability — hence the suppression on the next line.
 TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
-     TelemetryReflectsRecordingStreamingAndRawCapturingFlags) {
+     TelemetryReflectsRecordingAndStreamingFlags) {
     FakeStats stats;
-    DeviceHandler handler(MakeDevice(), stats,
-                          {.is_recording = [] { return true; },
-                           .is_raw_capturing = [] { return true; },
-                           .internet_reachable = [] { return true; }});
+    DeviceHandler handler(
+        MakeDevice(), stats,
+        {.is_recording = [] { return true; }, .internet_reachable = [] { return true; }});
 
     auto resp = handler.Handle(TelemetryCommand());
 
@@ -147,9 +146,6 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     EXPECT_EQ(resp.telemetry().uptime_seconds(), kUptimeSeconds);
     EXPECT_TRUE(resp.telemetry().is_recording());
     EXPECT_FALSE(resp.telemetry().is_streaming());
-    // Set independently of is_recording (which is true here): proves field 14 is
-    // wired, not mirroring is_recording.
-    EXPECT_TRUE(resp.telemetry().is_raw_capturing());
     // internet_reachable reflects the injected uplink probe (true here), not a
     // hardcoded false.
     EXPECT_TRUE(resp.telemetry().internet_reachable());

@@ -54,7 +54,7 @@ auto RecordingHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
                 return resp;
             }
             // Record quality is independent of the stream quality and of the
-            // fixed-resolution raw dual-recording; unset/unsupported → default.
+            // fixed-resolution internal proxy; unset/unsupported → default.
             const auto quality = ResolveQuality(cmd.recording_control().has_quality(),
                                                 cmd.recording_control().quality());
             if (!recording_.StartRecording(state.config->video_output_path,
@@ -73,19 +73,20 @@ auto RecordingHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandRe
             // Begin capturing the overlay timeline beside the L1 MP4 (#6 F6b),
             // anchored at the overlay clock so the burn (F6c) can realign it.
             timeline_.Start(state.config->video_output_path, now_ms_ ? now_ms_() : 0);
-            // Record leg of the record-or-stream proxy ref-count (U5): take the
-            // hold; when the app minted a capture_group_id, the lifecycle
-            // starts (or rebinds) the per-camera proxy under that id in the
-            // SAME per-match dir as the final MP4 + timeline. Best-effort — a
-            // proxy failure never fails the match record (logged inside).
-            proxy_.OnRecordingStart(cmd.recording_control().capture_group_id(),
-                                    state.config->video_output_path);
+            // Record leg of the record-or-stream proxy ref-count: take the hold;
+            // the lifecycle starts (or rebinds) the internal per-camera proxy
+            // under the session's match_uuid — read through its provider from
+            // the SessionManager config — in the SAME per-match dir as the
+            // final MP4 + timeline. Firmware-automatic, invisible to the app.
+            // Best-effort — a proxy failure never fails the match record
+            // (logged inside).
+            proxy_.OnRecordingStart();
             resp.set_status(sst_cam::ResponseStatus::OK);
             return resp;
         }
         case sst_cam::RECORDING_STOP: {
             const auto result = recording_.Stop();
-            // Release the record hold (U5) — the proxy keeps running if a
+            // Release the record hold — the internal proxy keeps running if a
             // platform stream still holds it, stops on last-out. Idempotent.
             proxy_.OnRecordingStop();
             // Flush the overlay timeline next to the L1 MP4 (#6 F6b).

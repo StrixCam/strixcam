@@ -37,7 +37,7 @@ PipelineOrchestrator::PipelineOrchestrator(
     // are distinct sinks
     sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
     // NOLINTEND(bugprone-easily-swappable-parameters)
-    PipelineConfig config, sst::storage::IRawCaptureSink* raw_sink,
+    PipelineConfig config, sst::storage::IProxySink* proxy_sink,
     sst::overlay::IOverlayFrameSource* overlay_source,
     sst::processing::IFrameCompositor* compositor,
     sst::streaming::PreviewLayoutState* preview_layout)
@@ -47,7 +47,7 @@ PipelineOrchestrator::PipelineOrchestrator(
       record_sink_(record_sink),
       stream_sink_(stream_sink),
       config_(config),
-      raw_sink_(raw_sink),
+      proxy_sink_(proxy_sink),
       overlay_source_(overlay_source),
       compositor_(compositor),
       preview_layout_(preview_layout) {
@@ -252,11 +252,11 @@ auto PipelineOrchestrator::ProducerLoop(std::size_t camera_index) -> void {
         // waiting does the producer publish a descriptor copy (shares the just-
         // materialized owned pixels — no pixel copy, no GstBuffer pinned).
         ServeFrameTap(*tap_slots_[camera_index], bundle->source_frame);
-        // Fork the materialized frame to raw capture BEFORE the std::move below
-        // (tapping after the move would read a moved-from bundle). The sink
+        // Fork the materialized frame to the internal proxy BEFORE the std::move
+        // below (tapping after the move would read a moved-from bundle). The sink
         // copies what it needs and no-ops cheaply when not capturing.
-        if (raw_sink_ != nullptr) {
-            raw_sink_->PushCamera(static_cast<std::uint32_t>(camera_index), bundle->source_frame);
+        if (proxy_sink_ != nullptr) {
+            proxy_sink_->PushCamera(static_cast<std::uint32_t>(camera_index), bundle->source_frame);
         }
         slot.Push(std::move(*bundle));
     }

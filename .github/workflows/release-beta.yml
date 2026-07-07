@@ -496,7 +496,7 @@ jobs:
               cmake --preset test
               cmake --build --preset test
               ctest --preset test --output-on-failure \
-                -E "RawCaptureSinkE2E|CaptureSingleFrameAndLog|AdvertisesOnRealBluez|FormsAutonomousGroupOwner|HttpServesByteRangeWithBearerToken|VicConvertStageHardwareE2E"'
+                -E "ProxySinkE2E|CaptureSingleFrameAndLog|AdvertisesOnRealBluez|FormsAutonomousGroupOwner|HttpServesByteRangeWithBearerToken|VicConvertStageHardwareE2E"'
 
   # ===========================================================================
   # BETA RELEASE JOBS — push/dispatch-only. NOT gated behind the check jobs:

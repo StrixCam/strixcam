@@ -1,11 +1,16 @@
 // Unit tests for the overlay-burn job manager (#6 F6c). The burner + path/token
-// collaborators are fakes, so no real video files are decoded here — the burn
-// itself is a hardware-bound test validated on-device.
+// collaborators are fakes (the fake burner writes a stub L2 file so the
+// persistence contract is observable) — the real encode is a hardware-bound
+// concern validated on-device. The L2 contract under test: it lands BESIDE the
+// L1 in the same match folder as <l1_stem>-overlay.mp4, PERSISTS (no
+// delete-after-download), and a re-export returns the existing file without
+// re-burning.
 #include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <thread>
@@ -14,6 +19,7 @@
 #include "app/overlay/ports/overlay-burner.hpp"
 #include "domain/network/models/download-token.hpp"
 #include "domain/overlay/models/overlay-timeline.hpp"
+#include "domain/storage/services/overlay-export-naming.hpp"
 
 namespace fs = std::filesystem;
 
@@ -22,7 +28,8 @@ namespace {
 constexpr int kMaxPolls = 200;
 constexpr int kPollSleepMs = 5;
 
-// Configurable fake burn — records the call and returns a preset result.
+// Configurable fake burn — records the call, writes a stub L2 (like the real
+// burner producing an MP4), and returns a preset result.
 class FakeBurner final : public sst::overlay::IOverlayBurner {
    public:
     auto Burn(const fs::path& l1_path, const sst::overlay::OverlayTimeline& /*timeline*/,
@@ -30,6 +37,10 @@ class FakeBurner final : public sst::overlay::IOverlayBurner {
         ++calls;
         last_l1 = l1_path;
         last_l2 = l2_path;
+        if (result) {
+            std::ofstream out(l2_path, std::ios::binary);
+            out << "l2-bytes";
+        }
         return result;
     }
     std::atomic<int> calls{0};
@@ -60,17 +71,54 @@ auto WaitForTerminal(const sst::exportjob::ExportJobManager& manager,
     return sst::exportjob::ExportJobView{};
 }
 
-auto TempExportDir() -> fs::path { return fs::temp_directory_path() / "sst-export-test"; }
+// A per-test match dir with a stub L1 recording inside, removed on destruction.
+class MatchDir {
+   public:
+    explicit MatchDir(const std::string& tag) {
+        dir_ = fs::temp_directory_path() /
+               ("sst-export-" + tag + "-" + std::to_string(reinterpret_cast<std::uintptr_t>(this)));
+        fs::create_directories(dir_);
+        l1_ = dir_ / "match.mp4";
+        std::ofstream out(l1_, std::ios::binary);
+        out << "l1-bytes";
+    }
+    ~MatchDir() {
+        std::error_code err;
+        fs::remove_all(dir_, err);
+    }
+    [[nodiscard]] auto dir() const -> const fs::path& { return dir_; }
+    [[nodiscard]] auto l1() const -> const fs::path& { return l1_; }
+    [[nodiscard]] auto l2() const -> fs::path {
+        return dir_ / sst::storage::overlay_export_naming::FileName(l1_.stem().string());
+    }
+
+   private:
+    fs::path dir_;
+    fs::path l1_;
+};
+
+auto Resolver(const MatchDir& match) -> sst::exportjob::ExportJobManager::PathResolver {
+    return [&match](const std::string&) { return std::optional<fs::path>{match.l1()}; };
+}
+
+auto EmptyTimeline() -> sst::exportjob::ExportJobManager::TimelineLoader {
+    return [](const fs::path&) { return sst::overlay::OverlayTimeline{}; };
+}
 
 }  // namespace
 
-TEST(ExportJobManagerTest, ReadyWithTokenOnSuccess) {
+// The L2 lands BESIDE its L1 (same match folder), named <l1_stem>-overlay.mp4,
+// tokened under its own stem, and PERSISTS after the job is ready.
+TEST(ExportJobManagerTest, ReadyBurnsL2BesideL1AndPersists) {
+    MatchDir match("beside");
     FakeBurner burner;
+    std::string minted_id;
     sst::exportjob::ExportJobManager manager(
-        burner, [](const std::string&) { return std::optional<fs::path>{"/v/match.mp4"}; },
-        [](const fs::path&) { return sst::overlay::OverlayTimeline{}; },
-        [](const fs::path&, const std::string&) { return std::optional{MakeToken()}; },
-        TempExportDir());
+        burner, Resolver(match), EmptyTimeline(),
+        [&minted_id](const fs::path&, const std::string& file_id) {
+            minted_id = file_id;
+            return std::optional{MakeToken()};
+        });
 
     const auto job_id = manager.RequestExport("match");
     const auto view = WaitForTerminal(manager, job_id);
@@ -81,15 +129,38 @@ TEST(ExportJobManagerTest, ReadyWithTokenOnSuccess) {
         EXPECT_EQ(view.token->token, "tok-abc");
     }
     EXPECT_EQ(burner.calls.load(), 1);
+    EXPECT_EQ(burner.last_l2, match.l2());  // dirname(L1) + "-overlay" marker
+    EXPECT_TRUE(fs::exists(match.l2()));    // persistent — not cleaned up
+    EXPECT_EQ(minted_id, "match-overlay");  // token id = the L2 stem
+}
+
+// Re-exporting an already-burned recording returns the existing L2 without
+// re-encoding (per the proto contract).
+TEST(ExportJobManagerTest, ReExportReturnsExistingL2WithoutReburn) {
+    MatchDir match("reexport");
+    {
+        std::ofstream out(match.l2(), std::ios::binary);  // already burned earlier
+        out << "existing-l2";
+    }
+    FakeBurner burner;
+    sst::exportjob::ExportJobManager manager(
+        burner, Resolver(match), EmptyTimeline(),
+        [](const fs::path&, const std::string&) { return std::optional{MakeToken()}; });
+
+    const auto view = WaitForTerminal(manager, manager.RequestExport("match"));
+
+    EXPECT_EQ(view.state, sst::exportjob::ExportState::kReady);
+    EXPECT_TRUE(view.token.has_value());
+    EXPECT_EQ(burner.calls.load(), 0);  // no second transcode
+    EXPECT_TRUE(fs::exists(match.l2()));
 }
 
 TEST(ExportJobManagerTest, FailsWhenRecordingNotFound) {
     FakeBurner burner;
     sst::exportjob::ExportJobManager manager(
         burner, [](const std::string&) { return std::optional<fs::path>{}; },  // unresolved
-        [](const fs::path&) { return sst::overlay::OverlayTimeline{}; },
-        [](const fs::path&, const std::string&) { return std::optional{MakeToken()}; },
-        TempExportDir());
+        EmptyTimeline(),
+        [](const fs::path&, const std::string&) { return std::optional{MakeToken()}; });
 
     const auto view = WaitForTerminal(manager, manager.RequestExport("ghost"));
 
@@ -99,13 +170,12 @@ TEST(ExportJobManagerTest, FailsWhenRecordingNotFound) {
 }
 
 TEST(ExportJobManagerTest, FailsWhenBurnFails) {
+    MatchDir match("burnfail");
     FakeBurner burner;
     burner.result = false;
     sst::exportjob::ExportJobManager manager(
-        burner, [](const std::string&) { return std::optional<fs::path>{"/v/match.mp4"}; },
-        [](const fs::path&) { return sst::overlay::OverlayTimeline{}; },
-        [](const fs::path&, const std::string&) { return std::optional{MakeToken()}; },
-        TempExportDir());
+        burner, Resolver(match), EmptyTimeline(),
+        [](const fs::path&, const std::string&) { return std::optional{MakeToken()}; });
 
     const auto view = WaitForTerminal(manager, manager.RequestExport("match"));
 
@@ -114,13 +184,28 @@ TEST(ExportJobManagerTest, FailsWhenBurnFails) {
     EXPECT_FALSE(view.token.has_value());
 }
 
-TEST(ExportJobManagerTest, PollUnknownJobIsNullopt) {
+// A token-mint failure fails the JOB but keeps the burned L2 on disk — it is a
+// persistent recording now, and a retry returns the existing file.
+TEST(ExportJobManagerTest, MintFailureKeepsBurnedL2) {
+    MatchDir match("mintfail");
     FakeBurner burner;
     sst::exportjob::ExportJobManager manager(
-        burner, [](const std::string&) { return std::optional<fs::path>{"/v/match.mp4"}; },
-        [](const fs::path&) { return sst::overlay::OverlayTimeline{}; },
-        [](const fs::path&, const std::string&) { return std::optional{MakeToken()}; },
-        TempExportDir());
+        burner, Resolver(match), EmptyTimeline(), [](const fs::path&, const std::string&) {
+            return std::optional<sst::network::DownloadToken>{};
+        });
+
+    const auto view = WaitForTerminal(manager, manager.RequestExport("match"));
+
+    EXPECT_EQ(view.state, sst::exportjob::ExportState::kFailed);
+    EXPECT_TRUE(fs::exists(match.l2()));  // the L2 survives the failed mint
+}
+
+TEST(ExportJobManagerTest, PollUnknownJobIsNullopt) {
+    MatchDir match("poll");
+    FakeBurner burner;
+    sst::exportjob::ExportJobManager manager(
+        burner, Resolver(match), EmptyTimeline(),
+        [](const fs::path&, const std::string&) { return std::optional{MakeToken()}; });
 
     EXPECT_FALSE(manager.Poll("export-999").has_value());
 }

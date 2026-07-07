@@ -1,5 +1,6 @@
-// DownloadHandler ListRecordings: raw dual-camera identity fields cross to the
-// proto RecordingMetadata under the joint invariant (U7).
+// DownloadHandler ListRecordings: the wire list carries app-visible recordings
+// only — internal proxy files never cross to proto RecordingMetadata (their
+// marker fields are retired + reserved in the contract).
 
 #include <gtest/gtest.h>
 
@@ -13,8 +14,8 @@
 #include "app/control/services/handlers/download.handler.hpp"
 #include "app/network/services/download_server/download-server.hpp"
 #include "bluetooth.pb.h"
-#include "domain/storage/models/raw-capture-identity.hpp"
-#include "domain/storage/services/raw-capture-naming.hpp"
+#include "domain/storage/models/proxy-identity.hpp"
+#include "domain/storage/services/proxy-naming.hpp"
 
 namespace fs = std::filesystem;
 
@@ -44,26 +45,15 @@ auto ListCmd() -> sst_cam::Command {
     return cmd;
 }
 
-// Joint invariant for a raw recording: both identity fields present.
-void ExpectRawIdentity(const sst_cam::RecordingMetadata& meta) {
-    EXPECT_TRUE(meta.has_camera_index());
-    EXPECT_TRUE(meta.has_capture_group_id());
-    EXPECT_EQ(meta.capture_group_id(), "grp-3");
-}
-
-// Joint invariant for a final recording: raw identity entirely absent.
-void ExpectNoRawIdentity(const sst_cam::RecordingMetadata& meta) {
-    EXPECT_FALSE(meta.has_is_raw());
-    EXPECT_FALSE(meta.has_camera_index());
-    EXPECT_FALSE(meta.has_capture_group_id());
-}
-
-TEST(DownloadHandlerTest, ListReportsRawIdentityUnderJointInvariant) {
+// The internal proxy is invisible to the app: a proxy pair sitting beside the
+// final MP4 in the same match folder never reaches the wire list, and only the
+// final recording is reported.
+TEST(DownloadHandlerTest, ListExcludesInternalProxyFiles) {
     const fs::path root = MakeRoot();
     WriteFile(root / "match-x.mp4", "final");
-    namespace naming = sst::storage::raw_capture_naming;
-    WriteFile(root / naming::FileName({.capture_group_id = "grp-3", .camera_index = 0}), "c0");
-    WriteFile(root / naming::FileName({.capture_group_id = "grp-3", .camera_index = 1}), "c1");
+    namespace naming = sst::storage::proxy_naming;
+    WriteFile(root / naming::FileName({.match_uuid = "match-x", .camera_index = 0}), "c0");
+    WriteFile(root / naming::FileName({.match_uuid = "match-x", .camera_index = 1}), "c1");
 
     constexpr std::uint32_t kDownloadPort = 8080;
     constexpr std::uint64_t kTokenTtlSeconds = 3600;
@@ -75,19 +65,8 @@ TEST(DownloadHandlerTest, ListReportsRawIdentityUnderJointInvariant) {
     ASSERT_EQ(resp.status(), sst_cam::ResponseStatus::OK);
     ASSERT_EQ(resp.payload_case(), sst_cam::CommandResponse::kRecordingList);
 
-    int raw = 0;
-    int finals = 0;
-    for (const auto& meta : resp.recording_list().recordings()) {
-        if (meta.is_raw()) {
-            ++raw;
-            ExpectRawIdentity(meta);
-        } else {
-            ++finals;
-            ExpectNoRawIdentity(meta);
-        }
-    }
-    EXPECT_EQ(raw, 2);
-    EXPECT_EQ(finals, 1);
+    ASSERT_EQ(resp.recording_list().recordings_size(), 1);
+    EXPECT_EQ(resp.recording_list().recordings(0).id(), "match-x");
 
     fs::remove_all(root);
 }

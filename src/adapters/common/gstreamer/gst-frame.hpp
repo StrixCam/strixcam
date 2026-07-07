@@ -8,7 +8,7 @@
 #include "domain/common/models/pixel-format.hpp"
 
 // Frame → GStreamer plumbing shared by the output adapters (recorder, RTMP,
-// RTSP, raw-capture proxy). Each previously carried its own copy of these.
+// RTSP, internal proxy). Each previously carried its own copy of these.
 namespace sst::adapters::gst_common {
 
 // Caps `format=` string for a Frame's pixel format. `fallback` preserves each

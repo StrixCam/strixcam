@@ -10,7 +10,7 @@
 
 #include "app/control/services/handlers/health-gate.hpp"
 #include "app/control/services/handlers/streaming.handler.hpp"
-#include "app/storage/ports/raw-capture-sink.hpp"
+#include "app/storage/ports/proxy-sink.hpp"
 #include "app/storage/services/proxy_lifecycle/proxy-lifecycle.hpp"
 #include "app/streaming/ports/streaming-service.hpp"
 #include "app/streaming/ports/uplink-probe.hpp"
@@ -248,14 +248,14 @@ TEST(StreamingHandlerTest, StopWhileCameraDownAccepted) {
     EXPECT_TRUE(streaming.ListActivePlatformStreams().empty());
 }
 
-// ── Stream leg of the record-or-stream proxy ref-count (U5) ───────────────
+// ── Stream leg of the record-or-stream proxy ref-count ────────────────────
 
-class FakeProxySink final : public sst::storage::IRawCaptureSink {
+class FakeProxySink final : public sst::storage::IProxySink {
    public:
-    auto Start(const std::string& capture_group_id,
+    auto Start(const std::string& match_uuid,
                const std::filesystem::path& /*output_dir*/) -> bool override {
         ++starts;
-        last_group = capture_group_id;
+        last_match = match_uuid;
         capturing_ = true;
         return true;
     }
@@ -271,28 +271,29 @@ class FakeProxySink final : public sst::storage::IRawCaptureSink {
 
     int starts{0};
     int stops{0};
-    std::string last_group;
+    std::string last_match;
 
    private:
     bool capturing_{false};
 };
 
-// Deterministic epoch-ms clock so the interim stream-minted group id is
-// assertable ("stream-7").
+// Deterministic epoch-ms clock so the interim stream-minted id is assertable
+// ("stream-7").
 constexpr std::uint64_t kFixedEpochMs = 7;
 
 // A successful platform-stream START takes the proxy hold (streaming-only
-// matches still produce training footage); STOP releases it (last-out).
+// matches still produce development footage); STOP releases it (last-out).
+// No session config in these tests, so the lifecycle mints the interim id.
 TEST(StreamingHandlerTest, StartTakesProxyHoldStopReleasesIt) {
     FakeStreaming streaming;
     FakeProxySink sink;
-    sst::storage::ProxyLifecycle lifecycle(sink, [] { return kFixedEpochMs; });
+    sst::storage::ProxyLifecycle lifecycle(sink, nullptr, [] { return kFixedEpochMs; });
     StreamingHandler handler(streaming, nullptr, {}, &lifecycle);
 
     ASSERT_EQ(handler.Handle(StartCmd("rtmp://ingest/live/k")).status(),
               sst_cam::ResponseStatus::OK);
     EXPECT_TRUE(sink.IsCapturing());
-    EXPECT_EQ(sink.last_group, "stream-7");  // interim firmware-minted id
+    EXPECT_EQ(sink.last_match, "stream-7");  // interim firmware-minted id
 
     EXPECT_EQ(handler.Handle(StopCmd()).status(), sst_cam::ResponseStatus::OK);
     EXPECT_FALSE(sink.IsCapturing());
@@ -303,7 +304,7 @@ TEST(StreamingHandlerTest, StartTakesProxyHoldStopReleasesIt) {
 TEST(StreamingHandlerTest, RejectedStartTakesNoProxyHold) {
     FakeStreaming streaming;
     FakeProxySink sink;
-    sst::storage::ProxyLifecycle lifecycle(sink);
+    sst::storage::ProxyLifecycle lifecycle(sink, nullptr);
     StreamingHandler handler(streaming, nullptr, {}, &lifecycle);
 
     EXPECT_EQ(handler.Handle(StartCmd("")).status(), sst_cam::ResponseStatus::ERROR);
@@ -315,7 +316,7 @@ TEST(StreamingHandlerTest, RejectedStartTakesNoProxyHold) {
 TEST(StreamingHandlerTest, FailedStopReleasesNoProxyHold) {
     FakeStreaming streaming;
     FakeProxySink sink;
-    sst::storage::ProxyLifecycle lifecycle(sink);
+    sst::storage::ProxyLifecycle lifecycle(sink, nullptr);
     StreamingHandler handler(streaming, nullptr, {}, &lifecycle);
 
     EXPECT_EQ(handler.Handle(StopCmd()).status(), sst_cam::ResponseStatus::ERROR);

@@ -84,8 +84,8 @@ auto StreamingHandler::HandleControl(const sst_cam::StreamingControlCommand& cmd
             resp.set_error_message("streaming start failed (already streaming or bad destination)");
             return resp;
         }
-        // Stream leg of the record-or-stream proxy ref-count (U5): a live
-        // egress holds the training proxy so streaming-only matches still
+        // Stream leg of the record-or-stream proxy ref-count: a live egress
+        // holds the internal proxy so streaming-only matches still
         // produce footage. Only on a SUCCESSFUL start — a rejected start must
         // not take a hold it will never release.
         if (proxy_lifecycle_ != nullptr) {

@@ -3,48 +3,46 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <string>
 #include <type_traits>
 #include <vector>
 
 #include "adapters/common/gstreamer/gst-frame.hpp"
-#include "adapters/storage/raw_capture/filesystem-raw-capture-sink.hpp"
-#include "app/storage/ports/raw-capture-sink.hpp"
+#include "adapters/storage/proxy/filesystem-proxy-sink.hpp"
+#include "app/storage/ports/proxy-sink.hpp"
 #include "domain/capture/models/frame.hpp"
-#include "domain/storage/models/raw-capture-identity.hpp"
-#include "domain/storage/services/raw-capture-naming.hpp"
+#include "domain/storage/models/proxy-identity.hpp"
+#include "domain/storage/services/proxy-naming.hpp"
 
-// The training-proxy sink now runs a per-camera GStreamer H.264 encode pipeline
+// The internal-proxy sink runs a per-camera GStreamer H.264 encode pipeline
 // (appsrc -> nvvidconv/x264enc -> mp4mux -> filesink). Tests that call Start()
 // therefore instantiate real GStreamer elements and only pass on-device, so they
-// live in the RawCaptureSinkE2E suite (excluded from the container run by name,
-// same as the other hardware-bound suites). The pure state-machine guards below
-// (empty-group reject, push-when-idle no-op, stop-without-start) short-circuit
+// live in the ProxySinkE2E suite (excluded from the container run by name, same
+// as the other hardware-bound suites). The pure state-machine guards below
+// (empty-match reject, push-when-idle no-op, stop-without-start) short-circuit
 // BEFORE building any pipeline, so they run in the container.
 
 namespace {
 
-using sst::adapters::storage::FilesystemRawCaptureSink;
+using sst::adapters::storage::FilesystemProxySink;
 using sst::capture::Frame;
 
-// R17: the raw dual-recording is NOT quality-controllable — record/stream
-// quality must never reach it. The sink's Start takes only a capture_group_id;
-// pinned at compile time so a future signature change that adds a quality knob to
-// the raw path fails the build.
-static_assert(std::is_same_v<decltype(&sst::storage::IRawCaptureSink::Start),
-                             bool (sst::storage::IRawCaptureSink::*)(const std::string&,
-                                                                     const std::filesystem::path&)>,
-              "raw capture Start takes a group id + output dir, no quality knob (R17)");
+// R17: the internal proxy is NOT quality-controllable — record/stream quality
+// must never reach it. The sink's Start takes only the match id + output dir;
+// pinned at compile time so a future signature change that adds a quality knob
+// to the proxy path fails the build.
+static_assert(std::is_same_v<decltype(&sst::storage::IProxySink::Start),
+                             bool (sst::storage::IProxySink::*)(const std::string&,
+                                                                const std::filesystem::path&)>,
+              "proxy Start takes a match id + output dir, no quality knob (R17)");
 
 // A unique temp directory per test, removed on destruction.
 class TempDir {
    public:
     explicit TempDir(const std::string& tag) {
-        path_ =
-            std::filesystem::temp_directory_path() /
-            ("sst-rawcap-" + tag + "-" + std::to_string(reinterpret_cast<std::uintptr_t>(this)));
+        path_ = std::filesystem::temp_directory_path() /
+                ("sst-proxy-" + tag + "-" + std::to_string(reinterpret_cast<std::uintptr_t>(this)));
         std::filesystem::create_directories(path_);
     }
     ~TempDir() {
@@ -81,22 +79,22 @@ auto MakeFrame(std::uint8_t fill) -> Frame {
 
 auto ProxyPath(const std::filesystem::path& dir,
                std::uint32_t camera_index) -> std::filesystem::path {
-    namespace naming = sst::storage::raw_capture_naming;
-    return dir / naming::FileName({.capture_group_id = "grp-1", .camera_index = camera_index});
+    namespace naming = sst::storage::proxy_naming;
+    return dir / naming::FileName({.match_uuid = "match-1", .camera_index = camera_index});
 }
 
 // ---- Container-safe: pure state-machine guards (no pipeline built) ----------
 
-TEST(RawCaptureSinkTest, EmptyGroupIdRejected) {
+TEST(ProxySinkTest, EmptyMatchUuidRejected) {
     TempDir dir("empty");
-    FilesystemRawCaptureSink sink(dir.path(), 2);
+    FilesystemProxySink sink(dir.path(), 2);
     EXPECT_FALSE(sink.Start("", dir.path()));  // rejected before any GStreamer work
     EXPECT_FALSE(sink.IsCapturing());
 }
 
-TEST(RawCaptureSinkTest, PushWhenNotCapturingIsNoOp) {
+TEST(ProxySinkTest, PushWhenNotCapturingIsNoOp) {
     TempDir dir("idle");
-    FilesystemRawCaptureSink sink(dir.path(), 2);
+    FilesystemProxySink sink(dir.path(), 2);
     constexpr std::uint32_t kOutOfRangeCamera = 5;
     // NOLINTNEXTLINE(readability-magic-numbers) — self-evident NV12 fill byte
     sink.PushCamera(0, MakeFrame(0x33));  // no Start(): harmless no-op
@@ -105,22 +103,11 @@ TEST(RawCaptureSinkTest, PushWhenNotCapturingIsNoOp) {
     EXPECT_FALSE(sink.Stop());                            // nothing to stop
 }
 
-// U5 collision guard: a reused capture_group_id whose files already exist on disk
-// is refused (rather than truncate-overwriting a prior, maybe-undownloaded group).
-// The guard runs before any pipeline is built, so this is container-safe.
-TEST(RawCaptureSinkTest, StartRejectsReusedGroupWithExistingFiles) {
-    TempDir dir("collide");
-    FilesystemRawCaptureSink sink(dir.path(), 2);
-    { std::ofstream(ProxyPath(dir.path(), 0)) << 'x'; }  // pre-existing cam-0 proxy
-    EXPECT_FALSE(sink.Start("grp-1", dir.path()));
-    EXPECT_FALSE(sink.IsCapturing());
-}
-
 // UV-plane regression: the sink pushes frames via the shared frame→GstBuffer
 // helper, which must carry the FULL frame — both NV12 planes — not just
 // planes[0] (the bug that chroma-broke every proxy MP4 on device). Container-
 // safe: allocates a GstBuffer, builds no pipeline.
-TEST(RawCaptureSinkTest, FrameToGstBufferCarriesBothNv12Planes) {
+TEST(ProxySinkTest, FrameToGstBufferCarriesBothNv12Planes) {
     gst_init(nullptr, nullptr);
     const Frame frame = MakeFrame(0x11);  // NOLINT(readability-magic-numbers) — NV12 fill byte
     ASSERT_EQ(frame.planes.size(), 2U);
@@ -132,16 +119,18 @@ TEST(RawCaptureSinkTest, FrameToGstBufferCarriesBothNv12Planes) {
     gst_buffer_unref(buffer);
 }
 
-// ---- On-device (RawCaptureSinkE2E): real GStreamer encode pipeline ----------
+// ---- On-device (ProxySinkE2E): real GStreamer encode pipeline ---------------
 
-TEST(RawCaptureSinkE2E, StartPushStopWritesBothProxyFiles) {
+// The proxy pair is NAMED BY THE MATCH UUID (proxy__<match>__cam<N>.mp4) in the
+// given per-match dir — the on-device pairing contract (retrieval by match id).
+TEST(ProxySinkE2E, StartPushStopWritesBothProxyFilesNamedByMatch) {
     constexpr std::uint32_t kCameraCount = 2;
     constexpr int kFramesPerCamera = 10;
 
     TempDir dir("both");
-    FilesystemRawCaptureSink sink(dir.path(), kCameraCount);
+    FilesystemProxySink sink(dir.path(), kCameraCount);
 
-    ASSERT_TRUE(sink.Start("grp-1", dir.path()));
+    ASSERT_TRUE(sink.Start("match-1", dir.path()));
     EXPECT_TRUE(sink.IsCapturing());
 
     for (int i = 0; i < kFramesPerCamera; ++i) {
@@ -159,18 +148,18 @@ TEST(RawCaptureSinkE2E, StartPushStopWritesBothProxyFiles) {
     EXPECT_TRUE(std::filesystem::exists(ProxyPath(dir.path(), 1)));
 }
 
-TEST(RawCaptureSinkE2E, StartWhileCapturingIsRejected) {
+TEST(ProxySinkE2E, StartWhileCapturingIsRejected) {
     TempDir dir("twice");
-    FilesystemRawCaptureSink sink(dir.path(), 2);
-    ASSERT_TRUE(sink.Start("g", dir.path()));
-    EXPECT_FALSE(sink.Start("g2", dir.path()));  // already capturing
+    FilesystemProxySink sink(dir.path(), 2);
+    ASSERT_TRUE(sink.Start("m", dir.path()));
+    EXPECT_FALSE(sink.Start("m2", dir.path()));  // already capturing
     sink.Stop();
 }
 
-TEST(RawCaptureSinkE2E, StopIsIdempotentlySafe) {
+TEST(ProxySinkE2E, StopIsIdempotentlySafe) {
     TempDir dir("stop2");
-    FilesystemRawCaptureSink sink(dir.path(), 2);
-    ASSERT_TRUE(sink.Start("g", dir.path()));
+    FilesystemProxySink sink(dir.path(), 2);
+    ASSERT_TRUE(sink.Start("m", dir.path()));
     EXPECT_TRUE(sink.Stop());
     EXPECT_FALSE(sink.Stop());  // second stop is a no-op false
 }

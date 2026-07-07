@@ -20,7 +20,7 @@
 #include "app/processing/ports/frame-compositor.hpp"
 #include "app/processing/ports/postprocessor.hpp"
 #include "app/processing/ports/preprocessor.hpp"
-#include "app/storage/ports/raw-capture-sink.hpp"
+#include "app/storage/ports/proxy-sink.hpp"
 #include "domain/buffer/services/latest-only-slot.hpp"
 #include "domain/capture/models/frame.hpp"
 #include "domain/health/models/camera-health.hpp"
@@ -96,7 +96,7 @@ struct CameraChain {
 // full-frame today; the AI/physics/decision stack implements the same port
 // later. Both cameras run regardless of which is chosen — unchosen bundles age
 // out of their LatestOnlySlot, and the second camera being live is what makes
-// raw dual capture (U6) possible.
+// the internal dual-camera proxy possible.
 //
 // Cadence note: the consumer waits on camera 0's slot, since the static policy
 // always presents camera 0. If camera 0 stalls, the consumer wakes every
@@ -105,15 +105,14 @@ struct CameraChain {
 class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource,
                                    public sst::pipeline::ICameraFrameTap {
    public:
-    // Both raw_sink and overlay_source are optional (may be null). When raw_sink
-    // is set, every camera's materialized bundle is forked to it before the move
-    // into the slot, so raw dual capture taps the same frames the decision path
-    // consumes. The CLEAN post-processed frame (no overlay) goes to record_sink;
-    // the overlay (when overlay_source has one) is composited only onto the copy
-    // sent to stream_sink. So a recording plays with or without overlays (overlay
-    // is burned on demand, #6) while the live/broadcast stream carries the baked
-    // overlay. Retires the prior "recording + RTSP + RTMP carry identical pixels"
-    // invariant.
+    // Both proxy_sink and overlay_source are optional (may be null). When
+    // proxy_sink is set, every camera's materialized bundle is forked to it
+    // before the move into the slot, so the internal dual-camera proxy taps the
+    // same frames the decision path consumes. The CLEAN post-processed frame (no overlay) goes to
+    // record_sink; the overlay (when overlay_source has one) is composited only onto the copy sent
+    // to stream_sink. So a recording plays with or without overlays (overlay is burned on demand,
+    // #6) while the live/broadcast stream carries the baked overlay. Retires the prior "recording +
+    // RTSP + RTMP carry identical pixels" invariant.
     PipelineOrchestrator(std::vector<CameraChain> cameras,
                          std::unique_ptr<sst::processing::IPostprocessor> postprocessor,
                          std::unique_ptr<sst::decision::IDecision> decision,
@@ -122,7 +121,7 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource,
                          sst::buffer::IFrameSink& record_sink, sst::buffer::IFrameSink& stream_sink,
                          // NOLINTEND(bugprone-easily-swappable-parameters)
                          PipelineConfig config = PipelineConfig{},
-                         sst::storage::IRawCaptureSink* raw_sink = nullptr,
+                         sst::storage::IProxySink* proxy_sink = nullptr,
                          sst::overlay::IOverlayFrameSource* overlay_source = nullptr,
                          // #6 F6d dual preview: both optional. When set and the
                          // layout is SIDE_BY_SIDE, the consumer postprocesses the
@@ -248,7 +247,7 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource,
     sst::buffer::IFrameSink& record_sink_;  // CLEAN L1 (no overlay)
     sst::buffer::IFrameSink& stream_sink_;  // overlaid (live/broadcast: RTSP + RTMP)
     PipelineConfig config_;
-    sst::storage::IRawCaptureSink* raw_sink_;
+    sst::storage::IProxySink* proxy_sink_;
     sst::overlay::IOverlayFrameSource* overlay_source_;
     sst::processing::IFrameCompositor* compositor_;
     sst::streaming::PreviewLayoutState* preview_layout_;

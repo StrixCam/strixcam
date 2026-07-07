@@ -1,4 +1,4 @@
-// Training-proxy retention sweep (U7). Pure filesystem — no GStreamer/hardware.
+// Internal-proxy retention sweep. Pure filesystem — no GStreamer/hardware.
 
 #include <gtest/gtest.h>
 
@@ -8,15 +8,15 @@
 #include <fstream>
 #include <string>
 
-#include "adapters/storage/raw_capture/proxy-retention.hpp"
-#include "domain/storage/models/raw-capture-identity.hpp"
-#include "domain/storage/services/raw-capture-naming.hpp"
+#include "adapters/storage/proxy/proxy-retention.hpp"
+#include "domain/storage/models/proxy-identity.hpp"
+#include "domain/storage/services/proxy-naming.hpp"
 
 namespace {
 
 namespace fs = std::filesystem;
 using sst::adapters::storage::ProxyRetention;
-namespace naming = sst::storage::raw_capture_naming;
+namespace naming = sst::storage::proxy_naming;
 
 class TempDir {
    public:
@@ -35,12 +35,12 @@ class TempDir {
     fs::path path_;
 };
 
-// Write both camera files of a proxy group, each `bytes` big, with a mtime
+// Write both camera files of a proxy pair, each `bytes` big, with a mtime
 // `age_seconds` in the past (so the write-grace doesn't protect old groups).
 // NOLINTNEXTLINE(bugprone-easily-swappable-parameters) floor-ok: test helper
 void MakeGroup(const fs::path& dir, const std::string& group, std::size_t bytes, int age_seconds) {
     for (std::uint32_t cam = 0; cam < 2; ++cam) {
-        const auto path = dir / naming::FileName({.capture_group_id = group, .camera_index = cam});
+        const auto path = dir / naming::FileName({.match_uuid = group, .camera_index = cam});
         std::ofstream(path, std::ios::binary) << std::string(bytes, 'x');
         fs::last_write_time(path,
                             fs::file_time_type::clock::now() - std::chrono::seconds(age_seconds));
@@ -48,7 +48,7 @@ void MakeGroup(const fs::path& dir, const std::string& group, std::size_t bytes,
 }
 
 auto GroupExists(const fs::path& dir, const std::string& group) -> bool {
-    return fs::exists(dir / naming::FileName({.capture_group_id = group, .camera_index = 0}));
+    return fs::exists(dir / naming::FileName({.match_uuid = group, .camera_index = 0}));
 }
 
 constexpr std::size_t kPerFile = 100;  // 200 bytes per 2-camera group
@@ -83,22 +83,22 @@ TEST(ProxyRetentionTest, NeverEvictsGraceProtectedActiveGroup) {
     EXPECT_TRUE(GroupExists(dir.path(), "recent"));
 }
 
-TEST(ProxyRetentionTest, SkipsGroupsWithALiveDownloadToken) {
+TEST(ProxyRetentionTest, SkipsPairsProtectedByTheCallerPredicate) {
     TempDir dir;
     // NOLINTNEXTLINE(readability-magic-numbers) — self-evident age in seconds
     MakeGroup(dir.path(), "tokened", kPerFile, /*age_seconds=*/300);
     // NOLINTNEXTLINE(readability-magic-numbers) — self-evident age in seconds
     MakeGroup(dir.path(), "free", kPerFile, /*age_seconds=*/120);
 
-    // Cap forces an eviction; protect the OLDER (tokened) group — the sweep must
-    // skip it and evict the other instead.
+    // Cap forces an eviction; protect the OLDER pair — the sweep must skip it
+    // and evict the other instead.
     // NOLINTNEXTLINE(readability-magic-numbers) — self-evident byte cap
     ProxyRetention retention(dir.path(), /*max_total_bytes=*/250);
     const auto protectedFile =
-        dir.path() / naming::FileName({.capture_group_id = "tokened", .camera_index = 0});
+        dir.path() / naming::FileName({.match_uuid = "tokened", .camera_index = 0});
     retention.Sweep([&](const fs::path& file) { return file == protectedFile; });
 
-    EXPECT_TRUE(GroupExists(dir.path(), "tokened"));  // protected by "token"
+    EXPECT_TRUE(GroupExists(dir.path(), "tokened"));  // caller-protected
     EXPECT_FALSE(GroupExists(dir.path(), "free"));    // evicted instead
 }
 

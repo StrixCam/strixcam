@@ -1,11 +1,11 @@
-// Training-proxy GStreamer launch-string builder (U4). Pure — asserts the
+// Internal-proxy GStreamer launch-string builder. Pure — asserts the
 // pipeline shape/params without instantiating any GStreamer element.
 
 #include <gtest/gtest.h>
 
 #include <string>
 
-#include "adapters/storage/raw_capture/proxy-launch.hpp"
+#include "adapters/storage/proxy/proxy-launch.hpp"
 #include "domain/common/models/video-quality.hpp"
 
 namespace {
@@ -20,7 +20,7 @@ auto Contains(const std::string& haystack, const std::string& needle) -> bool {
 // H.264 into MP4, with the leaky pre-encoder queue + I420 pin the software
 // encoder needs, and block=false so PushCamera never stalls the fan-out thread.
 TEST(ProxyLaunchTest, CarriesProxyModeEncodeChain) {
-    const auto launch = BuildProxyLaunch("/videos/raw__g__cam0.mp4");
+    const auto launch = BuildProxyLaunch("/videos/proxy__m__cam0.mp4");
     EXPECT_TRUE(Contains(launch, "appsrc"));
     EXPECT_TRUE(Contains(launch, "block=false"));  // non-blocking push
     EXPECT_TRUE(Contains(launch, "width=854"));
@@ -32,7 +32,7 @@ TEST(ProxyLaunchTest, CarriesProxyModeEncodeChain) {
     EXPECT_TRUE(Contains(launch, "bitrate=1500"));
     EXPECT_TRUE(Contains(launch, "key-int-max=30"));  // 15 fps * 2
     EXPECT_TRUE(Contains(launch, "mp4mux"));
-    EXPECT_TRUE(Contains(launch, "filesink location=/videos/raw__g__cam0.mp4"));
+    EXPECT_TRUE(Contains(launch, "filesink location=/videos/proxy__m__cam0.mp4"));
     // Proxy dimensions must equal the single source of truth, not a magic literal.
     EXPECT_EQ(sst::common::kProxyVideoMode.width, 854);
     EXPECT_EQ(sst::common::kProxyVideoMode.height, 480);

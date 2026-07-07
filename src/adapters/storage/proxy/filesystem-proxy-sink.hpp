@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "app/storage/ports/raw-capture-sink.hpp"
+#include "app/storage/ports/proxy-sink.hpp"
 #include "domain/capture/models/frame.hpp"
 
 // Forward-declared to keep the GStreamer headers out of this (widely-included)
@@ -18,12 +18,15 @@ using GstElement = struct _GstElement;
 
 namespace sst::adapters::storage {
 
-// Per-camera training-proxy sink. One small H.264 MP4 per camera under
-// `video_dir`, named raw__<group>__cam<N>.mp4 (see raw-capture-naming.hpp), each
-// a GStreamer pipeline (appsrc -> scale to kProxyVideoMode -> x264enc -> mp4mux
-// -> filesink, see proxy-launch.hpp). Replaces the earlier uncompressed-NV12
-// writer: raw NV12 was ~93 MB/s per camera (~186 MB/s for two) and unusable for
-// "small training footage", so the proxy compresses to a low-bitrate H.264.
+// Per-camera internal-proxy sink. One small H.264 MP4 per camera under
+// `video_dir`, named proxy__<match_uuid>__cam<N>.mp4 (see proxy-naming.hpp),
+// each a GStreamer pipeline (appsrc -> scale to kProxyVideoMode -> x264enc ->
+// mp4mux -> filesink, see proxy-launch.hpp). Replaces the earlier
+// uncompressed-NV12 writer: raw NV12 was ~93 MB/s per camera (~186 MB/s for
+// two) and unusable for "small development footage", so the proxy compresses
+// to a low-bitrate H.264. A re-run for the same match overwrites the previous
+// proxy pair, mirroring the L1 recorder's filesink semantics (the proxy is a
+// best-effort development artifact, always paired with its match).
 //
 // This sink is fed from the shared capture/fan-out thread (PipelineOrchestrator),
 // so PushCamera MUST be non-blocking: it hands the frame to the per-camera
@@ -31,17 +34,17 @@ namespace sst::adapters::storage {
 // encode overload, and uses try_to_lock so a concurrent Start/Stop can never
 // stall capture. Stop detaches the pipelines under the lock (O(1)) and does the
 // EOS + moov-finalize wait OUTSIDE the lock so it never freezes the fan-out.
-class FilesystemRawCaptureSink final : public sst::storage::IRawCaptureSink {
+class FilesystemProxySink final : public sst::storage::IProxySink {
    public:
-    FilesystemRawCaptureSink(std::filesystem::path video_dir, std::uint32_t camera_count);
-    ~FilesystemRawCaptureSink() override;
+    FilesystemProxySink(std::filesystem::path video_dir, std::uint32_t camera_count);
+    ~FilesystemProxySink() override;
 
-    FilesystemRawCaptureSink(const FilesystemRawCaptureSink&) = delete;
-    auto operator=(const FilesystemRawCaptureSink&) -> FilesystemRawCaptureSink& = delete;
-    FilesystemRawCaptureSink(FilesystemRawCaptureSink&&) = delete;
-    auto operator=(FilesystemRawCaptureSink&&) -> FilesystemRawCaptureSink& = delete;
+    FilesystemProxySink(const FilesystemProxySink&) = delete;
+    auto operator=(const FilesystemProxySink&) -> FilesystemProxySink& = delete;
+    FilesystemProxySink(FilesystemProxySink&&) = delete;
+    auto operator=(FilesystemProxySink&&) -> FilesystemProxySink& = delete;
 
-    auto Start(const std::string& capture_group_id,
+    auto Start(const std::string& match_uuid,
                const std::filesystem::path& output_dir) -> bool override;
     auto PushCamera(std::uint32_t camera_index, const sst::capture::Frame& frame) -> void override;
     auto Stop() -> bool override;
@@ -67,7 +70,7 @@ class FilesystemRawCaptureSink final : public sst::storage::IRawCaptureSink {
 
     mutable std::mutex mtx_;
     std::atomic<bool> capturing_{false};
-    std::string capture_group_id_;
+    std::string match_uuid_;
     std::vector<std::unique_ptr<CameraWriter>> writers_;
 };
 

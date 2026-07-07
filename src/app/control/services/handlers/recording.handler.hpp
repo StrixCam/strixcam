@@ -27,7 +27,7 @@ class RecordingHandler final : public ICommandHandler {
 
     // `health_gate` refuses START with DEVICE_INOPERABLE while any camera is
     // not OK (U3); STOP/PAUSE/RESUME are never gated. Default gates nothing.
-    // `proxy` is the shared record-or-stream ref-count for the training proxy —
+    // `proxy` is the shared record-or-stream ref-count for the internal proxy —
     // this handler drives its record leg (START/STOP take/release the hold).
     RecordingHandler(sst::session::ISessionManager& session,
                      sst::storage::IRecordingService& recording,

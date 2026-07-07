@@ -90,7 +90,6 @@ auto DeviceHandler::HandleTelemetry() -> sst_cam::CommandResponse {
     telemetry->set_battery_level_pct(stats.battery_level_pct);
     telemetry->set_is_recording(providers_.is_recording && providers_.is_recording());
     telemetry->set_is_streaming(providers_.is_streaming && providers_.is_streaming());
-    telemetry->set_is_raw_capturing(providers_.is_raw_capturing && providers_.is_raw_capturing());
 
     // Live WiFi state from the P2P-GO manager (not hardcoded), so the app's wifi
     // indicator matches reality. The camera only ever runs as a WiFi-Direct group

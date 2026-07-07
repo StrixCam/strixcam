@@ -26,8 +26,8 @@ auto SessionCleanup::FinalizeRecording() -> bool {
     // Flush the overlay timeline beside the L1 (no-op when never started) so an
     // auto-stop/failure finalize still leaves a burnable timeline.
     timeline_.Stop();
-    // Force-stop the training proxy AND reset both ref-count holds atomically
-    // (U5): a session ending without commanded stops must not leave a stale
+    // Force-stop the internal proxy AND reset both ref-count holds atomically:
+    // a session ending without commanded stops must not leave a stale
     // record/stream hold, or the next session's first start would miss the
     // 0->1 transition and the proxy would stay silently dead. A no-op when the
     // proxy was never started.

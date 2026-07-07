@@ -4,21 +4,22 @@
 
 namespace sst::adapters::storage {
 
-// Training-proxy encode: small H.264 for model training, one pipeline per
-// camera. Low bitrate (training doesn't need broadcast quality) sized to be a
-// cheap ADDITIONAL concurrent software encode (no NVENC on the Orin Nano).
+// Internal-proxy encode: small H.264 development footage (angle/framing/
+// stability/color-grading checks and model training), one pipeline per camera.
+// Low bitrate (a development artifact doesn't need broadcast quality) sized to
+// be a cheap ADDITIONAL concurrent software encode (no NVENC on the Orin Nano).
 inline constexpr int kProxyBitrateKbps = 1500;
 
 // Leaky pre-encoder queue depth (~2 s at 15 fps). Drop-oldest under encode
 // overload keeps the proxy realtime so the MP4 finalizes a valid moov, at the
 // cost of dropped proxy frames — never a stalled capture thread or a corrupt
-// file. The proxy is best-effort training footage; dropping is acceptable.
+// file. The proxy is best-effort development footage; dropping is acceptable.
 inline constexpr int kProxyQueueMaxBuffers = 30;
 
 inline constexpr const char* kProxyAppsrcName = "src";
 inline constexpr const char* kProxyEncoderName = "enc";
 
-// Builds the per-camera training-proxy GStreamer launch string: raw NV12 camera
+// Builds the per-camera internal-proxy GStreamer launch string: raw NV12 camera
 // frames (pushed via the named appsrc at their real geometry) are scaled to the
 // internal proxy mode (kProxyVideoMode — 854x480@15, NOT app-controllable) and
 // H.264-encoded into `output_mp4`. Pure (no element instantiation) so the shape
