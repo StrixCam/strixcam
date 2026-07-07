@@ -626,6 +626,96 @@ TEST(SessionManagerTest, SnapshotDuringFinalizeIsNeverTorn) {
     fs::remove_all(root);
 }
 
+// Cleanup that BLOCKS in FinalizeRecording until released — holds the manager
+// mid-fan-out so tests can race other calls against an in-flight finalize.
+class GateCleanup final : public FakeCleanup {
+   public:
+    auto FinalizeRecording() -> bool override {
+        ++finalize_recording;
+        std::unique_lock lock(mtx);
+        cv.wait(lock, [this] { return released; });
+        return true;
+    }
+    auto Release() -> void {
+        {
+            const std::lock_guard lock(mtx);
+            released = true;
+        }
+        cv.notify_all();
+    }
+    std::mutex mtx;
+    std::condition_variable cv;
+    bool released{false};
+};
+
+// OnWifiReady landing while a finalize is dismantling the session is a no-op:
+// accepting it would set wifi_group_up=true only for the post-fan-out reset to
+// clobber it back to false while the caller believes the group is live.
+TEST(SessionManagerTest, WifiReadyDuringFinalizeIsRejected) {
+    GateCleanup cleanup;
+    SessionManager manager(cleanup, nullptr, TestTiming());
+    const fs::path root = MakeTempRoot();
+    const auto cfg = MakeConfig(root);
+
+    AdvanceToReady(manager, cfg);
+    ASSERT_TRUE(manager.OnRecordingStart());
+
+    std::thread finalizer([&manager] { manager.FinalizeSession(SessionEndReason::kAppStop); });
+    ASSERT_TRUE(WaitFor([&] { return cleanup.finalize_recording.load() == 1; }));
+
+    // Mid-finalize (app still connected): the group-up event is rejected. The
+    // snapshot still shows the PRE-finalize truth (group up) — the point is the
+    // rejected event doesn't re-assert it past the post-fan-out reset.
+    EXPECT_EQ(manager.Phase(), SessionPhase::kFinalizing);
+    EXPECT_FALSE(manager.OnWifiReady());
+
+    cleanup.Release();
+    finalizer.join();
+    EXPECT_FALSE(manager.Snapshot().wifi_group_up);
+    EXPECT_EQ(manager.Phase(), SessionPhase::kIdle);
+
+    fs::remove_all(root);
+}
+
+// Summary-write ordering: every persist happens under mtx_, so a recording
+// stop racing an in-flight finalize can never leave the reboot write-ahead as
+// the store's FINAL record — the finalize summary is always last, and the
+// racing stop is rejected outright once the phase is Finalizing.
+TEST(SessionManagerTest, FinalizeRacingRecordingStopKeepsRealSummaryLast) {
+    GateCleanup cleanup;
+    FakeStore store;
+    SessionManager manager(cleanup, &store, TestTiming());
+    const fs::path root = MakeTempRoot();
+    const auto cfg = MakeConfig(root);
+
+    AdvanceToReady(manager, cfg);
+    ASSERT_TRUE(manager.OnRecordingStart());  // write-ahead #1 (reboot/invalid)
+
+    std::thread finalizer([&manager] { manager.FinalizeSession(SessionEndReason::kAutoStop); });
+    ASSERT_TRUE(WaitFor([&] { return cleanup.finalize_recording.load() == 1; }));
+
+    // Mid-fan-out, a stop command arrives: the phase is already Finalizing, so
+    // it is rejected and persists NO write-ahead behind the finalize's back.
+    EXPECT_FALSE(manager.OnRecordingStop());
+
+    cleanup.Release();
+    finalizer.join();
+
+    const auto persisted = store.Persisted();
+    ASSERT_FALSE(persisted.empty());
+    // The final record is the real session end — never the write-ahead.
+    EXPECT_EQ(persisted.back().end_reason, SessionEndReason::kAutoStop);
+    int write_aheads = 0;
+    for (const auto& entry : persisted) {
+        if (entry.end_reason == SessionEndReason::kReboot) {
+            ++write_aheads;
+        }
+    }
+    EXPECT_EQ(write_aheads, 1);  // only the one from OnRecordingStart
+
+    fs::remove_all(root);
+}
+
 // ── Elapsed time + summary persistence ──────────────────────────────────────
 
 // Recording elapsed seconds are tracked monotonically and survive a disconnect

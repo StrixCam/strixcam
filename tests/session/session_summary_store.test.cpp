@@ -84,6 +84,48 @@ TEST(JsonSessionSummaryStoreTest, PersistOverwritesPreviousSummary) {
     fs::remove_all(dir);
 }
 
+// Crash-safety: Persist goes through tmp + fsync + atomic rename, so a partial
+// write (simulated here as a garbage half-written temp file — what a crash
+// mid-write leaves behind) never shadows or corrupts the committed summary,
+// and a successful Persist leaves no temp file behind.
+TEST(JsonSessionSummaryStoreTest, PartialTempWriteNeverCorruptsCommittedSummary) {
+    const auto dir = MakeTempDir();
+    const auto path = dir / "last-session.json";
+    const auto tmp_path = path.string() + ".tmp";
+    JsonSessionSummaryStore store(path.string());
+
+    LastSessionSummary committed;
+    committed.match_uuid = "match-committed";
+    committed.end_reason = SessionEndReason::kAppStop;
+    committed.file_valid = true;
+    ASSERT_TRUE(store.Persist(committed));
+    EXPECT_FALSE(fs::exists(tmp_path));  // rename consumed the temp
+
+    // Simulate a crash mid-write of a LATER persist: garbage sits in the temp
+    // file, the committed file untouched. Load (as after reboot) still returns
+    // the committed record — the partial write is invisible until renamed.
+    {
+        std::ofstream out(tmp_path);
+        out << R"({"match_uuid":"half-writ)";
+    }
+    JsonSessionSummaryStore rebooted(path.string());
+    const auto loaded = rebooted.Load();
+    ASSERT_TRUE(loaded.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
+    EXPECT_EQ(loaded->match_uuid, "match-committed");
+
+    // The next Persist discards the stale temp and commits cleanly.
+    committed.match_uuid = "match-next";
+    ASSERT_TRUE(rebooted.Persist(committed));
+    EXPECT_FALSE(fs::exists(tmp_path));
+    const auto reloaded = rebooted.Load();
+    ASSERT_TRUE(reloaded.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
+    EXPECT_EQ(reloaded->match_uuid, "match-next");
+
+    fs::remove_all(dir);
+}
+
 TEST(JsonSessionSummaryStoreTest, MissingFileLoadsNothing) {
     const auto dir = MakeTempDir();
     JsonSessionSummaryStore store((dir / "never-written.json").string());

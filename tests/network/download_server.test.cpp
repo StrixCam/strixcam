@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -185,6 +186,51 @@ TEST(DownloadServerTest, TokenMintValidateExpire) {
 
     // A token for a non-existent recording is not minted.
     EXPECT_FALSE(server.MintToken("ghost", kTokenTtlSeconds).has_value());
+    fs::remove_all(root);
+}
+
+// StreamFileRange contract (container-safe, no server): true only when the
+// FULL requested range was delivered. httplib re-invokes its content provider
+// at the same offset until the advertised length is served, so returning true
+// on a short read (file truncated after its size was taken) would busy-spin the
+// worker at the same offset forever. A short read must report failure so
+// httplib aborts the response — the request terminates instead of looping.
+TEST(DownloadServerTest, StreamFileRangeFailsOnTruncatedFile) {
+    const fs::path root = MakeRoot();
+    const fs::path file = root / "clip.mp4";
+    const std::string body = "0123456789";  // 10 bytes on disk
+    {
+        std::ofstream out(file, std::ios::binary);
+        out << body;
+    }
+
+    std::string received;
+    httplib::DataSink sink;
+    sink.write = [&received](const char* data, std::size_t len) {
+        received.append(data, len);
+        return true;
+    };
+    sink.done = [] {};
+    sink.is_writable = [] { return true; };
+
+    // Fully satisfiable range -> success, exact bytes.
+    ASSERT_TRUE(sst::adapters::network::StreamFileRange(file.string(), 0, body.size(), sink));
+    EXPECT_EQ(received, body);
+
+    // Advertised length beyond EOF (truncated-file case) -> failure, and the
+    // available suffix flowed exactly once (no re-invocation loop can restart
+    // it, because false aborts the response).
+    received.clear();
+    constexpr std::size_t kOffset = 4;
+    constexpr std::size_t kBeyondEofLength = 100;
+    EXPECT_FALSE(
+        sst::adapters::network::StreamFileRange(file.string(), kOffset, kBeyondEofLength, sink));
+    EXPECT_EQ(received, body.substr(kOffset));
+
+    // Missing file -> failure outright.
+    EXPECT_FALSE(
+        sst::adapters::network::StreamFileRange((root / "ghost.mp4").string(), 0, 1, sink));
+
     fs::remove_all(root);
 }
 

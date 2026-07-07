@@ -7,9 +7,14 @@
 #include <nlohmann/json.hpp>
 #include <string>
 
+#include "adapters/common/fs/atomic-file-write.hpp"
+
 namespace sst::adapters::session {
 
 namespace {
+
+// rw-r--r-- (umask-masked): the summary holds no secrets.
+constexpr mode_t kSummaryFileMode = 0644;
 
 using sst::session::LastSessionSummary;
 using sst::session::SessionEndReason;
@@ -53,14 +58,11 @@ auto JsonSessionSummaryStore::Persist(const LastSessionSummary& summary) -> bool
                                 {"end_reason", ReasonToString(summary.end_reason)},
                                 {"end_clock_seconds", summary.end_clock_seconds},
                                 {"file_valid", summary.file_valid}};
-    std::ofstream out(path_, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        spdlog::error("JsonSessionSummaryStore: could not open {} for write", path_);
-        return false;
-    }
-    out << doc.dump(2) << '\n';
-    if (!out) {
-        spdlog::error("JsonSessionSummaryStore: write to {} failed", path_);
+    // Atomic replace (tmp + fsync + rename): this file is U1's write-ahead
+    // record — an in-place write that crashes halfway corrupts the previous
+    // good summary, which is exactly the crash the record exists to survive.
+    if (!sst::adapters::fs_common::WriteFileAtomic(path_, doc.dump(2) + '\n', kSummaryFileMode)) {
+        spdlog::error("JsonSessionSummaryStore: persist to {} failed", path_);
         return false;
     }
     return true;

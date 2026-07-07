@@ -25,12 +25,18 @@ TEST(JsonUplinkStoreTest, PersistsWithOwnerOnlyPermissions) {
     EXPECT_TRUE(store.Persist(data));
     ASSERT_TRUE(fs::exists(path));
 
-    // Mode is exactly owner read/write (0600) — no group/other bits.
+    // Mode is exactly owner read/write (0600) — no group/other bits. The store
+    // creates the file 0600 from the first byte (open(O_CREAT, 0600) on the
+    // temp file), so the passphrase never sits world-readable, not even
+    // between write and a chmod-after.
     const fs::perms mode = fs::status(path).permissions();
     EXPECT_EQ(mode & fs::perms::owner_read, fs::perms::owner_read);
     EXPECT_EQ(mode & fs::perms::owner_write, fs::perms::owner_write);
     EXPECT_EQ(mode & fs::perms::group_all, fs::perms::none);
     EXPECT_EQ(mode & fs::perms::others_all, fs::perms::none);
+
+    // Atomic replace: the rename consumed the temp file.
+    EXPECT_FALSE(fs::exists(path.string() + ".tmp"));
 
     fs::remove(path);
 }
@@ -50,6 +56,34 @@ TEST(JsonUplinkStoreTest, TightensPreexistingWorldReadableFile) {
     sst::adapters::network::JsonUplinkStore store(path.string());
     EXPECT_TRUE(store.Persist(sst::config::UplinkData{}));
 
+    const fs::perms mode = fs::status(path).permissions();
+    EXPECT_EQ(mode & fs::perms::group_all, fs::perms::none);
+    EXPECT_EQ(mode & fs::perms::others_all, fs::perms::none);
+
+    fs::remove(path);
+}
+
+// A stale world-readable temp file (crash leftover from a previous partial
+// write) is retightened before the new secret bytes land, and the atomic
+// rename swaps it in as the 0600 store file.
+TEST(JsonUplinkStoreTest, StaleWideTempFileIsRetightenedAndConsumed) {
+    const fs::path path = fs::path{::testing::TempDir()} / "uplink-store-tmp-test.json";
+    const fs::path tmp = path.string() + ".tmp";
+    fs::remove(path);
+    {
+        std::ofstream seed(tmp, std::ios::trunc);
+        seed << "{\"half\":";  // partial write, as a crash would leave it
+    }
+    fs::permissions(path.string() + ".tmp",
+                    fs::perms::owner_read | fs::perms::owner_write | fs::perms::group_read |
+                        fs::perms::others_read,
+                    fs::perm_options::replace);
+
+    sst::adapters::network::JsonUplinkStore store(path.string());
+    EXPECT_TRUE(store.Persist(sst::config::UplinkData{}));
+
+    ASSERT_TRUE(fs::exists(path));
+    EXPECT_FALSE(fs::exists(tmp));
     const fs::perms mode = fs::status(path).permissions();
     EXPECT_EQ(mode & fs::perms::group_all, fs::perms::none);
     EXPECT_EQ(mode & fs::perms::others_all, fs::perms::none);

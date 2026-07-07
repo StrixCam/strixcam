@@ -1,3 +1,4 @@
+#include <gst/gst.h>
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -8,6 +9,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "adapters/common/gstreamer/gst-frame.hpp"
 #include "adapters/raw_capture/filesystem-raw-capture-sink.hpp"
 #include "app/raw_capture/ports/raw-capture-sink.hpp"
 #include "domain/capture/models/frame.hpp"
@@ -55,17 +57,24 @@ class TempDir {
     std::filesystem::path path_;
 };
 
-// A valid NV12 frame the encoder can consume: size == width*height*3/2 so the
-// appsrc caps (set from geometry) match the buffer the sink fills.
+// A valid TWO-PLANE NV12 frame (Y + interleaved UV), like the real capture
+// pipeline produces — a single-plane synthetic frame would mask a sink that
+// pushes only planes[0] and drops the chroma plane. Total == width*height*3/2
+// so the appsrc caps (set from geometry) match the buffer the sink fills.
+constexpr std::uint32_t kFrameDim = 64;
+constexpr std::size_t kYPlaneSize = static_cast<std::size_t>(kFrameDim) * kFrameDim;
+constexpr std::size_t kUvPlaneSize = kYPlaneSize / 2;
+constexpr std::size_t kNv12FullSize = kYPlaneSize + kUvPlaneSize;
+
 auto MakeFrame(std::uint8_t fill) -> Frame {
-    constexpr std::uint32_t kDim = 64;
-    constexpr std::size_t kNv12Size = static_cast<std::size_t>(kDim) * kDim * 3 / 2;
-    auto owner = std::make_shared<std::vector<std::uint8_t>>(kNv12Size, fill);
+    auto owner = std::make_shared<std::vector<std::uint8_t>>(kNv12FullSize, fill);
     Frame frame;
     frame.format = sst::common::PixelFormat::NV12;
-    frame.geometry = {.width = kDim, .height = kDim};
+    frame.geometry = {.width = kFrameDim, .height = kFrameDim};
     frame.planes.push_back(
-        sst::capture::FramePlane{.stride = kDim, .data = owner->data(), .size = owner->size()});
+        sst::capture::FramePlane{.stride = kFrameDim, .data = owner->data(), .size = kYPlaneSize});
+    frame.planes.push_back(sst::capture::FramePlane{
+        .stride = kFrameDim, .data = owner->data() + kYPlaneSize, .size = kUvPlaneSize});
     frame.owner = owner;
     return frame;
 }
@@ -105,6 +114,22 @@ TEST(RawCaptureSinkTest, StartRejectsReusedGroupWithExistingFiles) {
     { std::ofstream(ProxyPath(dir.path(), 0)) << 'x'; }  // pre-existing cam-0 proxy
     EXPECT_FALSE(sink.Start("grp-1", dir.path()));
     EXPECT_FALSE(sink.IsCapturing());
+}
+
+// UV-plane regression: the sink pushes frames via the shared frame→GstBuffer
+// helper, which must carry the FULL frame — both NV12 planes — not just
+// planes[0] (the bug that chroma-broke every proxy MP4 on device). Container-
+// safe: allocates a GstBuffer, builds no pipeline.
+TEST(RawCaptureSinkTest, FrameToGstBufferCarriesBothNv12Planes) {
+    gst_init(nullptr, nullptr);
+    const Frame frame = MakeFrame(0x11);  // NOLINT(readability-magic-numbers) — NV12 fill byte
+    ASSERT_EQ(frame.planes.size(), 2U);
+    EXPECT_EQ(sst::adapters::gst_common::FrameByteSize(frame), kNv12FullSize);
+
+    GstBuffer* buffer = sst::adapters::gst_common::MakeGstBufferFromFrame(frame);
+    ASSERT_NE(buffer, nullptr);
+    EXPECT_EQ(gst_buffer_get_size(buffer), kNv12FullSize);  // Y + UV, not Y alone
+    gst_buffer_unref(buffer);
 }
 
 // ---- On-device (RawCaptureSinkE2E): real GStreamer encode pipeline ----------

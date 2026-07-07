@@ -104,34 +104,6 @@ void ServeThumbnail(const HttpDownloadServer::ThumbnailResolver& resolve,
     res.set_content(std::move(body), "image/jpeg");
 }
 
-// Stream the requested byte range of `file` to `sink` in bounded chunks, so a
-// huge `length` can't trigger a multi-GB allocation on the Jetson.
-// NOLINTBEGIN(bugprone-easily-swappable-parameters) floor-ok: httplib provider param order
-auto StreamFileRange(const std::string& file, std::size_t offset, std::size_t length,
-                     httplib::DataSink& sink) -> bool {
-    std::ifstream stream(file, std::ios::binary);
-    if (!stream) {
-        return false;
-    }
-    stream.seekg(static_cast<std::streamoff>(offset));
-    std::array<char, kStreamChunkBytes> chunk{};
-    std::size_t remaining = length;
-    while (remaining > 0 && stream) {
-        const std::size_t want = std::min(remaining, chunk.size());
-        stream.read(chunk.data(), static_cast<std::streamsize>(want));
-        const auto got = static_cast<std::size_t>(stream.gcount());
-        if (got == 0) {
-            break;
-        }
-        if (!sink.write(chunk.data(), got)) {
-            return false;
-        }
-        remaining -= got;
-    }
-    return true;
-}
-// NOLINTEND(bugprone-easily-swappable-parameters)
-
 // Tokened recording GET with Range support: validate the bearer token, then hand
 // httplib a known-length content provider that streams the requested slice.
 void ServeRecording(const HttpDownloadServer::TokenValidator& validate, const httplib::Request& req,
@@ -162,6 +134,40 @@ void ServeRecording(const HttpDownloadServer::TokenValidator& validate, const ht
 }
 
 }  // namespace
+
+// Stream the requested byte range of `file` to `sink` in bounded chunks, so a
+// huge `length` can't trigger a multi-GB allocation on the Jetson. Returns true
+// only when the FULL requested range was delivered: httplib re-invokes the
+// content provider at the same offset until the advertised length is served, so
+// reporting success on a short read (file truncated after its size was taken)
+// would re-enter this function at the same offset forever — a core-pinning
+// busy-spin. A short read or sink failure returns false, which aborts the
+// response instead.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters) floor-ok: httplib provider param order
+auto StreamFileRange(const std::string& file, std::size_t offset, std::size_t length,
+                     httplib::DataSink& sink) -> bool {
+    std::ifstream stream(file, std::ios::binary);
+    if (!stream) {
+        return false;
+    }
+    stream.seekg(static_cast<std::streamoff>(offset));
+    std::array<char, kStreamChunkBytes> chunk{};
+    std::size_t remaining = length;
+    while (remaining > 0 && stream) {
+        const std::size_t want = std::min(remaining, chunk.size());
+        stream.read(chunk.data(), static_cast<std::streamsize>(want));
+        const auto got = static_cast<std::size_t>(stream.gcount());
+        if (got == 0) {
+            break;
+        }
+        if (!sink.write(chunk.data(), got)) {
+            return false;
+        }
+        remaining -= got;
+    }
+    return remaining == 0;
+}
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 HttpDownloadServer::HttpDownloadServer(std::string bind_address, std::uint16_t port,
                                        TokenValidator validator,

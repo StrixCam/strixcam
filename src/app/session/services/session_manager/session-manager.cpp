@@ -110,6 +110,13 @@ auto SessionManager::OnDisconnect() -> void {
 
 auto SessionManager::OnWifiReady() -> bool {
     const std::lock_guard lock(mtx_);
+    if (state_.phase == SessionPhase::kFinalizing) {
+        // The finalize fan-out is dismantling the group right now; accepting a
+        // group-up here would be silently clobbered by the post-fan-out reset
+        // (wifi_group_up = false) while the caller believes the group is live.
+        spdlog::warn("SessionManager::OnWifiReady rejected: session finalizing");
+        return false;
+    }
     if (!state_.app_connected) {
         // A group with no app and no session would leak until the timer; the
         // command surface only reaches here over BLE anyway.
@@ -203,50 +210,51 @@ auto SessionManager::OnOverlayConfigured() -> bool {
 }
 
 auto SessionManager::OnRecordingStart() -> bool {
-    LastSessionSummary write_ahead;
-    {
-        const std::lock_guard lock(mtx_);
-        if (state_.phase != SessionPhase::kReady) {
-            spdlog::warn("SessionManager::OnRecordingStart rejected: session={}", state_.phase);
-            return false;
-        }
-        state_.phase = SessionPhase::kRecording;
-        recording_started_at_ = SteadyClock::now();
-        spdlog::info("SessionManager: -> Recording");
-        // Write-ahead orphan record: if the firmware dies before this recording
-        // is finalized, the next boot's summary already names the match and
-        // flags the file invalid (reason=Reboot).
-        write_ahead.match_uuid = state_.config ? state_.config->match_uuid : "";
-        write_ahead.end_reason = SessionEndReason::kReboot;
-        write_ahead.end_clock_seconds = state_.match.clock_seconds;
-        write_ahead.file_valid = false;
+    const std::lock_guard lock(mtx_);
+    if (state_.phase != SessionPhase::kReady) {
+        spdlog::warn("SessionManager::OnRecordingStart rejected: session={}", state_.phase);
+        return false;
     }
+    state_.phase = SessionPhase::kRecording;
+    recording_started_at_ = SteadyClock::now();
+    spdlog::info("SessionManager: -> Recording");
+    // Write-ahead orphan record: if the firmware dies before this recording
+    // is finalized, the next boot's summary already names the match and
+    // flags the file invalid (reason=Reboot). Persisted UNDER mtx_ — every
+    // summary write is serialized by the lock, so a stale write-ahead can never
+    // land after the finalize summary (the store is a small local file write
+    // and takes no locks of its own — no ordering cycle).
+    LastSessionSummary write_ahead;
+    write_ahead.match_uuid = state_.config ? state_.config->match_uuid : "";
+    write_ahead.end_reason = SessionEndReason::kReboot;
+    write_ahead.end_clock_seconds = state_.match.clock_seconds;
+    write_ahead.file_valid = false;
     PersistSummary(write_ahead);
     return true;
 }
 
 auto SessionManager::OnRecordingStop() -> bool {
-    LastSessionSummary write_ahead;
-    {
-        const std::lock_guard lock(mtx_);
-        if (state_.phase != SessionPhase::kRecording) {
-            spdlog::warn("SessionManager::OnRecordingStop rejected: session={}", state_.phase);
-            return false;
-        }
-        state_.phase = SessionPhase::kReady;
-        StopElapsedClockLocked();
-        // The recorder was stopped by command (EOS + moov written) — a later
-        // session end reports the file valid even though its own
-        // FinalizeRecording finds nothing left to do.
-        recording_file_valid_ = true;
-        spdlog::info("SessionManager: recording stopped -> Ready");
-        // Refresh the write-ahead record: a crash from here on still orphans
-        // the SESSION (reason=Reboot) but the file itself is already playable.
-        write_ahead.match_uuid = state_.config ? state_.config->match_uuid : "";
-        write_ahead.end_reason = SessionEndReason::kReboot;
-        write_ahead.end_clock_seconds = state_.match.clock_seconds;
-        write_ahead.file_valid = true;
+    const std::lock_guard lock(mtx_);
+    if (state_.phase != SessionPhase::kRecording) {
+        spdlog::warn("SessionManager::OnRecordingStop rejected: session={}", state_.phase);
+        return false;
     }
+    state_.phase = SessionPhase::kReady;
+    StopElapsedClockLocked();
+    // The recorder was stopped by command (EOS + moov written) — a later
+    // session end reports the file valid even though its own
+    // FinalizeRecording finds nothing left to do.
+    recording_file_valid_ = true;
+    spdlog::info("SessionManager: recording stopped -> Ready");
+    // Refresh the write-ahead record: a crash from here on still orphans
+    // the SESSION (reason=Reboot) but the file itself is already playable.
+    // Persisted UNDER mtx_ (see OnRecordingStart) so it can never overtake or
+    // trail the finalize summary out of order.
+    LastSessionSummary write_ahead;
+    write_ahead.match_uuid = state_.config ? state_.config->match_uuid : "";
+    write_ahead.end_reason = SessionEndReason::kReboot;
+    write_ahead.end_clock_seconds = state_.match.clock_seconds;
+    write_ahead.file_valid = true;
     PersistSummary(write_ahead);
     return true;
 }
@@ -360,9 +368,13 @@ auto SessionManager::FinalizeLocked(std::unique_lock<std::mutex>& lock,
         file_valid = finalize_ok;
     }
     summary.file_valid = file_valid;
-    PersistSummary(summary);
 
     lock.lock();
+    // Persist AFTER re-acquiring mtx_: all summary writes go through the lock,
+    // so a write-ahead from OnRecordingStart/Stop can never land after this
+    // final record (those paths persist-under-lock and are rejected once the
+    // phase is kFinalizing anyway).
+    PersistSummary(summary);
     state_.phase = SessionPhase::kIdle;
     state_.config.reset();
     state_.match = LiveMatch{};

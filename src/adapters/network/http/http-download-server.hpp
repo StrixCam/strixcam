@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -10,9 +11,19 @@
 
 namespace httplib {
 class Server;
-}
+class DataSink;
+}  // namespace httplib
 
 namespace sst::adapters::network {
+
+// Stream [offset, offset + length) of `file` into `sink` in bounded chunks.
+// Returns true only when the full requested range was delivered; a short read
+// (file truncated after its size was advertised) or a sink failure returns
+// false so httplib aborts the response instead of re-invoking the provider at
+// the same offset forever (busy-spin). Exposed for tests; used by the
+// /recordings content provider.
+auto StreamFileRange(const std::string& file, std::size_t offset, std::size_t length,
+                     httplib::DataSink& sink) -> bool;
 
 // cpp-httplib download server (KTD7). Serves recordings over HTTP with byte-
 // range support, gated per-request by an Authorization: Bearer token, bound to

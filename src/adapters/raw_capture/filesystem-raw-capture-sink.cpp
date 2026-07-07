@@ -167,12 +167,13 @@ auto FilesystemRawCaptureSink::PushCamera(std::uint32_t camera_index,
         writer.caps_set = true;
     }
 
-    const auto& plane = frame.planes[0];
-    GstBuffer* buffer = gst_buffer_new_allocate(nullptr, plane.size, nullptr);
+    // Copy EVERY plane (shared helper): real NV12 frames are 2-plane (Y + UV) —
+    // pushing only planes[0] drops the chroma plane and writes color-broken
+    // proxy MP4s on device.
+    GstBuffer* buffer = sst::adapters::gst_common::MakeGstBufferFromFrame(frame);
     if (buffer == nullptr) {
         return;
     }
-    gst_buffer_fill(buffer, 0, plane.data, plane.size);
     // appsrc is block=false with a leaky=downstream queue behind it, so this
     // returns immediately and drops oldest under overload — never blocks capture.
     (void)gst_app_src_push_buffer(GST_APP_SRC(writer.appsrc), buffer);
