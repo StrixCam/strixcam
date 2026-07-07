@@ -12,10 +12,6 @@ namespace sst::adapters::control {
 // commands. These wrap fork/exec with a wall-clock deadline: past it the child
 // is SIGKILLed and reaped, and the call returns failure instead of hanging.
 
-// Shared read buffer size for piped capture (single source of truth — was
-// duplicated as a 256-byte constant in both adapters).
-constexpr std::size_t kReadBufferSize = 256;
-
 // Generous deadline for state-changing commands (`nmcli con up` waits on NM to
 // bring the iface online + DHCP, which can legitimately take ~30s).
 constexpr std::chrono::seconds kApplyTimeout{45};

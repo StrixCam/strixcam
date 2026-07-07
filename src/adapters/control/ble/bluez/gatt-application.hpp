@@ -41,8 +41,6 @@ class GattApplication {
     GattApplication(GattApplication&&) = delete;
     auto operator=(GattApplication&&) -> GattApplication& = delete;
 
-    [[nodiscard]] auto RootPath() const -> const std::string& { return root_path_; }
-
     // Update the response characteristic value and notify any subscribed
     // central via PropertiesChanged. Safe to call from any thread.
     auto SendNotification(const std::vector<std::uint8_t>& bytes) -> void;

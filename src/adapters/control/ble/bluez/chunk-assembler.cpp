@@ -39,24 +39,23 @@ auto ChunkAssembler::OfferInbound(const sst_cam::ChunkedPayload& chunk) -> Offer
         return {.accepted = true, .payload = chunk.data()};
     }
 
-    auto entry = inbound_.find(corr);
-    if (entry == inbound_.end()) {
-        EvictOldestInboundIfFull();
+    const auto fresh_state = [total] {
         InboundState state;
         state.total_chunks = total;
         state.parts.assign(total, std::string{});
         state.have.assign(total, false);
-        entry = inbound_.emplace(corr, std::move(state)).first;
+        return state;
+    };
+    auto entry = inbound_.find(corr);
+    if (entry == inbound_.end()) {
+        EvictOldestInboundIfFull();
+        entry = inbound_.emplace(corr, fresh_state()).first;
         inbound_order_.push_back(corr);
     } else if (entry->second.total_chunks != total) {
         // total_chunks disagreed mid-stream — reset to the new framing.
         spdlog::warn("ChunkAssembler: corr={} total_chunks changed {}->{}, resetting", corr,
                      entry->second.total_chunks, total);
-        InboundState state;
-        state.total_chunks = total;
-        state.parts.assign(total, std::string{});
-        state.have.assign(total, false);
-        entry->second = std::move(state);
+        entry->second = fresh_state();
     }
 
     InboundState& state = entry->second;

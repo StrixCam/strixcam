@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <ctime>
@@ -19,6 +20,8 @@ namespace sst::adapters::control {
 namespace {
 constexpr int kExecFailedExitCode = 127;
 constexpr std::int64_t kPollSliceMs = 100;  // re-check the deadline ~10x/sec
+// Read buffer size for piped capture (only CaptureBounded below reads pipes).
+constexpr std::size_t kReadBufferSize = 256;
 
 // Build the NULL-terminated char* argv proto execvp wants from the string argv.
 // The pointers alias `argv`'s storage, so `argv` must outlive the returned

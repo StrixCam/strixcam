@@ -31,11 +31,10 @@ constexpr std::uint32_t kAutoStopMinutes = 5;
 class FakeRenderer final : public IOverlayRenderer {
    public:
     // Param order fixed by the IOverlayRenderer::Render interface contract.
-    auto Render(const RenderScene& /*scene*/,
-                std::uint32_t out_width,  // NOLINT(bugprone-easily-swappable-parameters)
-                                          // floor-ok: test double; order fixed by
-                                          // IOverlayRenderer::Render, cannot reorder in override
+    // NOLINTBEGIN(bugprone-easily-swappable-parameters) floor-ok: fixed override order
+    auto Render(const RenderScene& /*scene*/, std::uint32_t out_width,
                 std::uint32_t out_height) -> RgbaImage override {
+        // NOLINTEND(bugprone-easily-swappable-parameters)
         RgbaImage img;
         img.width = out_width;
         img.height = out_height;

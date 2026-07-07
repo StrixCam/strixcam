@@ -28,8 +28,10 @@ constexpr const char* kIfaceLeAdvManager = "org.bluez.LEAdvertisingManager1";
 constexpr const char* kIfaceLeAdv = "org.bluez.LEAdvertisement1";
 
 auto ToBytes(const sst_cam::ChunkedPayload& chunk) -> std::vector<std::uint8_t> {
-    const std::string wire = chunk.SerializeAsString();
-    return {wire.begin(), wire.end()};
+    // Serialize straight into the byte vector (no intermediate std::string copy).
+    std::vector<std::uint8_t> wire(chunk.ByteSizeLong());
+    chunk.SerializeToArray(wire.data(), static_cast<int>(wire.size()));
+    return wire;
 }
 
 }  // namespace

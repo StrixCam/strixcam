@@ -143,7 +143,7 @@ struct Fixture {
 // Happy path (AE1 read half): a snapshot taken mid-recording carries the
 // session axis, the monotonic recording clock, the absolute match state
 // (incl. the state-health fields 9-11), the activity-flag truth, and the
-// wifi-group axis. Spec-style assertion list — see the NOLINT rationale.
+// wifi-group axis. Spec-style assertion list — see the suppression rationale.
 TEST(SessionSnapshotHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
      SnapshotDuringRecordingCarriesActualState) {
     Fixture fixture;

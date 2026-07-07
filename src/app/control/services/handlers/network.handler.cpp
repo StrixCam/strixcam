@@ -111,6 +111,9 @@ auto NetworkHandler::BuildResponse(sst_cam::ResponseStatus status) -> sst_cam::C
 }
 
 auto NetworkHandler::HandleGet() -> sst_cam::CommandResponse {
+    // Same lock as HandleSet: BuildResponse reads current_, which HandleSet
+    // mutates under mtx_ (HandleSet itself calls BuildResponse with mtx_ held).
+    std::lock_guard lock(mtx_);
     return BuildResponse(sst_cam::ResponseStatus::OK);
 }
 
