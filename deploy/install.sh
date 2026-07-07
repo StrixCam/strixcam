@@ -230,8 +230,10 @@ Group=sst-cam
 # (CAP_NET_BIND_SERVICE) and uses raw sockets for DHCP (CAP_NET_RAW). Ambient so
 # the forked ip/dnsmasq children inherit them; bounding set caps the ceiling.
 # Without these the service has no capabilities and WiFi preview fails.
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW
+# CAP_SYS_TIME: SetDeviceTimeCommand applies the phone's wall clock via
+# clock_settime(2) so device-local timestamps are trustworthy pre-NTP.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SYS_TIME
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SYS_TIME
 WorkingDirectory=/opt/sst-cam
 ExecStart=/opt/sst-cam/bin/sst_cam_firmware
 Restart=on-failure
@@ -269,17 +271,22 @@ UNIT
 
 # polkit JS rule granting the unprivileged SERVICE_USER exactly the logind reboot
 # actions — so the firmware's `systemctl reboot` (BLE RebootCommand) is allowed
-# without running the service as root. Unquoted heredoc to interpolate
-# SERVICE_USER; the rule body contains no other shell metacharacters.
+# without running the service as root — plus the timedated set-ntp action (the
+# firmware opportunistically enables NTP after SetDeviceTimeCommand when an
+# uplink exists). Unquoted heredoc to interpolate SERVICE_USER; the rule body
+# contains no other shell metacharacters.
 embedded_polkit_rule() {
   cat <<RULE
 // Managed by sst-cam-firmware deploy/install.sh — do not edit by hand.
 // Allow the sst-cam service user to reboot the camera (firmware RebootCommand,
-// served by exec'ing systemctl reboot). Grants only the reboot actions to that
-// user; everything else still follows the system polkit defaults.
+// served by exec'ing systemctl reboot) and to enable NTP sync (opportunistic
+// timedatectl set-ntp after the app pushes its wall clock). Grants only
+// these actions to that user; everything else still follows the system polkit
+// defaults.
 polkit.addRule(function(action, subject) {
     if ((action.id == "org.freedesktop.login1.reboot" ||
-         action.id == "org.freedesktop.login1.reboot-multiple-sessions") &&
+         action.id == "org.freedesktop.login1.reboot-multiple-sessions" ||
+         action.id == "org.freedesktop.timedate1.set-ntp") &&
         subject.user == "${SERVICE_USER}") {
         return polkit.Result.YES;
     }

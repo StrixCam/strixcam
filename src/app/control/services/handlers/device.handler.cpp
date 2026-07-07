@@ -29,7 +29,10 @@ constexpr const char* kBuildVersion = SST_FIRMWARE_VERSION;
 // positive signal otherwise).
 // v3: RebootCommand (U7) + record/stream quality surface; the app gates the
 // Reboot action and quality pickers on protocol_version >= 3.
-constexpr std::uint32_t kProtocolVersion = 3;
+// v4: state-health cycle — session snapshot / absolute match-state / device
+// time command surface (45-47) + per-camera health + DEVICE_INOPERABLE; the
+// app runs the reconnect handshake against protocol_version >= 4.
+constexpr std::uint32_t kProtocolVersion = 4;
 }  // namespace
 
 DeviceHandler::DeviceHandler(sst::config::DeviceData device, ISystemStats& stats,

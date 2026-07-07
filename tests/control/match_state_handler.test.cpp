@@ -42,6 +42,7 @@ struct Fixture {
 
     explicit Fixture(std::int32_t period_length = kPeriodLengthSeconds) {
         sst::session::SessionConfig cfg;
+        cfg.match_uuid = "match-42";
         cfg.team_a_id = "home";
         cfg.team_b_id = "away";
         cfg.period_length_seconds = period_length;
@@ -157,6 +158,45 @@ TEST(MatchStateHandlerTest, TimeRemainingClampsAtZeroWhenElapsedExceedsLength) {
     });
     MatchStateHandler handler(fixture.manager, [] { return std::uint64_t{0}; });
     EXPECT_EQ(handler.Handle(GetMatchStateCmd()).match_state().time_remaining_s(), 0U);
+}
+
+// State-health cycle fields 9-11: the firmware's own clock (elapsed_seconds,
+// UNCLAMPED past period length — unlike time_remaining_s), the running bit,
+// and the session's match uuid all ride the GetMatchState response while a
+// session config is live.
+TEST(MatchStateHandlerTest, ReportsFirmwareClockFieldsUnclamped) {
+    Fixture fixture(/*period_length=*/kPeriodLengthSeconds);
+    fixture.manager.ApplyMatchUpdate([](sst::session::LiveMatch& match) {
+        match.period = 1;
+        match.clock_seconds = kOverrunSeconds;  // 650 > 600s period length
+        match.clock_running = true;
+        match.segment = sst::session::MatchSegment::kInPlay;
+    });
+    MatchStateHandler handler(fixture.manager, [] { return std::uint64_t{0}; });
+
+    const auto resp = handler.Handle(GetMatchStateCmd());
+    const auto& state = resp.match_state();
+    ASSERT_TRUE(state.has_elapsed_seconds());
+    EXPECT_EQ(state.elapsed_seconds(), static_cast<std::uint32_t>(kOverrunSeconds));
+    EXPECT_EQ(state.time_remaining_s(), 0U);  // the clamped view bottoms out
+    ASSERT_TRUE(state.has_clock_running());
+    EXPECT_TRUE(state.clock_running());
+    ASSERT_TRUE(state.has_match_uuid());
+    EXPECT_EQ(state.match_uuid(), "match-42");
+}
+
+// With no session config the firmware has no match clock — fields 9-11 stay
+// ABSENT (has_ false), never zero-filled for a reconciling app to adopt.
+TEST(MatchStateHandlerTest, NoSessionLeavesClockFieldsAbsent) {
+    FakeCleanup cleanup;
+    sst::session::SessionManager manager{cleanup};  // never configured -> Idle
+    MatchStateHandler handler(manager, [] { return std::uint64_t{0}; });
+
+    const auto resp = handler.Handle(GetMatchStateCmd());
+    const auto& state = resp.match_state();
+    EXPECT_FALSE(state.has_elapsed_seconds());
+    EXPECT_FALSE(state.has_clock_running());
+    EXPECT_FALSE(state.has_match_uuid());
 }
 
 // No active session (Idle) -> MATCH_NOT_STARTED, still OK, no crash.

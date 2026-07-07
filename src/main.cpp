@@ -16,6 +16,7 @@
 #include "adapters/control/network/nmcli-uplink-configurator.hpp"
 #include "adapters/control/network/subprocess.hpp"
 #include "adapters/control/system/proc-system-stats.hpp"
+#include "adapters/control/system/realtime-clock.hpp"
 #include "adapters/control/wifi/wpa_supplicant/dnsmasq-dhcp-server.hpp"
 #include "adapters/control/wifi/wpa_supplicant/ip-network-configurator.hpp"
 #include "adapters/control/wifi/wpa_supplicant/wpa-wifi-manager.hpp"
@@ -56,7 +57,10 @@
 #include "app/control/services/handlers/raw-capture.handler.hpp"
 #include "app/control/services/handlers/reboot.handler.hpp"
 #include "app/control/services/handlers/recording.handler.hpp"
+#include "app/control/services/handlers/session-snapshot.handler.hpp"
 #include "app/control/services/handlers/session.handler.hpp"
+#include "app/control/services/handlers/set-device-time.handler.hpp"
+#include "app/control/services/handlers/set-match-state.handler.hpp"
 #include "app/control/services/handlers/streaming.handler.hpp"
 #include "app/control/services/handlers/thumbnail.handler.hpp"
 #include "app/control/services/handlers/wifi-direct.handler.hpp"
@@ -99,6 +103,9 @@ constexpr const char* kGroupOwnerIp = "192.168.49.1";
 // Bound for the `systemctl reboot` exec — the call returns quickly, but the
 // deadline keeps a hung systemd/D-Bus from stalling the dispatcher thread.
 constexpr std::chrono::seconds kRebootTimeout{10};
+// Bound for the opportunistic `timedatectl set-ntp true` after SetDeviceTime —
+// best-effort, so a hung timedated must not stall the dispatcher thread.
+constexpr std::chrono::seconds kNtpEnableTimeout{10};
 
 }  // namespace sst::runtime_defaults
 
@@ -334,6 +341,38 @@ auto RunFirmware() -> int {
             .wifi_signal_dbm = [&telemetry_probe] { return telemetry_probe.WifiSignalDbm(); }}));
     dispatcher.Register(
         std::make_shared<sst::control::SessionHandler>(session_manager, overlay_controller));
+    // Reconnect handshake (state-health cycle): snapshot read + absolute
+    // match-state reconcile + wall-clock push. The snapshot's activity flags
+    // read the SAME sources as telemetry above, so the two can never disagree.
+    // The per-camera health providers stay unwired until the health monitor
+    // (U3) exists — absent wire fields mean "unreported", never a fabricated OK.
+    dispatcher.Register(std::make_shared<sst::control::SessionSnapshotHandler>(
+        session_manager, manual_camera_state, preview_layout_state,
+        sst::control::SessionSnapshotHandler::Providers{
+            .is_recording =
+                [&recording_service] {
+                    return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
+                },
+            .is_streaming =
+                [&streaming_service] {
+                    return !streaming_service.ListActivePlatformStreams().empty();
+                },
+            .is_raw_capturing = [&raw_capture_sink] { return raw_capture_sink.IsCapturing(); },
+            .camera0_health = {},
+            .camera1_health = {}},
+        NowEpochMs));
+    dispatcher.Register(std::make_shared<sst::control::SetMatchStateHandler>(
+        session_manager, overlay_controller, NowMs));
+    // Device time: direct clock_settime (CAP_SYS_TIME via the systemd unit's
+    // AmbientCapabilities — deploy/install.sh) + opportunistic NTP enable when
+    // an uplink exists, bounded like every subprocess on the dispatcher thread.
+    dispatcher.Register(std::make_shared<sst::control::SetDeviceTimeHandler>(
+        [](std::uint64_t epoch_ms) { return sst::adapters::control::SetRealtimeClock(epoch_ms); },
+        [&telemetry_probe] { return telemetry_probe.InternetReachable(); },
+        [] {
+            sst::adapters::control::RunBounded({"timedatectl", "set-ntp", "true"},
+                                               sst::runtime_defaults::kNtpEnableTimeout);
+        }));
     dispatcher.Register(std::make_shared<sst::control::WifiDirectHandler>(
         session_manager, wifi_manager, network_configurator, dhcp_server, streaming_service,
         sst::control::PreviewPort{sst::runtime_defaults::kPreviewPort},

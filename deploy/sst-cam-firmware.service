@@ -21,6 +21,11 @@ Type=simple
 # device — grant those to this user, do NOT run the service as root.
 User=sst-cam
 Group=sst-cam
+# CAP_NET_*: WiFi-Direct data plane (P2P GO IP assignment + dnsmasq DHCP).
+# CAP_SYS_TIME: SetDeviceTimeCommand applies the phone's wall clock via
+# clock_settime(2). Keep in sync with the embedded unit in install.sh.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SYS_TIME
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_SYS_TIME
 WorkingDirectory=/opt/sst-cam
 ExecStart=/opt/sst-cam/bin/sst_cam_firmware
 Restart=on-failure

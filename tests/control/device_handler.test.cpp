@@ -98,9 +98,10 @@ TEST(DeviceHandlerTest,  // NOLINT(readability-function-cognitive-complexity)
     const std::string stamped = SST_FIRMWARE_VERSION;
     const std::string expected_fw = (stamped.empty() || stamped == "unknown") ? "1.0.0" : stamped;
     EXPECT_EQ(resp.device_info().firmware_version(), expected_fw);
-    // The reboot command surface (U7) bumped kProtocolVersion to 3; the app gates
-    // Reboot on an exact version match, so guard against a downward regression.
-    EXPECT_GE(resp.device_info().protocol_version(), 3U);
+    // The state-health cycle (snapshot/reconcile/time surface) bumped
+    // kProtocolVersion to 4; the app runs the reconnect handshake against
+    // protocol_version >= 4, so guard against a downward regression.
+    EXPECT_GE(resp.device_info().protocol_version(), 4U);
 }
 
 // U8/R16: GetDeviceInfo advertises the concrete record/stream modes the encode

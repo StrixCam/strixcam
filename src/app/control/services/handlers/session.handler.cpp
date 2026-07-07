@@ -1,5 +1,7 @@
 #include "app/control/services/handlers/session.handler.hpp"
 
+#include <cstdint>
+
 #include "domain/session/models/session-config.hpp"
 
 namespace sst::control {
@@ -31,6 +33,10 @@ auto SessionHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::CommandResp
     config.team_b_name = msg.team_b_name();
     config.team_a_color_hex = msg.team_a_color_hex();
     config.team_b_color_hex = msg.team_b_color_hex();
+    // Unsupervised-session safety net: 0 = the app did not set it, so the
+    // firmware default (30 min) applies inside the SessionManager.
+    config.auto_stop_minutes =
+        msg.has_auto_stop_minutes() ? static_cast<std::int32_t>(msg.auto_stop_minutes()) : 0;
 
     sst_cam::CommandResponse resp;
     if (session_.ApplySessionConfig(config)) {
