@@ -32,6 +32,16 @@ constexpr auto kCallTimeout = std::chrono::seconds{20};
 // reaches us, so a periodic re-register is the only host-side recovery.
 constexpr auto kAdvRefreshInterval = std::chrono::seconds{30};
 
+// Suppress a repeat re-advertise this close to the previous one: one
+// disconnect fires both central-gone signals (StopNotify + Device1
+// Connected=false) ~15 ms apart, and the second unregister+register cycle can
+// race the first cycle's in-flight async RegisterAdvertisement inside BlueZ,
+// leaving the advert down until the watchdog (metal 2026-07-07: manual
+// reconnect died with GATT_CONNECTION_TIMEOUT/147 until the next watchdog
+// pass). Well below both the watchdog cadence and any realistic
+// disconnect→reconnect gap, so only the duplicate signal is coalesced.
+constexpr auto kReAdvertiseSuppressWindow = std::chrono::seconds{2};
+
 // Match rule for abrupt central loss: a force-killed app sends no StopNotify,
 // but BlueZ flips Device1.Connected to false on the device node when the link
 // drops. Subscribed bus-wide because device object paths are dynamic.
@@ -58,7 +68,8 @@ BluezBleTransport::BluezBleTransport(std::string advertised_name, std::string ad
     : advertised_name_(std::move(advertised_name)),
       adapter_path_(std::move(adapter_path)),
       app_root_path_("/com/sst/cam/gatt"),
-      adv_path_("/com/sst/cam/adv") {}
+      adv_path_("/com/sst/cam/adv"),
+      readvertise_throttle_(kReAdvertiseSuppressWindow) {}
 
 BluezBleTransport::~BluezBleTransport() {
     if (running_) {
@@ -257,6 +268,9 @@ auto BluezBleTransport::Start() -> void {
 
         // Owned worker for off-event-loop disconnect handling (see
         // HandleCentralGone). Joined by Stop() while the event loop is still up.
+        // The throttle forgets any previous session's assertion so the first
+        // re-advertise of this session can never be suppressed by a stale stamp.
+        readvertise_throttle_.Reset();
         disconnect_worker_ = std::thread([this] { DisconnectWorkerLoop(); });
 
         auto bluez = sdbus::createProxy(*connection_, kBluezBus, adapter_path_);
@@ -474,6 +488,15 @@ auto BluezBleTransport::StopDisconnectWorker() -> std::optional<std::uint64_t> {
 
 auto BluezBleTransport::ReAdvertise(bool from_watchdog) -> void {
     if (!running_ || !connection_) {
+        return;
+    }
+    // Coalesce the duplicate central-gone re-assert (see
+    // kReAdvertiseSuppressWindow / ReAdvertiseThrottle) — one
+    // unregister+register cycle per disconnect.
+    if (!readvertise_throttle_.ShouldAssert(std::chrono::steady_clock::now())) {
+        spdlog::debug(
+            "BluezBleTransport: re-advertise suppressed — already asserted within the last {}s",
+            std::chrono::duration_cast<std::chrono::seconds>(kReAdvertiseSuppressWindow).count());
         return;
     }
     try {

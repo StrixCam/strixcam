@@ -15,6 +15,7 @@
 #include "adapters/control/ble/bluez/chunk-assembler.hpp"
 #include "adapters/control/ble/bluez/connection-supervisor.hpp"
 #include "adapters/control/ble/bluez/gatt-application.hpp"
+#include "adapters/control/ble/bluez/readvertise-throttle.hpp"
 #include "app/control/ports/ble-transport.hpp"
 
 namespace sst::adapters::control {
@@ -132,6 +133,12 @@ class BluezBleTransport final : public sst::control::IBleTransport {
     // right after the reconnect cancelled it).
     ConnectionSupervisor supervisor_;
     ChunkAssembler assembler_;
+    // One unregister+register cycle per disconnect: the two central-gone
+    // signals (StopNotify + Device1 Connected=false) otherwise queue two
+    // back-to-back cycles whose interleaved async BlueZ calls can leave the
+    // advertisement down until the watchdog (field 147 on manual reconnect).
+    // Only touched from the disconnect-worker thread.
+    ReAdvertiseThrottle readvertise_throttle_;
     std::atomic<bool> running_{false};
     // Atomic: ReAdvertise() re-arms the advertisement flag from the disconnect
     // worker while Stop()'s early-exit check may read it from another thread.
