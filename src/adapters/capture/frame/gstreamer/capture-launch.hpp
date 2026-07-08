@@ -7,24 +7,23 @@
 
 namespace sst::capture {
 
-// Deterministic per-sensor color init (pinned AWB/AE). The Argus ISP runs
-// per-sensor auto-algorithms (AWB, AE) that settle independently per camera —
-// two identical IMX477 modules on the same rig drift to visibly different
-// color and brightness (metal-measured: ~48% channel-mean divergence with AE
-// free vs <6% pinned). Pinning both sensors to the same predetermined values
-// at boot makes them start — and stay — identical; the uniform baked
-// postprocess calibration then corrects the module cast on top.
+// Per-sensor color init. Default is FULL AUTO (wbmode auto, AE/gain free):
+// the camera must render a usable image out of the box in any venue, and
+// pinned values only suit the venue they were dialed for. Cross-sensor
+// matching is handled downstream by the continuous software auto-WB loop
+// (AutoColorService), which pulls both sensors toward one shared neutral
+// target — auto AWB leaves the two modules' residual casts nearly identical,
+// so the software correction stays small.
 //
-// Env-tunable (dial on-device without a rebuild), defaults compiled in:
+// Env-tunable (pin any dimension on-device for experiments, no rebuild):
 //   SST_CAPTURE_COLOR_INIT  — overrides the WHOLE fragment verbatim (e.g.
-//                             "wbmode=1" restores full auto AWB/AE — rollback).
-//   SST_CAPTURE_WBMODE      — nvarguscamerasrc wbmode enum 0-9 (default 5,
-//                             daylight: fixed CCT, deterministic; 1 = auto).
-//   SST_CAPTURE_EXPOSURE_NS — pinned exposure time in ns (default 8333333 =
-//                             1/120 s for sports motion; 0 = leave AE free).
-//   SST_CAPTURE_GAIN        — pinned analog gain (default 8; 0 = auto).
-//   SST_CAPTURE_ISP_DGAIN   — pinned ISP digital gain (default 1 — no shadow
-//                             lift, keeps contrast; 0 = auto).
+//                             "wbmode=5" — fixed-CCT experiment hatch).
+//   SST_CAPTURE_WBMODE      — nvarguscamerasrc wbmode enum 0-9 (default 1,
+//                             auto; e.g. 5 = daylight fixed CCT).
+//   SST_CAPTURE_EXPOSURE_NS — pinned exposure time in ns (default 0 = AE
+//                             free; e.g. 8333333 = 1/120 s).
+//   SST_CAPTURE_GAIN        — pinned analog gain (default 0 = auto).
+//   SST_CAPTURE_ISP_DGAIN   — pinned ISP digital gain (default 0 = auto).
 auto BuildSensorColorInitFragment() -> std::string;
 
 // Full nvarguscamerasrc capture launch for one sensor: color-init fragment

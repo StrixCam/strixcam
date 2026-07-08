@@ -1,9 +1,10 @@
-// Capture launch builder (deterministic sensor color init): pure string-level
-// assertions — no GStreamer elements, no hardware. The two IMX477s must boot
-// to IDENTICAL predetermined AWB/AE values (per-sensor auto-algorithms settle
-// independently and diverge — metal-measured ~48% channel-mean split with AE
-// free), so the launch pins wbmode + exposure + analog gain + ISP digital
-// gain, each env-tunable with compiled-in defaults.
+// Capture launch builder (sensor color init): pure string-level assertions —
+// no GStreamer elements, no hardware. Default is FULL AUTO (wbmode auto, AE
+// and gains free): the camera must render a usable image out of the box in
+// ANY venue (pinned values only suit the venue they were dialed for — the
+// pinned daylight/1/120s set measured ~28-count means + green cast indoors).
+// Cross-sensor matching is the continuous software auto-WB loop's job. The
+// SST_CAPTURE_* env knobs still pin any dimension for experiments.
 
 #include <gtest/gtest.h>
 
@@ -44,15 +45,17 @@ class CaptureLaunchTest : public ::testing::Test {
     }
 };
 
-TEST_F(CaptureLaunchTest, DefaultsPinWbExposureGainAndDigitalGain) {
+TEST_F(CaptureLaunchTest, DefaultsAreFullAuto) {
+    // Out-of-the-box any-venue: auto AWB, and NO pinned exposure/gain/dgain
+    // ranges — AE adapts brightness to the venue.
     const auto frag = BuildSensorColorInitFragment();
-    EXPECT_TRUE(Contains(frag, "wbmode=5"));                               // daylight — fixed CCT
-    EXPECT_TRUE(Contains(frag, "exposuretimerange=\"8333333 8333333\""));  // 1/120 s
-    EXPECT_TRUE(Contains(frag, "gainrange=\"8 8\""));
-    EXPECT_TRUE(Contains(frag, "ispdigitalgainrange=\"1 1\""));
+    EXPECT_EQ(frag, "wbmode=1");
+    EXPECT_FALSE(Contains(frag, "exposuretimerange"));
+    EXPECT_FALSE(Contains(frag, "gainrange"));
+    EXPECT_FALSE(Contains(frag, "ispdigitalgainrange"));
 }
 
-TEST_F(CaptureLaunchTest, EnvKnobsOverrideEachPinnedValue) {
+TEST_F(CaptureLaunchTest, EnvKnobsPinEachDimension) {
     ::setenv("SST_CAPTURE_WBMODE", "3", 1);
     ::setenv("SST_CAPTURE_EXPOSURE_NS", "4000000", 1);
     ::setenv("SST_CAPTURE_GAIN", "2.5", 1);
@@ -64,33 +67,26 @@ TEST_F(CaptureLaunchTest, EnvKnobsOverrideEachPinnedValue) {
     EXPECT_TRUE(Contains(frag, "ispdigitalgainrange=\"2 2\""));
 }
 
-TEST_F(CaptureLaunchTest, ZeroKnobLeavesThatDimensionOnAuto) {
+TEST_F(CaptureLaunchTest, ExplicitZeroKnobStaysAuto) {
     ::setenv("SST_CAPTURE_EXPOSURE_NS", "0", 1);
     ::setenv("SST_CAPTURE_GAIN", "0", 1);
     ::setenv("SST_CAPTURE_ISP_DGAIN", "0", 1);
-    const auto frag = BuildSensorColorInitFragment();
-    EXPECT_TRUE(Contains(frag, "wbmode=5"));  // WB stays pinned
-    EXPECT_FALSE(Contains(frag, "exposuretimerange"));
-    EXPECT_FALSE(Contains(frag, "gainrange"));
-    EXPECT_FALSE(Contains(frag, "ispdigitalgainrange"));
+    EXPECT_EQ(BuildSensorColorInitFragment(), "wbmode=1");
 }
 
 TEST_F(CaptureLaunchTest, WholeFragmentOverrideWinsVerbatim) {
-    // The rollback hatch: full auto AWB/AE, ignoring the per-value knobs.
-    ::setenv("SST_CAPTURE_COLOR_INIT", "wbmode=1", 1);
+    // The experiment hatch: a fully pinned fragment, ignoring the per-value knobs.
+    ::setenv("SST_CAPTURE_COLOR_INIT", "wbmode=5 gainrange=\"8 8\"", 1);
     ::setenv("SST_CAPTURE_GAIN", "4", 1);
     const auto frag = BuildSensorColorInitFragment();
-    EXPECT_EQ(frag, "wbmode=1");
+    EXPECT_EQ(frag, "wbmode=5 gainrange=\"8 8\"");
 }
 
-TEST_F(CaptureLaunchTest, InvalidEnvValuesFallBackToDefaults) {
+TEST_F(CaptureLaunchTest, InvalidEnvValuesFallBackToAutoDefaults) {
     ::setenv("SST_CAPTURE_WBMODE", "not-a-number", 1);
     ::setenv("SST_CAPTURE_EXPOSURE_NS", "soon", 1);
     ::setenv("SST_CAPTURE_GAIN", "loud", 1);
-    const auto frag = BuildSensorColorInitFragment();
-    EXPECT_TRUE(Contains(frag, "wbmode=5"));
-    EXPECT_TRUE(Contains(frag, "exposuretimerange=\"8333333 8333333\""));
-    EXPECT_TRUE(Contains(frag, "gainrange=\"8 8\""));
+    EXPECT_EQ(BuildSensorColorInitFragment(), "wbmode=1");
 }
 
 TEST_F(CaptureLaunchTest, OutOfRangeWbModeIsClamped) {
@@ -107,7 +103,7 @@ TEST_F(CaptureLaunchTest, LaunchSplicesColorInitBeforeIspTuningPerSensor) {
         ASSERT_FALSE(launch.empty());
         EXPECT_TRUE(Contains(launch, "nvarguscamerasrc sensor-id=" + std::to_string(sensor)));
         // Color init precedes the TNR/EE tuning, both on the source element.
-        const auto color_at = launch.find("wbmode=5");
+        const auto color_at = launch.find("wbmode=1");
         const auto tnr_at = launch.find("tnr-mode=2");
         const auto caps_at = launch.find("! video/x-raw(memory:NVMM)");
         ASSERT_NE(color_at, std::string::npos);
@@ -115,14 +111,15 @@ TEST_F(CaptureLaunchTest, LaunchSplicesColorInitBeforeIspTuningPerSensor) {
         ASSERT_NE(caps_at, std::string::npos);
         EXPECT_LT(color_at, tnr_at);
         EXPECT_LT(tnr_at, caps_at);
-        EXPECT_TRUE(Contains(launch, "exposuretimerange=\"8333333 8333333\""));
+        // No pinned AE by default.
+        EXPECT_FALSE(Contains(launch, "exposuretimerange"));
         EXPECT_TRUE(Contains(launch, "appsink name=sink sync=false"));
     }
 }
 
 TEST_F(CaptureLaunchTest, BothSensorsGetIdenticalColorInit) {
-    // The whole point of the fix: sensor 0 and sensor 1 boot with the exact
-    // same pinned values — only the sensor-id differs.
+    // Sensor 0 and sensor 1 boot with the exact same fragment — only the
+    // sensor-id differs (identical starting point for the auto algorithms).
     const CameraConfig cfg{};
     auto launch0 = BuildCaptureLaunch(cfg, kModel, 0, kSink);
     auto launch1 = BuildCaptureLaunch(cfg, kModel, 1, kSink);

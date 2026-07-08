@@ -41,15 +41,21 @@ auto EnvDouble(const char* name, double fallback) -> double {
     }
 }
 
-// Pinned-sensor defaults (metal-tuned 2026-07: both sensors' channel means
-// track within a few counts under any pinned config; AE left free diverged
-// ~48% between the two modules).
-constexpr std::int64_t kDefaultWbMode = 5;  // daylight — fixed CCT, no per-sensor AWB settle
+// Sensor defaults (metal-retuned 2026-07): FULL AUTO. Pinned values render a
+// usable image only in the venue they were dialed for (the pinned daylight/
+// 1/120s/gain-8 set measured ~28-count means + green cast indoors); the camera
+// must work out of the box in ANY venue, so AE and AWB run free by default.
+// Auto AWB also measured the two modules' residual casts nearly identical
+// (channel ratios within ~4%), while a fixed CCT diverges per module — the
+// continuous software auto-WB loop (AutoColorService) then matches both
+// cameras to a shared neutral target downstream. The env knobs below still
+// pin any dimension for experiments/debugging.
+constexpr std::int64_t kDefaultWbMode = 1;  // auto — venue-adaptive AWB
 constexpr std::int64_t kWbModeMin = 0;
 constexpr std::int64_t kWbModeMax = 9;
-constexpr std::int64_t kDefaultExposureNs = 8333333;  // 1/120 s — sports motion
-constexpr double kDefaultGain = 8.0;
-constexpr double kDefaultIspDigitalGain = 1.0;  // no digital shadow lift — keeps contrast
+constexpr std::int64_t kDefaultExposureNs = 0;  // 0 = AE free (auto exposure)
+constexpr double kDefaultGain = 0.0;            // 0 = auto analog gain
+constexpr double kDefaultIspDigitalGain = 0.0;  // 0 = auto ISP digital gain
 
 }  // namespace
 
