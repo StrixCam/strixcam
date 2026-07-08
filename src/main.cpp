@@ -50,6 +50,7 @@
 #include "app/network/services/uplink-manager/uplink-manager.hpp"
 #include "app/overlay/services/overlay_controller/overlay-controller.hpp"
 #include "app/pipeline/services/orchestrator/pipeline-orchestrator.hpp"
+#include "app/processing/services/auto-color/auto-color-service.hpp"
 #include "app/session/ports/session-manager.hpp"
 #include "app/session/services/session_cleanup/session-cleanup.hpp"
 #include "app/session/services/session_manager/session-manager.hpp"
@@ -66,6 +67,7 @@
 #include "domain/control/utils/advertised-name.hpp"
 #include "domain/decision/models/manual-camera-state.hpp"
 #include "domain/focus/models/focus-state.hpp"
+#include "domain/processing/models/auto-color-state.hpp"
 #include "domain/processing/models/color-calibration-state.hpp"
 #include "domain/processing/models/frame-color-stats.hpp"
 
@@ -309,6 +311,10 @@ auto RunFirmware() -> int {
     // Latest pre-correction frame average — auto-white-balance reads it to compute
     // grey-world gains. Must outlive the postprocessor (moved into the pipeline).
     sst::processing::FrameColorStats frame_color_stats;
+    // Auto-vs-manual color authority: the continuous auto-WB loop runs while
+    // kAuto; a user calibration flips it to kManual (loop stands down) and
+    // SetCameraCalibration(enabled=false) resumes it.
+    sst::processing::AutoColorState auto_color_state;
     auto postprocessor = std::make_unique<sst::adapters::processing::OpenCvPostprocessor>(
         postproc_cfg, &calibration_state, &frame_color_stats);
     // Manual tracking: ManualDecision reads manual_camera_state (declared above,
@@ -359,6 +365,19 @@ auto RunFirmware() -> int {
             return recording_service.CurrentState() != sst::storage::RecordingState::kIdle;
         });
 
+    // ── Continuous auto white-balance ──────────────────────────────────
+    // Out-of-the-box color in any venue: the sensors boot full-auto (AE +
+    // AWB — see capture-launch), and this low-rate loop pulls each camera's
+    // postprocess WB gains toward one SHARED grey-world target so the two
+    // modules stay matched in whatever light they are in. Damping + dead-band
+    // make it converge over tens of seconds and never visibly pump. Manual
+    // calibration preempts it (auto_color_state above). Same lifetime rules
+    // as the AF loop: declared after the pipeline so it is joined first.
+    sst::processing::AutoColorService auto_color(
+        pipeline, calibration_state, auto_color_state, [&pipeline](std::size_t camera_index) {
+            return pipeline.CameraHealthStatus(camera_index);
+        });
+
     // ── System stats (telemetry source) ────────────────────────────────
     sst::adapters::control::ProcSystemStats system_stats(video_root);
 
@@ -393,6 +412,7 @@ auto RunFirmware() -> int {
                                                      .preview_layout_state = preview_layout_state,
                                                      .calibration_state = calibration_state,
                                                      .frame_color_stats = frame_color_stats,
+                                                     .auto_color_state = auto_color_state,
                                                      .focuser = focuser,
                                                      .focus_state = focus_state});
 
@@ -412,9 +432,11 @@ auto RunFirmware() -> int {
         return 1;
     }
     autofocus.Start();
+    auto_color.Start();
     ble_transport.Start();
     if (!ble_transport.IsRunning()) {
         spdlog::error("BLE transport failed to start — aborting");
+        auto_color.Stop();
         autofocus.Stop();
         pipeline.Stop();
         return 1;
@@ -447,6 +469,7 @@ auto RunFirmware() -> int {
         http_download_server.Stop();
         ble_transport.Stop();
         session_manager.FinalizeSession(sst::session::SessionEndReason::kAppStop);
+        auto_color.Stop();
         autofocus.Stop();
         pipeline.Stop();
         return 1;
@@ -464,8 +487,9 @@ auto RunFirmware() -> int {
     // recorder, so the MP4 is EOSed with its last frames (a disconnect no
     // longer finalizes — sessions outlive connections).
     session_manager.FinalizeSession(sst::session::SessionEndReason::kAppStop);
-    // Stop the AF loop before the pipeline: its sample grabs tap the producer
-    // threads the pipeline is about to join.
+    // Stop the AF + auto-color loops before the pipeline: their sample grabs
+    // tap the producer threads the pipeline is about to join.
+    auto_color.Stop();
     autofocus.Stop();
     pipeline.Stop();
     return 0;

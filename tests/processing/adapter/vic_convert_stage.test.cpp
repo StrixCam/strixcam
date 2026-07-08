@@ -79,8 +79,8 @@ TEST(VicConvertStageTest, PostprocessorOutputMatchesSoftwarePath) {
     auto frame = MakeNv12Frame(64, 64, 128, 128, 128);
     const CropRect full{0, 0, 64, 64};
 
-    auto vic_out = with_vic.Process(frame, full);
-    auto sw_out = software.Process(frame, full);
+    auto vic_out = with_vic.Process(frame, full, 0);
+    auto sw_out = software.Process(frame, full, 0);
     if (!vic_out || !sw_out) {
         FAIL() << "Process returned nullopt";
         return;

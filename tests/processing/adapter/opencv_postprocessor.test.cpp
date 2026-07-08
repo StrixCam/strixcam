@@ -37,16 +37,16 @@ constexpr auto PixelOffset(std::size_t col, std::size_t row, std::size_t width,
 
 TEST(OpenCvPostprocessorTest, RejectsNonNv12) {
     OpenCvPostprocessor post{PostprocessConfig{.output_width = 32, .output_height = 32}};
-    auto out = post.Process(MakeBgr8Frame(64, 64, 0, 0, 0), CropRect{0, 0, 32, 32});
+    auto out = post.Process(MakeBgr8Frame(64, 64, 0, 0, 0), CropRect{0, 0, 32, 32}, 0);
     EXPECT_FALSE(out.has_value());
 }
 
 TEST(OpenCvPostprocessorTest, RejectsOutOfBoundsCrop) {
     OpenCvPostprocessor post{PostprocessConfig{.output_width = 32, .output_height = 32}};
     auto src = MakeNv12Frame(100, 100, 128, 128, 128);
-    EXPECT_FALSE(post.Process(src, CropRect{80, 80, 40, 40}).has_value());
-    EXPECT_FALSE(post.Process(src, CropRect{0, 0, 0, 0}).has_value());
-    EXPECT_FALSE(post.Process(src, CropRect{0, 0, 101, 100}).has_value());
+    EXPECT_FALSE(post.Process(src, CropRect{80, 80, 40, 40}, 0).has_value());
+    EXPECT_FALSE(post.Process(src, CropRect{0, 0, 0, 0}, 0).has_value());
+    EXPECT_FALSE(post.Process(src, CropRect{0, 0, 101, 100}, 0).has_value());
 }
 
 TEST(OpenCvPostprocessorTest, CropAndResizeProducesExpectedDimsAndFormat) {
@@ -55,7 +55,7 @@ TEST(OpenCvPostprocessorTest, CropAndResizeProducesExpectedDimsAndFormat) {
     // Red-ish in YUV (BT.601): Y=76, U=84, V=255.
     auto src = MakeNv12Frame(200, 200, /*luma=*/76, /*chroma_u=*/84, /*chroma_v=*/255);
 
-    auto out = post.Process(src, CropRect{0, 0, 100, 100});
+    auto out = post.Process(src, CropRect{0, 0, 100, 100}, 0);
     if (!out) {
         FAIL() << "Process returned nullopt";
         return;
@@ -79,8 +79,8 @@ TEST(OpenCvPostprocessorTest, RespectsSourceStride) {
     auto strided = MakeNv12Frame(64, 64, 100, 128, 128, /*stride=*/96);
     auto contig = MakeNv12Frame(64, 64, 100, 128, 128);
 
-    auto out_strided = post.Process(strided, CropRect{0, 0, 32, 32});
-    auto out_contig = post.Process(contig, CropRect{0, 0, 32, 32});
+    auto out_strided = post.Process(strided, CropRect{0, 0, 32, 32}, 0);
+    auto out_contig = post.Process(contig, CropRect{0, 0, 32, 32}, 0);
 
     if (!out_strided) {
         FAIL() << "Process(strided) returned nullopt";
@@ -108,7 +108,7 @@ TEST(OpenCvPostprocessorTest, OutputFrameOwnsBuffer) {
         .output_width = 16, .output_height = 16, .color_correction = {.enabled = false}}};
     auto out = [&] {
         auto src = MakeNv12Frame(64, 64, 200, 128, 128);
-        return post.Process(src, CropRect{0, 0, 32, 32});
+        return post.Process(src, CropRect{0, 0, 32, 32}, 0);
     }();
 
     if (!out) {
@@ -125,7 +125,7 @@ TEST(OpenCvPostprocessorTest, OutputFrameOwnsBuffer) {
 TEST(OpenCvPostprocessorTest, OutputFormatGray8) {
     OpenCvPostprocessor post{PostprocessConfig{
         .output_width = 16, .output_height = 16, .output_format = sst::common::PixelFormat::GRAY8}};
-    auto out = post.Process(MakeNv12Frame(64, 64, 200, 128, 128), CropRect{0, 0, 32, 32});
+    auto out = post.Process(MakeNv12Frame(64, 64, 200, 128, 128), CropRect{0, 0, 32, 32}, 0);
 
     if (!out) {
         FAIL() << "Process returned nullopt";
@@ -141,7 +141,7 @@ TEST(OpenCvPostprocessorTest, MetadataPropagated) {
     OpenCvPostprocessor post{PostprocessConfig{.output_width = 16, .output_height = 16}};
     auto src = MakeNv12Frame(64, 64, 100, 128, 128, /*stride=*/0, /*frame_id=*/0xCAFE);
 
-    auto out = post.Process(src, CropRect{0, 0, 32, 32});
+    auto out = post.Process(src, CropRect{0, 0, 32, 32}, 0);
     if (!out) {
         FAIL() << "Process returned nullopt";
         return;
@@ -161,8 +161,8 @@ TEST(OpenCvPostprocessorTest, ColorCorrectionAppliesPerChannelGain) {
     PostprocessConfig enabled{.output_width = 32, .output_height = 32};
     enabled.color_correction = {.enabled = true, .r_gain = 0.5F, .g_gain = 1.0F, .b_gain = 0.5F};
 
-    auto out_off = OpenCvPostprocessor{off}.Process(src, CropRect{0, 0, 64, 64});
-    auto out_on = OpenCvPostprocessor{enabled}.Process(src, CropRect{0, 0, 64, 64});
+    auto out_off = OpenCvPostprocessor{off}.Process(src, CropRect{0, 0, 64, 64}, 0);
+    auto out_on = OpenCvPostprocessor{enabled}.Process(src, CropRect{0, 0, 64, 64}, 0);
     ASSERT_TRUE(out_off.has_value());
     ASSERT_TRUE(out_on.has_value());
 
@@ -185,7 +185,7 @@ TEST(OpenCvPostprocessorTest, LiveCalibrationStateOverridesConfigAndUpdates) {
         {.r = 0.5F, .g = 1.0F, .b = 0.5F, .enabled = true});
     OpenCvPostprocessor post{PostprocessConfig{.output_width = 32, .output_height = 32}, &calib};
 
-    auto out = post.Process(src, CropRect{0, 0, 64, 64});
+    auto out = post.Process(src, CropRect{0, 0, 64, 64}, 0);
     ASSERT_TRUE(out.has_value());
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE(out.has_value())
     const auto* pix = out->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
@@ -194,7 +194,7 @@ TEST(OpenCvPostprocessorTest, LiveCalibrationStateOverridesConfigAndUpdates) {
     EXPECT_GT(pix[1], 110);  // G ~unchanged
 
     calib.Set({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = true});  // sliders back to identity
-    auto out2 = post.Process(src, CropRect{0, 0, 64, 64});
+    auto out2 = post.Process(src, CropRect{0, 0, 64, 64}, 0);
     ASSERT_TRUE(out2.has_value());
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE(out2.has_value())
     const auto* pix2 = out2->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);
@@ -214,7 +214,7 @@ TEST(OpenCvPostprocessorTest, SaturationZeroProducesGreyscale) {
                                                   .brightness = 0.0F});
     OpenCvPostprocessor post{PostprocessConfig{.output_width = 32, .output_height = 32}, &calib};
 
-    auto out = post.Process(src, CropRect{0, 0, 64, 64});
+    auto out = post.Process(src, CropRect{0, 0, 64, 64}, 0);
     ASSERT_TRUE(out.has_value());
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE(out.has_value())
     const auto* pix = out->planes[0].data + PixelOffset(16, 16, 32, kBgrChannels);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <memory>
 #include <optional>
 
@@ -39,8 +40,8 @@ class OpenCvPostprocessor final : public sst::processing::IPostprocessor {
     OpenCvPostprocessor(OpenCvPostprocessor&&) = delete;
     auto operator=(OpenCvPostprocessor&&) -> OpenCvPostprocessor& = delete;
 
-    auto Process(const sst::capture::Frame& source, const sst::processing::CropRect& crop)
-        -> std::optional<sst::capture::Frame> override;
+    auto Process(const sst::capture::Frame& source, const sst::processing::CropRect& crop,
+                 std::size_t camera_index) -> std::optional<sst::capture::Frame> override;
 
    private:
     sst::processing::PostprocessConfig config_;

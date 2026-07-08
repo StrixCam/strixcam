@@ -99,8 +99,8 @@ OpenCvPostprocessor::OpenCvPostprocessor(sst::processing::PostprocessConfig conf
 OpenCvPostprocessor::~OpenCvPostprocessor() = default;
 
 auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
-                                  const sst::processing::CropRect& crop)
-    -> std::optional<sst::capture::Frame> {
+                                  const sst::processing::CropRect& crop,
+                                  std::size_t camera_index) -> std::optional<sst::capture::Frame> {
     if (source.format != sst::common::PixelFormat::NV12) {
         spdlog::warn("OpenCvPostprocessor: unsupported source format (only NV12 is supported)");
         return std::nullopt;
@@ -171,11 +171,12 @@ auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
     }
 
     // Calibration (WB gains, saturation, contrast, brightness) — see
-    // ApplyColorCalibration above. Live gains from the calibration state
-    // (diagnostic sliders) win over the static config when wired.
+    // ApplyColorCalibration above. Live PER-CAMERA gains from the calibration
+    // state (auto-WB loop / diagnostic sliders) win over the static config
+    // when wired.
     const auto white_balance =
         (calibration_ != nullptr)
-            ? calibration_->Get()
+            ? calibration_->Get(camera_index)
             : sst::processing::ColorCalibrationState::Gains{
                   config_.color_correction.r_gain, config_.color_correction.g_gain,
                   config_.color_correction.b_gain, config_.color_correction.enabled};

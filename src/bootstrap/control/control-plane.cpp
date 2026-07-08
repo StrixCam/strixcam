@@ -150,10 +150,10 @@ auto RegisterControlPlane(sst::control::CommandDispatcher& dispatcher, const Con
     dispatcher.Register(std::make_shared<sst::control::PreviewLayoutHandler>(
         deps.preview_layout_state, sst::runtime_defaults::kOverlayWidth,
         sst::runtime_defaults::kOverlayHeight));
-    dispatcher.Register(
-        std::make_shared<sst::control::CameraCalibrationHandler>(deps.calibration_state));
+    dispatcher.Register(std::make_shared<sst::control::CameraCalibrationHandler>(
+        deps.calibration_state, deps.auto_color_state));
     dispatcher.Register(std::make_shared<sst::control::AutoWhiteBalanceHandler>(
-        deps.frame_color_stats, deps.calibration_state));
+        deps.frame_color_stats, deps.calibration_state, deps.auto_color_state));
     dispatcher.Register(
         std::make_shared<sst::control::CameraFocusHandler>(deps.focuser, deps.focus_state));
     dispatcher.Register(

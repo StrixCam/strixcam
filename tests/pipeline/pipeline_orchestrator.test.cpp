@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -154,7 +155,8 @@ class FakePreprocessor final : public IPreprocessor {
 
 class FakePostprocessor final : public IPostprocessor {
    public:
-    auto Process(const Frame& source, const CropRect& crop) -> std::optional<Frame> override {
+    auto Process(const Frame& source, const CropRect& crop,
+                 std::size_t /*camera_index*/) -> std::optional<Frame> override {
         std::lock_guard lock(mtx_);
         ++process_calls;
         last_crop = crop;
@@ -1074,6 +1076,41 @@ TEST(PipelineOrchestratorTest, GrabCameraFrameTapsTheRequestedCamerasProducerPat
     ASSERT_TRUE(cam1.has_value());
     // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
     EXPECT_EQ(cam1->geometry.width, kCam1Dims.width);
+}
+
+// The tap is shared by TWO samplers on metal (the AF loop and the auto-color
+// loop). The publication is a broadcast: concurrent grabs on the SAME camera
+// must BOTH be served — the original single-sample hand-off let one waiter
+// steal the other's sample, starving whichever loop kept losing the race.
+TEST(PipelineOrchestratorTest, ConcurrentGrabsOnOneCameraAreBothServed) {
+    CountingSink record_sink;
+    CountingSink sink;
+    PipelineOrchestrator orchestrator(
+        OneCamera(std::make_unique<FakeCapture>(kCam0Dims), std::make_unique<FakePreprocessor>()),
+        std::make_unique<FakePostprocessor>(), std::make_unique<StaticDecision>(), record_sink,
+        sink, FastConfig());
+    ASSERT_TRUE(orchestrator.Start());
+
+    constexpr auto kGrabTimeout = std::chrono::seconds(5);  // qemu headroom
+    constexpr int kRounds = 5;
+    int hits_a = 0;
+    int hits_b = 0;
+    for (int round = 0; round < kRounds; ++round) {
+        std::optional<sst::capture::Frame> got_a;
+        std::thread rival([&] { got_a = orchestrator.GrabCameraFrame(0, kGrabTimeout); });
+        if (orchestrator.GrabCameraFrame(0, kGrabTimeout).has_value()) {
+            ++hits_b;
+        }
+        rival.join();
+        if (got_a.has_value()) {
+            ++hits_a;
+        }
+    }
+    orchestrator.Stop();
+
+    // Every round serves BOTH grabbers — no starvation, no stolen samples.
+    EXPECT_EQ(hits_a, kRounds);
+    EXPECT_EQ(hits_b, kRounds);
 }
 
 // U6 autofocus tap edges: an out-of-range camera and a stalled camera both

@@ -29,8 +29,9 @@ auto Clamp(float gain) -> float { return std::clamp(gain, kMinGain, kMaxGain); }
 }  // namespace
 
 AutoWhiteBalanceHandler::AutoWhiteBalanceHandler(
-    sst::processing::FrameColorStats& stats, sst::processing::ColorCalibrationState& calibration)
-    : stats_(stats), calibration_(calibration) {}
+    sst::processing::FrameColorStats& stats, sst::processing::ColorCalibrationState& calibration,
+    sst::processing::AutoColorState& auto_color)
+    : stats_(stats), calibration_(calibration), auto_color_(auto_color) {}
 
 auto AutoWhiteBalanceHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kAutoWhiteBalance};
@@ -71,6 +72,9 @@ auto AutoWhiteBalanceHandler::Handle(const sst_cam::Command& /*cmd*/) -> sst_cam
             std::clamp((kTargetLuma - post_luma) / 255.0F, kMinBrightness, kMaxBrightness);
 
         calibration_.Set(gains);
+        // A one-shot result is a user override: hold it — pause the continuous
+        // auto-WB loop (SetCameraCalibration enabled=false resumes it).
+        auto_color_.SetMode(sst::processing::AutoColorMode::kManual);
         spdlog::info(
             "Auto color: means B={:.1f} G={:.1f} R={:.1f} spread={:.1f} -> R={:.3f} G={:.3f} "
             "B={:.3f} sat={:.2f} con={:.2f} bri={:.2f}",

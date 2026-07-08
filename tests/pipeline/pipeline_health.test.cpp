@@ -148,7 +148,8 @@ class PassPreprocessor final : public IPreprocessor {
 
 class PassPostprocessor final : public IPostprocessor {
    public:
-    auto Process(const Frame& source, const CropRect& /*crop*/) -> std::optional<Frame> override {
+    auto Process(const Frame& source, const CropRect& /*crop*/,
+                 std::size_t /*camera_index*/) -> std::optional<Frame> override {
         return source;
     }
 };

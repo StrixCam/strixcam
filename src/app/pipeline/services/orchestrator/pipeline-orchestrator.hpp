@@ -256,16 +256,23 @@ class PipelineOrchestrator final : public sst::pipeline::IFrameSnapshotSource,
     // we size the vector at construction from the camera count.
     std::vector<std::unique_ptr<sst::buffer::LatestOnlySlot<sst::processing::FrameBundle>>> slots_;
 
-    // Per-camera on-request producer tap (U6 autofocus). GrabCameraFrame arms
-    // `requested`; the producer — right after materializing, so the shared
-    // pixels are an owned vector, never a pinned GstBuffer — checks it with one
-    // relaxed load per frame and, only when armed, publishes a descriptor copy
-    // under the slot mutex and notifies. unique_ptr because the sync members
-    // are non-movable and the vector is sized at construction.
+    // Per-camera on-request producer tap (U6 autofocus + auto-color). A
+    // GrabCameraFrame registers as a waiter; the producer — right after
+    // materializing, so the shared pixels are an owned vector, never a pinned
+    // GstBuffer — checks the waiter count with one relaxed load per frame and,
+    // only when someone waits, publishes a descriptor copy under the slot
+    // mutex and notifies. The publication is a BROADCAST with a generation
+    // counter: every concurrent waiter observes the generation tick and takes
+    // its own descriptor copy, so two samplers (the AF loop and the auto-color
+    // loop) can never steal each other's sample (the original single-sample
+    // hand-off starved whichever waiter lost the wake-up race — metal-observed
+    // as one camera's color samples missing most ticks). unique_ptr because
+    // the sync members are non-movable and the vector is sized at construction.
     struct FrameTapSlot {
         std::mutex mtx;
         std::condition_variable cv;
-        std::atomic<bool> requested{false};
+        std::atomic<int> waiters{0};
+        std::uint64_t generation{0};
         std::optional<sst::capture::Frame> sample;
     };
     std::vector<std::unique_ptr<FrameTapSlot>> tap_slots_;

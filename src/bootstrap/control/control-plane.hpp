@@ -27,6 +27,7 @@
 #include "domain/config/models/uplink-config.hpp"
 #include "domain/decision/models/manual-camera-state.hpp"
 #include "domain/focus/models/focus-state.hpp"
+#include "domain/processing/models/auto-color-state.hpp"
 #include "domain/processing/models/color-calibration-state.hpp"
 #include "domain/processing/models/frame-color-stats.hpp"
 #include "domain/streaming/models/preview-layout.hpp"
@@ -61,6 +62,7 @@ struct ControlPlaneDeps {
     sst::streaming::PreviewLayoutState& preview_layout_state;
     sst::processing::ColorCalibrationState& calibration_state;
     sst::processing::FrameColorStats& frame_color_stats;
+    sst::processing::AutoColorState& auto_color_state;
     sst::focus::IFocuser& focuser;
     sst::focus::FocusState& focus_state;
 };

@@ -4,8 +4,9 @@
 
 namespace sst::control {
 
-CameraCalibrationHandler::CameraCalibrationHandler(sst::processing::ColorCalibrationState& state)
-    : state_(state) {}
+CameraCalibrationHandler::CameraCalibrationHandler(sst::processing::ColorCalibrationState& state,
+                                                   sst::processing::AutoColorState& auto_color)
+    : state_(state), auto_color_(auto_color) {}
 
 auto CameraCalibrationHandler::HandledCases() const -> std::vector<sst_cam::Command::PayloadCase> {
     return {sst_cam::Command::kSetCameraCalibration};
@@ -25,6 +26,15 @@ auto CameraCalibrationHandler::Handle(const sst_cam::Command& cmd) -> sst_cam::C
         .contrast = req.contrast() > 0.0F ? req.contrast() : 1.0F,
         .brightness = req.brightness()};
     state_.Set(gains);
+    // Auto-vs-manual authority (same discipline as manual focus preemption):
+    // enabled=true is a user override — the continuous auto-WB loop stands
+    // down and these values HOLD; enabled=false resumes the loop.
+    const auto mode = gains.enabled ? sst::processing::AutoColorMode::kManual
+                                    : sst::processing::AutoColorMode::kAuto;
+    auto_color_.SetMode(mode);
+    spdlog::info("Camera calibration: auto-WB loop {}",
+                 mode == sst::processing::AutoColorMode::kManual ? "paused (manual override)"
+                                                                 : "resumed (auto)");
     // Logged so a dialed-in setting can be read from the console + persisted as
     // the shipping default.
     spdlog::info(

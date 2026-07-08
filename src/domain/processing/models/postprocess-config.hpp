@@ -10,13 +10,16 @@ namespace sst::processing {
 inline constexpr std::uint32_t kDefaultOutputWidth{1280};
 inline constexpr std::uint32_t kDefaultOutputHeight{720};
 
-// Shipping defaults, dialed in on-device against the ArduCAM RBPCV3 IMX477.
-// WB gains neutralize the magenta; the tone values fix the washed-out look.
-// Override any of them at boot via SST_WB_{R,G,B}GAIN / SST_SATURATION /
-// SST_CONTRAST / SST_BRIGHTNESS.
-inline constexpr float kDefaultRGain{0.86F};
-inline constexpr float kDefaultGGain{0.94F};
-inline constexpr float kDefaultBGain{0.84F};
+// Shipping defaults. The R/G/B gains seed NEUTRAL (1.0): the continuous
+// auto-WB loop (AutoColorService) owns them at runtime, converging each
+// camera toward a shared grey-world target in whatever venue light it boots
+// into — a venue-specific baked cast correction would fight it. The tone
+// values (dialed on-device against the ArduCAM RBPCV3 IMX477) fix the
+// washed-out look and stay applied on top. Override any of them at boot via
+// SST_WB_{R,G,B}GAIN / SST_SATURATION / SST_CONTRAST / SST_BRIGHTNESS.
+inline constexpr float kDefaultRGain{1.0F};
+inline constexpr float kDefaultGGain{1.0F};
+inline constexpr float kDefaultBGain{1.0F};
 inline constexpr float kDefaultSaturation{1.10F};
 inline constexpr float kDefaultContrast{1.20F};
 inline constexpr float kDefaultBrightness{-0.05F};

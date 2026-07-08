@@ -1,13 +1,18 @@
 #include <gtest/gtest.h>
 
+#include <cstddef>
+
 #include "app/control/services/handlers/auto-white-balance.handler.hpp"
 #include "bluetooth.pb.h"
+#include "domain/processing/models/auto-color-state.hpp"
 #include "domain/processing/models/color-calibration-state.hpp"
 #include "domain/processing/models/frame-color-stats.hpp"
 
 namespace {
 
 using sst::control::AutoWhiteBalanceHandler;
+using sst::processing::AutoColorMode;
+using sst::processing::AutoColorState;
 using sst::processing::ColorCalibrationState;
 using sst::processing::FrameColorStats;
 
@@ -22,7 +27,8 @@ TEST(AutoWhiteBalanceHandlerTest, ComputesGreyWorldGainsFromMagentaFrame) {
     // NOLINTNEXTLINE(readability-magic-numbers) — self-evident test channel means (B, G, R, spread)
     stats.Set(100.0F, 40.0F, 100.0F, 50.0F);  // B, G, R, spread — magenta (R=B=2.5×G)
     ColorCalibrationState calib({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = false});
-    AutoWhiteBalanceHandler handler(stats, calib);
+    AutoColorState auto_color;
+    AutoWhiteBalanceHandler handler(stats, calib, auto_color);
 
     const auto resp = handler.Handle(AutoWbCommand());
 
@@ -38,11 +44,15 @@ TEST(AutoWhiteBalanceHandlerTest, ComputesGreyWorldGainsFromMagentaFrame) {
     EXPECT_GE(resp.camera_calibration().contrast(), 0.9F);
     EXPECT_LE(resp.camera_calibration().contrast(), 1.5F);
 
-    // Applied live to the shared state.
-    const auto gains = calib.Get();
-    EXPECT_NEAR(gains.r, 0.4F, 0.01F);
-    EXPECT_TRUE(gains.enabled);
-    EXPECT_FLOAT_EQ(gains.saturation, 1.25F);
+    // Applied live to the shared state — every camera — and held: the one-shot
+    // is a user override, so the continuous auto-WB loop stands down.
+    for (std::size_t camera = 0; camera < ColorCalibrationState::kCameras; ++camera) {
+        const auto gains = calib.Get(camera);
+        EXPECT_NEAR(gains.r, 0.4F, 0.01F);
+        EXPECT_TRUE(gains.enabled);
+        EXPECT_FLOAT_EQ(gains.saturation, 1.25F);
+    }
+    EXPECT_EQ(auto_color.Mode(), AutoColorMode::kManual);
 }
 
 TEST(AutoWhiteBalanceHandlerTest, ClampsExtremeGainToSliderRange) {
@@ -51,7 +61,8 @@ TEST(AutoWhiteBalanceHandlerTest, ClampsExtremeGainToSliderRange) {
     // NOLINTNEXTLINE(readability-magic-numbers)
     stats.Set(100.0F, 40.0F, 400.0F, 50.0F);  // R hugely dominant → gR = 0.1 → clamp 0.3
     ColorCalibrationState calib({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = false});
-    AutoWhiteBalanceHandler handler(stats, calib);
+    AutoColorState auto_color;
+    AutoWhiteBalanceHandler handler(stats, calib, auto_color);
 
     const auto resp = handler.Handle(AutoWbCommand());
     EXPECT_FLOAT_EQ(resp.camera_calibration().r_gain(), 0.3F);
@@ -61,7 +72,8 @@ TEST(AutoWhiteBalanceHandlerTest, DarkOrNoSampleFrameKeepsCurrentGains) {
     FrameColorStats stats;  // never Set → invalid
     // NOLINTNEXTLINE(readability-magic-numbers) — self-evident preset current gains (r, g, b)
     ColorCalibrationState calib({.r = 0.7F, .g = 1.0F, .b = 0.8F, .enabled = true});
-    AutoWhiteBalanceHandler handler(stats, calib);
+    AutoColorState auto_color;
+    AutoWhiteBalanceHandler handler(stats, calib, auto_color);
 
     const auto resp = handler.Handle(AutoWbCommand());
     // No usable sample → current gains preserved, not overwritten with garbage.
@@ -72,7 +84,8 @@ TEST(AutoWhiteBalanceHandlerTest, DarkOrNoSampleFrameKeepsCurrentGains) {
 TEST(AutoWhiteBalanceHandlerTest, HandledCasesMatchesCommand) {
     FrameColorStats stats;
     ColorCalibrationState calib({.r = 1.0F, .g = 1.0F, .b = 1.0F, .enabled = true});
-    AutoWhiteBalanceHandler handler(stats, calib);
+    AutoColorState auto_color;
+    AutoWhiteBalanceHandler handler(stats, calib, auto_color);
     const auto cases = handler.HandledCases();
     ASSERT_EQ(cases.size(), 1U);
     EXPECT_EQ(cases[0], sst_cam::Command::kAutoWhiteBalance);

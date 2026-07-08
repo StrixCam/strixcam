@@ -310,7 +310,8 @@ auto PipelineOrchestrator::ConsumerLoop() -> void {
         }
 
         const auto& chosen = *chosen_slot;
-        auto final_frame = postprocessor_->Process(chosen.source_frame, choice->crop);
+        auto final_frame =
+            postprocessor_->Process(chosen.source_frame, choice->crop, choice->camera_index);
         if (!final_frame) {
             continue;
         }
@@ -396,7 +397,8 @@ auto PipelineOrchestrator::BuildSideBySideFrame(
                 .y = 0,
                 .width = other_slot->source_frame.geometry.width,
                 .height = other_slot->source_frame.geometry.height};
-            if (auto other = postprocessor_->Process(other_slot->source_frame, full_frame)) {
+            if (auto other =
+                    postprocessor_->Process(other_slot->source_frame, full_frame, other_index)) {
                 hold.last_other_pane = std::move(*other);
                 hold.other_pane_index = other_index;
                 if (auto composite =
@@ -476,13 +478,13 @@ auto PipelineOrchestrator::GrabLatest() -> std::optional<sst::capture::Frame> {
 
 auto PipelineOrchestrator::ServeFrameTap(FrameTapSlot& tap,
                                          const sst::capture::Frame& frame) -> void {
-    if (!tap.requested.load(std::memory_order_relaxed)) {
+    if (tap.waiters.load(std::memory_order_relaxed) <= 0) {
         return;
     }
     {
         const std::lock_guard tap_lock(tap.mtx);
         tap.sample = frame;
-        tap.requested.store(false, std::memory_order_relaxed);
+        ++tap.generation;
     }
     tap.cv.notify_all();
 }
@@ -495,13 +497,26 @@ auto PipelineOrchestrator::GrabCameraFrame(std::size_t camera_index,
     }
     auto& tap = *tap_slots_[camera_index];
     std::unique_lock lock(tap.mtx);
-    tap.sample.reset();  // discard any sample a timed-out earlier grab left behind
-    tap.requested.store(true, std::memory_order_relaxed);
-    tap.cv.wait_for(lock, timeout, [this, &tap] { return tap.sample.has_value() || !running_; });
-    tap.requested.store(false, std::memory_order_relaxed);
-    auto sample = std::move(tap.sample);
-    tap.sample.reset();
-    return sample;
+    // Broadcast hand-off: wait for the generation to tick past what we joined
+    // at, then take our own descriptor copy. Every concurrent waiter sees the
+    // same publication, so multiple samplers (AF + auto-color) never race for
+    // a single slot value.
+    const std::uint64_t joined_at = tap.generation;
+    tap.waiters.fetch_add(1, std::memory_order_relaxed);
+    const bool served = tap.cv.wait_for(lock, timeout, [this, &tap, joined_at] {
+        return tap.generation != joined_at || !running_;
+    });
+    const bool last_waiter = tap.waiters.fetch_sub(1, std::memory_order_relaxed) == 1;
+    std::optional<sst::capture::Frame> sample;
+    if (served && tap.generation != joined_at) {
+        sample = tap.sample;
+    }
+    if (last_waiter) {
+        // Don't pin the published frame's pixels past the last interested
+        // grab — the next publication would otherwise be the only release.
+        tap.sample.reset();
+    }
+    return sample;  // descriptor copy — pixels shared via the owner ptr
 }
 
 }  // namespace sst::pipeline
