@@ -11,19 +11,18 @@
 
 #include <chrono>
 #include <cstdint>
-#include <cstdlib>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "./capture-launch.hpp"
 #include "app/capture/ports/frame-src.hpp"
 #include "domain/capture/models/camera-config.hpp"
 #include "domain/common/models/memory-type.hpp"
 #include "domain/common/models/pixel-format.hpp"
 #include "domain/common/utils/get-timestamp.hpp"
-#include "domain/config/utils/parse-model-version.hpp"
 
 namespace sst::capture {
 
@@ -40,67 +39,10 @@ GStreamerAdapter::GStreamerAdapter(const CameraConfig& camera_config, std::strin
 }
 
 auto GStreamerAdapter::CreatePipeline() -> std::string {
-    const std::string sensor_id = std::to_string(camera_index_);
-    const std::string width = std::to_string(camera_config_.width);
-    const std::string height = std::to_string(camera_config_.height);
-    const std::string fps = std::to_string(camera_config_.fps);
-    const std::string format = sst::common::ToString(camera_config_.format);
-
-    const std::optional<int> model_version = sst::config::ParseModelVersion(device_model_);
-    if (!model_version) {
-        spdlog::error("GStreamerAdapter: cannot parse device model '{}'", device_model_);
-        return {};
-    }
-
-    // ISP tuning: hardware temporal-noise-reduction + edge-enhancement to fight
-    // low-light grain (the ArduCAM module's stock .nito has NR mistuned, and JP7.2
-    // blocks retuning). TNR/EE run in the ISP — no CPU cost. Cleaning the noise
-    // also sharpens the H.264 output: x264 ultrafast stops spending bits on random
-    // noise. One env var overrides the whole fragment so it can be dialed on-device
-    // without a rebuild (e.g. lower TNR if fast motion smears).
-    const char* isp_env = std::getenv("SST_ISP_TUNING");
-    const std::string isp_tuning =
-        (isp_env != nullptr) ? isp_env : "tnr-mode=2 tnr-strength=0.5 ee-mode=1 ee-strength=0.4";
-
-    // Downstream frame-rate cap. The IMX477 only offers 1080p at 60fps (no 1080p30
-    // sensor mode), so the sensor is driven at camera_config_.fps, but the whole
-    // CPU-side pipeline — NV12->BGR postprocess (per camera), record x264, preview
-    // x264 and the raw proxy — pays per delivered frame. At 60fps x2 cameras that
-    // saturates the 6-core Orin Nano and every encoder starves (0-byte record,
-    // blank preview). videorate drops to the target rate right after capture so the
-    // expensive stages only see 30fps. Env-tunable so it can be raised on-device
-    // once headroom is measured; never exceeds the sensor rate.
-    constexpr int kDefaultPipelineFps = 30;
-    const char* fps_env = std::getenv("SST_PIPELINE_FPS");
-    int pipeline_fps = (fps_env != nullptr) ? std::atoi(fps_env) : kDefaultPipelineFps;
-    if (pipeline_fps <= 0 || pipeline_fps > camera_config_.fps) {
-        pipeline_fps = camera_config_.fps;
-    }
-    const std::string out_fps = std::to_string(pipeline_fps);
-
-    std::string gst_pipeline;
-    switch (*model_version) {
-        case 1:
-            gst_pipeline = "nvarguscamerasrc sensor-id=" + sensor_id + " " + isp_tuning +
-                           " ! video/x-raw(memory:NVMM),width=" + width + ",height=" + height +
-                           ",framerate=" + fps + "/1,format=NV12" +
-                           " ! nvvidconv"
-                           " ! video/x-raw,format=" +
-                           format + " ! videorate drop-only=true max-rate=" + out_fps +
-                           " ! video/x-raw,framerate=" + out_fps + "/1" +
-                           " ! appsink name=" + gst_sink_name_ + " sync=false";
-            break;
-        default:
-            spdlog::error("GStreamerAdapter: unsupported device model '{}' (v{})", device_model_,
-                          *model_version);
-            return {};
-    }
-
-    spdlog::info("GStreamerAdapter: sensor={} model={} format={} {}x{}@{}fps", sensor_id,
-                 device_model_, format, width, height, fps);
-    spdlog::info("GStreamerAdapter: pipeline: {}", gst_pipeline);
-
-    return gst_pipeline;
+    // Pure string building lives in capture-launch.cpp (unit-testable without
+    // hardware): deterministic pinned AWB/AE color init + ISP TNR/EE tuning +
+    // the videorate pipeline-fps cap, each env-tunable.
+    return BuildCaptureLaunch(camera_config_, device_model_, camera_index_, gst_sink_name_);
 }
 
 auto GStreamerAdapter::CleanupPipeline() -> void {
