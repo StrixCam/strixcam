@@ -22,9 +22,11 @@ namespace sst::adapters::control {
 // BlueZ-via-D-Bus BLE peripheral transport. On Start():
 //   1. Connect to the system bus.
 //   2. Build a GattApplication exposing one service + command/response chars.
-//   3. Register an LEAdvertisement1 object so BlueZ broadcasts the device name.
-//   4. Call RegisterAdvertisement and RegisterApplication on org.bluez/<adapter>.
-//   5. Start the connection's async event loop on an internal thread.
+//   3. Subscribe to Device1 PropertiesChanged (Connected=false = abrupt
+//      central loss — a force-killed app sends no StopNotify).
+//   4. Register an LEAdvertisement1 object so BlueZ broadcasts the device name.
+//   5. Call RegisterAdvertisement and RegisterApplication on org.bluez/<adapter>.
+//   6. Start the connection's async event loop on an internal thread.
 //
 // On Stop(): unregister advertisement + application, leave the event loop, and
 // drop all D-Bus objects.
@@ -52,24 +54,40 @@ class BluezBleTransport final : public sst::control::IBleTransport {
 
    private:
     auto BuildAdvertisement() -> void;
-    // The central unsubscribed (StopNotify) — BlueZ fires this on disconnect.
-    // Fire on_disconnect_ (session cleanup) and resume advertising so the camera
-    // is discoverable again. Invoked on the D-Bus event-loop thread, so it hands
-    // the (blocking) work to the owned disconnect worker — running it inline
-    // would deadlock the event loop the re-advertise futures depend on.
+    // The central is gone — either it unsubscribed (StopNotify, the graceful
+    // path) or its link dropped without one (Device1 Connected=false via
+    // OnDeviceProperties; a force-killed app sends no StopNotify). Fire
+    // on_disconnect_ (session cleanup) and resume advertising so the camera is
+    // discoverable again. Both signals funnel here and are idempotent through
+    // the supervisor's generation guard. Invoked on the D-Bus event-loop
+    // thread, so it hands the (blocking) work to the owned disconnect worker —
+    // running it inline would deadlock the event loop the re-advertise futures
+    // depend on.
     auto HandleCentralGone() -> void;
+    // Bus-wide PropertiesChanged handler (match rule arg0=org.bluez.Device1):
+    // classifies Connected=false on a device node of our adapter as a central
+    // link drop and feeds HandleCentralGone. Runs on the event-loop thread.
+    auto OnDeviceProperties(sdbus::Message& msg) -> void;
     // Body of the owned disconnect worker thread: waits for tickets queued by
     // HandleCentralGone, delivers each (generation-validated) disconnect and
-    // re-advertises. Started by Start(), joined by Stop() BEFORE the event loop
-    // goes away (its re-advertise futures are serviced by that loop).
+    // re-advertises. Doubles as the advertising watchdog: while no central is
+    // present it re-asserts the advertisement every kAdvRefreshInterval,
+    // because the controller can silently terminate the advertising set
+    // (kernel: "Unexpected advertising set terminated event") while BlueZ
+    // still reports it active — there is no D-Bus signal to react to, so the
+    // advertisement is periodically re-registered rather than trusted.
+    // Started by Start(), joined by Stop() BEFORE the event loop goes away
+    // (its re-advertise futures are serviced by that loop).
     auto DisconnectWorkerLoop() -> void;
     // Joins the worker; returns a still-undelivered ticket (queued disconnect
     // the worker never got to) so Stop() can deliver it synchronously.
     auto StopDisconnectWorker() -> std::optional<std::uint64_t>;
     // Re-register the LE advertisement so BlueZ resumes advertising (it pauses
     // our connectable advert on connect and does not auto-resume on disconnect).
-    // MUST run off the event-loop thread.
-    auto ReAdvertise() -> void;
+    // `from_watchdog` only tunes the success log level (periodic re-asserts log
+    // at debug, event-driven re-advertises at info). MUST run off the
+    // event-loop thread.
+    auto ReAdvertise(bool from_watchdog) -> void;
     // Demux a Command-Write characteristic write: either an inbound command
     // ChunkedPayload (total_chunks >= 1) or a ChunkAck (total_chunks == 0,
     // wire-compatible on fields 1/2) acking an outbound response chunk.
@@ -100,6 +118,9 @@ class BluezBleTransport final : public sst::control::IBleTransport {
     std::unique_ptr<sdbus::IConnection> connection_;
     std::unique_ptr<sdbus::IObject> adv_obj_;
     std::unique_ptr<GattApplication> gatt_app_;
+    // Owned match-rule slot for the Device1 PropertiesChanged subscription
+    // (abrupt central loss). Released in Stop() before the connection drops.
+    sdbus::Slot device_match_slot_;
 
     mutable std::mutex mtx_;
     CommandHandler on_command_;
@@ -125,6 +146,10 @@ class BluezBleTransport final : public sst::control::IBleTransport {
     std::condition_variable worker_cv_;
     bool worker_stop_{false};
     std::optional<std::uint64_t> pending_ticket_;
+    // A central-gone signal arrived that needs a re-advertise even when it
+    // carries no ticket (e.g. the link dropped before the central ever wrote —
+    // the connectable advertisement was still consumed by the connection).
+    bool readvertise_requested_{false};
 };
 
 }  // namespace sst::adapters::control

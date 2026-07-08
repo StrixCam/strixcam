@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstdint>
 #include <future>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -12,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "adapters/control/ble/bluez/device1-signal.hpp"
 #include "app/control/services/chunk-ack/chunk-ack.hpp"
 #include "bluetooth.pb.h"
 #include "domain/control/models/bootstrap-config.hpp"
@@ -21,6 +23,22 @@ namespace sst::adapters::control {
 namespace {
 
 constexpr auto kCallTimeout = std::chrono::seconds{20};
+
+// Advertising watchdog cadence: while no central is connected, the worker
+// re-asserts the LE advertisement on this interval. The controller can
+// silently terminate an advertising set (observed on the Realtek RTL8822CE:
+// kernel logs "Unexpected advertising set terminated event" and drops it)
+// while BlueZ still reports the instance active — no D-Bus signal ever
+// reaches us, so a periodic re-register is the only host-side recovery.
+constexpr auto kAdvRefreshInterval = std::chrono::seconds{30};
+
+// Match rule for abrupt central loss: a force-killed app sends no StopNotify,
+// but BlueZ flips Device1.Connected to false on the device node when the link
+// drops. Subscribed bus-wide because device object paths are dynamic.
+constexpr const char* kDeviceMatchRule =
+    "type='signal',sender='org.bluez',"
+    "interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',"
+    "arg0='org.bluez.Device1'";
 
 constexpr const char* kBluezBus = "org.bluez";
 constexpr const char* kIfaceGattManager = "org.bluez.GattManager1";
@@ -206,9 +224,18 @@ auto BluezBleTransport::Start() -> void {
             std::string{sst::control::BootstrapDefaults::kGattResponseCharUuid},
             [this](std::vector<std::uint8_t> bytes) { OnRawCommand(std::move(bytes)); });
 
-        // A central unsubscribing (StopNotify) is BlueZ's disconnect signal —
-        // resume advertising so the camera is findable again for the next session.
+        // A central unsubscribing (StopNotify) is BlueZ's graceful disconnect
+        // signal — resume advertising so the camera is findable again for the
+        // next session.
         gatt_app_->SetOnUnsubscribe([this] { HandleCentralGone(); });
+
+        // Second central-gone signal: Device1 Connected=false. A force-killed
+        // app never unsubscribes — the link just drops — and a central that
+        // connects but dies before StartNotify never produces a StopNotify at
+        // all. Both still consume the connectable advertisement, so both must
+        // re-arm it. Idempotent with StopNotify via the supervisor generation.
+        device_match_slot_ = connection_->addMatch(
+            kDeviceMatchRule, [this](sdbus::Message& msg) { OnDeviceProperties(msg); });
 
         BuildAdvertisement();
 
@@ -282,9 +309,9 @@ auto BluezBleTransport::Stop() -> void {
     const auto undelivered_ticket = StopDisconnectWorker();
 
     // Notify the session layer of the connection loss (it arms the auto-stop
-    // safety net; it no longer tears the session down). On-device, a
-    // central-initiated disconnect (org.bluez Device1 Connected=false) should
-    // also invoke this; that D-Bus subscription is verified on hardware.
+    // safety net; it no longer tears the session down). Live disconnects are
+    // delivered by StopNotify and the Device1 Connected=false match
+    // (OnDeviceProperties); this is the shutdown path's synchronous fallback.
     ConnectionHandler on_disconnect;
     {
         std::lock_guard lock(mtx_);
@@ -325,6 +352,9 @@ auto BluezBleTransport::Stop() -> void {
         }
     }
 
+    // Release the Device1 match before the connection it belongs to.
+    device_match_slot_.reset();
+
     {
         // Drop assembler state under the lock BEFORE clearing gatt_app_ so no
         // half-assembled inbound message or stale outbound flow-control survives
@@ -341,52 +371,84 @@ auto BluezBleTransport::Stop() -> void {
 
 auto BluezBleTransport::HandleCentralGone() -> void {
     const auto ticket = supervisor_.OnCentralGone();
-    if (!ticket) {
-        return;  // never connected this session, or already handled
-    }
-    // This runs on the D-Bus event-loop thread (a GATT StopNotify callback).
-    // Both the session notification and the re-advertise wait on work the event
-    // loop itself must service, so they cannot run inline — queue the ticket
-    // for the owned worker. Overwriting a pending ticket is safe: a second
-    // ticket can only exist after an intervening connect, which makes the older
-    // one stale (DeliverDisconnect would drop it by generation anyway).
+    // This runs on the D-Bus event-loop thread (a GATT StopNotify callback or
+    // a Device1 Connected=false signal). Both the session notification and the
+    // re-advertise wait on work the event loop itself must service, so they
+    // cannot run inline — queue for the owned worker. Overwriting a pending
+    // ticket is safe: a second ticket can only exist after an intervening
+    // connect, which makes the older one stale (DeliverDisconnect would drop
+    // it by generation anyway). A nullopt ticket (the central never wrote, or
+    // the other signal already claimed the disconnect) still requests a
+    // re-advertise: the connectable advertisement was consumed by the
+    // connection regardless of whether a session-level connect ever surfaced.
     {
         std::lock_guard lock(worker_mtx_);
-        pending_ticket_ = ticket;
+        if (ticket) {
+            pending_ticket_ = ticket;
+        }
+        readvertise_requested_ = true;
     }
     worker_cv_.notify_one();
+}
+
+auto BluezBleTransport::OnDeviceProperties(sdbus::Message& msg) -> void {
+    // Event-loop thread: classify cheaply, never block.
+    if (!IsDeviceNodeOf(adapter_path_, msg.getPath())) {
+        return;
+    }
+    std::string iface;
+    std::map<std::string, sdbus::Variant> changed;
+    try {
+        msg >> iface >> changed;
+    } catch (const sdbus::Error&) {
+        return;  // not the (sa{sv}as) payload PropertiesChanged carries
+    }
+    if (!IsDeviceDisconnectSignal(iface, changed)) {
+        return;
+    }
+    spdlog::info("BluezBleTransport: central link down (Device1 Connected=false on {})",
+                 msg.getPath());
+    HandleCentralGone();
 }
 
 auto BluezBleTransport::DisconnectWorkerLoop() -> void {
     for (;;) {
         std::optional<std::uint64_t> ticket;
+        bool watchdog_pass = false;
         {
             std::unique_lock lock(worker_mtx_);
-            worker_cv_.wait(lock, [this] { return worker_stop_ || pending_ticket_.has_value(); });
+            // Wake on demand (central gone / stop) or on the watchdog cadence:
+            // a silently-terminated advertising set produces no signal at all
+            // (see kAdvRefreshInterval), so while idle the advertisement is
+            // re-asserted on a timer rather than trusted.
+            const bool woken = worker_cv_.wait_for(lock, kAdvRefreshInterval, [this] {
+                return worker_stop_ || pending_ticket_.has_value() || readvertise_requested_;
+            });
             if (worker_stop_) {
                 return;  // Stop() takes over delivery of any still-pending ticket
             }
+            watchdog_pass = !woken;
             std::swap(ticket, pending_ticket_);
+            readvertise_requested_ = false;
         }
-        if (!ticket) {
-            continue;
-        }
-        ConnectionHandler on_disc;
-        {
-            std::lock_guard lock(mtx_);
-            on_disc = on_disconnect_;
-        }
-        // Re-validate at delivery time: if the central resubscribed+wrote before
-        // this ran, the disconnect is stale and is dropped (never delivered
-        // after the newer OnConnect).
-        if (!supervisor_.DeliverDisconnect(*ticket, on_disc)) {
-            spdlog::info(
-                "BluezBleTransport: stale disconnect superseded by a newer connect — dropped");
+        if (ticket) {
+            ConnectionHandler on_disc;
+            {
+                std::lock_guard lock(mtx_);
+                on_disc = on_disconnect_;
+            }
+            // Re-validate at delivery time: if the central resubscribed+wrote
+            // before this ran, the disconnect is stale and is dropped (never
+            // delivered after the newer OnConnect).
+            if (!supervisor_.DeliverDisconnect(*ticket, on_disc)) {
+                spdlog::info(
+                    "BluezBleTransport: stale disconnect superseded by a newer connect — dropped");
+            }
         }
         // Skip the re-advertise churn when a central is already back (BlueZ
         // pauses a connectable advert while connected anyway).
         if (!supervisor_.CentralPresent()) {
-            ReAdvertise();
+            ReAdvertise(watchdog_pass);
         }
     }
 }
@@ -398,6 +460,7 @@ auto BluezBleTransport::StopDisconnectWorker() -> std::optional<std::uint64_t> {
         worker_stop_ = true;
         undelivered = pending_ticket_;
         pending_ticket_.reset();
+        readvertise_requested_ = false;  // moot — the transport is stopping
     }
     worker_cv_.notify_one();
     if (disconnect_worker_.joinable()) {
@@ -409,7 +472,7 @@ auto BluezBleTransport::StopDisconnectWorker() -> std::optional<std::uint64_t> {
     return undelivered;
 }
 
-auto BluezBleTransport::ReAdvertise() -> void {
+auto BluezBleTransport::ReAdvertise(bool from_watchdog) -> void {
     if (!running_ || !connection_) {
         return;
     }
@@ -437,8 +500,13 @@ auto BluezBleTransport::ReAdvertise() -> void {
         CallManagerAsync(*bluez, kIfaceLeAdvManager, "RegisterAdvertisement",
                          sdbus::ObjectPath{adv_path_});
         advertisement_registered_ = true;
-        spdlog::info("BluezBleTransport: re-advertising as \"{}\" after central disconnect",
-                     advertised_name_);
+        if (from_watchdog) {
+            spdlog::debug("BluezBleTransport: advertising watchdog re-asserted \"{}\"",
+                          advertised_name_);
+        } else {
+            spdlog::info("BluezBleTransport: re-advertising as \"{}\" after central disconnect",
+                         advertised_name_);
+        }
     } catch (const sdbus::Error& e) {
         spdlog::warn("BluezBleTransport: re-advertise failed: {}", e.what());
     }

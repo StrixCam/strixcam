@@ -42,6 +42,25 @@ TEST(ConnectionSupervisorTest, GoneWithoutCentralYieldsNoTicket) {
     EXPECT_FALSE(supervisor.OnCentralGone().has_value());
 }
 
+// Abrupt central loss delivers TWO gone signals for one disconnect (GATT
+// StopNotify and Device1 Connected=false, in either order). Only the first
+// claims the ticket; the second is a no-op, so the session-level disconnect
+// is delivered exactly once.
+TEST(ConnectionSupervisorTest, DualGoneSignalsClaimOneTicket) {
+    ConnectionSupervisor supervisor;
+    supervisor.OnWrite(nullptr);
+
+    const auto first = supervisor.OnCentralGone();   // e.g. StopNotify
+    const auto second = supervisor.OnCentralGone();  // e.g. Connected=false
+    ASSERT_TRUE(first.has_value());
+    EXPECT_FALSE(second.has_value());
+
+    int disconnects = 0;
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT_TRUE guards
+    EXPECT_TRUE(supervisor.DeliverDisconnect(*first, [&disconnects] { ++disconnects; }));
+    EXPECT_EQ(disconnects, 1);
+}
+
 // The core race: StopNotify claims a ticket, the central resubscribes + writes
 // (new connect) BEFORE the detached worker delivers — the stale disconnect must
 // be dropped, never delivered after the newer connect.
