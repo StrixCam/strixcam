@@ -21,11 +21,12 @@ AutofocusService::AutofocusService(IFocuser& focuser, FocusState& focus_state,
       recording_active_(std::move(recording_active)),
       config_(config),
       states_(config.camera_count) {
-    // Boot-time override (origin R15): AF stays paused during recording by
-    // default; SST_AF_DURING_RECORDING=1 keeps it hunting through a match so
-    // metal validation can decide whether the default flips.
-    if (const char* env = std::getenv("SST_AF_DURING_RECORDING"); env != nullptr) {
-        config_.af_during_recording = std::string_view{env} == "1";
+    // Boot-time override: AF stays active through record/stream by default
+    // (metal validation flipped the original R15 stance);
+    // SST_AF_DISABLE_DURING_RECORDING=1 restores the old pause-while-recording
+    // behavior as a rollback hatch.
+    if (const char* env = std::getenv("SST_AF_DISABLE_DURING_RECORDING"); env != nullptr) {
+        config_.af_during_recording = std::string_view{env} != "1";
     }
 }
 
@@ -79,7 +80,8 @@ auto AutofocusService::Tick() -> void {
     for (std::size_t camera = 0; camera < states_.size(); ++camera) {
         auto& state = states_[camera];
         if (paused) {
-            // Recording-active pause (origin R15). Abort an in-flight sweep
+            // Recording-active pause (SST_AF_DISABLE_DURING_RECORDING=1 only —
+            // by default AF stays active through a match). Abort an in-flight sweep
             // rather than freezing it — by the time recording stops the scene
             // is a match later, so a half-done sweep would converge on stale
             // scores. A converged hold keeps its position untouched; sweeping

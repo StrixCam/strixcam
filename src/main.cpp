@@ -344,12 +344,12 @@ auto RunFirmware() -> int {
     });
 
     // ── Autofocus loop (U6) ────────────────────────────────────────────
-    // Owns its own low-rate thread (never the BLE dispatcher): hunts only
-    // cameras the app flipped to AUTO (CameraFocus handler ↔ focus_state),
-    // taps the producer path for sharpness samples, skips unhealthy cameras
-    // (same U3 frame-truth derivation as the gates above), and pauses while a
-    // recording session is active unless SST_AF_DURING_RECORDING=1 (R15 —
-    // metal validation decides the default flip). On a fixed lens (focuser
+    // Owns its own low-rate thread (never the BLE dispatcher): hunts every
+    // camera in AUTO (the boot default — the CameraFocus handler flips a
+    // camera to MANUAL on demand via focus_state), taps the producer path for
+    // sharpness samples, skips unhealthy cameras (same U3 frame-truth
+    // derivation as the gates above), and stays active through record/stream
+    // unless SST_AF_DISABLE_DURING_RECORDING=1. On a fixed lens (focuser
     // unavailable) the loop idles entirely. Started after pipeline.Start()
     // below; declared after the pipeline so it is destroyed (joined) first.
     sst::focus::AutofocusService autofocus(

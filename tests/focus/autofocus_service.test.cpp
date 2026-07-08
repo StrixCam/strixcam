@@ -233,12 +233,20 @@ auto WaitForWriteCountAtLeast(const RecordingFocuser& focuser, std::size_t minim
     return false;
 }
 
+TEST(AutofocusServiceTest, BootDefaultIsAutoForAllCameras) {
+    // Continuous AF is on from boot (matches the proto FOCUS_MODE_AUTO
+    // default) — no app command needed to start the loop.
+    const FocusState state;
+    EXPECT_TRUE(state.IsAuto(0));
+    EXPECT_TRUE(state.IsAuto(1));
+}
+
 TEST(AutofocusServiceTest, ConvergesToSharpnessPeakAndHolds) {
     RecordingFocuser focuser;
     SyntheticSceneTap tap(focuser);
     tap.SetPeak(0, kCam0Peak);
     FocusState state;
-    state.SetAuto(0, true);  // camera 1 stays manual (boot default)
+    state.SetAuto(1, false);  // isolate camera 0 (boot default is AUTO on both)
     AutofocusService service(focuser, state, tap, nullptr, nullptr, FastConfig());
     service.Start();
 
@@ -255,7 +263,7 @@ TEST(AutofocusServiceTest, ConvergesToSharpnessPeakAndHolds) {
     // writes over a long observation window (no oscillation on a still scene).
     std::this_thread::sleep_for(kSettleWindow);
     EXPECT_EQ(focuser.WriteCount(), settled);
-    // The manual camera was never hunted.
+    // The manually-flipped camera was never hunted.
     EXPECT_EQ(focuser.WritesFor(1), 0U);
     service.Stop();
 }
@@ -265,7 +273,7 @@ TEST(AutofocusServiceTest, PlateauNoiseDoesNotRetriggerOrOscillate) {
     SyntheticSceneTap tap(focuser);
     tap.SetPeak(0, kCam0Peak);
     FocusState state;
-    state.SetAuto(0, true);
+    state.SetAuto(1, false);
     AutofocusService service(focuser, state, tap, nullptr, nullptr, FastConfig());
     service.Start();
 
@@ -286,7 +294,7 @@ TEST(AutofocusServiceTest, SustainedSharpnessDropRetriggersAndReconverges) {
     SyntheticSceneTap tap(focuser);
     tap.SetPeak(0, kCam0Peak);
     FocusState state;
-    state.SetAuto(0, true);
+    state.SetAuto(1, false);
     AutofocusService service(focuser, state, tap, nullptr, nullptr, FastConfig());
     service.Start();
 
@@ -311,7 +319,7 @@ TEST(AutofocusServiceTest, ManualCommandMidSweepAbortsSweepAndManualHolds) {
     SyntheticSceneTap tap(focuser, /*gated=*/true);  // lock-step: we hand out samples
     tap.SetPeak(0, kCam0Peak);
     FocusState state;
-    state.SetAuto(0, true);
+    state.SetAuto(1, false);  // isolate camera 0
     sst::control::CameraFocusHandler handler(focuser, state);
     AutofocusService service(focuser, state, tap, nullptr, nullptr, FastConfig());
     service.Start();
@@ -349,21 +357,44 @@ TEST(AutofocusServiceTest, ManualCommandMidSweepAbortsSweepAndManualHolds) {
     service.Stop();
 }
 
-TEST(AutofocusServiceTest, RecordingPausesTheLoopAndStoppingResumesIt) {
+TEST(AutofocusServiceTest, RecordingDoesNotPauseTheLoopByDefault) {
     // Guard against ambient env leakage into this default-config test.
-    ::unsetenv("SST_AF_DURING_RECORDING");
+    ::unsetenv("SST_AF_DISABLE_DURING_RECORDING");
     RecordingFocuser focuser;
     SyntheticSceneTap tap(focuser);
     tap.SetPeak(0, kCam0Peak);
     FocusState state;
-    state.SetAuto(0, true);
-    std::atomic<bool> recording{true};
+    state.SetAuto(1, false);
+    std::atomic<bool> recording{true};  // recording the whole time
     AutofocusService service(
         focuser, state, tap, nullptr, [&recording] { return recording.load(); }, FastConfig());
     service.Start();
 
-    // Recording active from the start: the loop must not hunt at all (R15 —
-    // default OFF during recording).
+    // Default: AF stays active through record/stream — hunts and converges
+    // while the recording runs.
+    WaitForWriteQuiescence(focuser);
+    const auto last = focuser.LastWrite();
+    ASSERT_TRUE(last.has_value());
+    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT/guard above
+    EXPECT_EQ(last->second, kCam0Peak);  // hunted and converged mid-recording
+    service.Stop();
+}
+
+TEST(AutofocusServiceTest, EnvFlagPausesAutofocusDuringRecordingAndStoppingResumesIt) {
+    ::setenv("SST_AF_DISABLE_DURING_RECORDING", "1", /*overwrite=*/1);
+    RecordingFocuser focuser;
+    SyntheticSceneTap tap(focuser);
+    tap.SetPeak(0, kCam0Peak);
+    FocusState state;
+    state.SetAuto(1, false);
+    std::atomic<bool> recording{true};
+    AutofocusService service(
+        focuser, state, tap, nullptr, [&recording] { return recording.load(); }, FastConfig());
+    ::unsetenv("SST_AF_DISABLE_DURING_RECORDING");  // captured at construction
+    service.Start();
+
+    // Rollback hatch: recording active from the start → the loop must not
+    // hunt at all (the pre-flip R15 behavior).
     std::this_thread::sleep_for(kSettleWindow * 2);
     EXPECT_EQ(focuser.WriteCount(), 0U);
 
@@ -381,28 +412,7 @@ TEST(AutofocusServiceTest, RecordingPausesTheLoopAndStoppingResumesIt) {
     tap.SetPeak(0, kMovedPeak);  // sharpness collapses at the held position...
     const std::size_t held = focuser.WriteCount();
     std::this_thread::sleep_for(kSettleWindow * 2);
-    EXPECT_EQ(focuser.WriteCount(), held);  // ...but recording gates any re-sweep
-    service.Stop();
-}
-
-TEST(AutofocusServiceTest, EnvFlagKeepsAutofocusRunningThroughRecording) {
-    ::setenv("SST_AF_DURING_RECORDING", "1", /*overwrite=*/1);
-    RecordingFocuser focuser;
-    SyntheticSceneTap tap(focuser);
-    tap.SetPeak(0, kCam0Peak);
-    FocusState state;
-    state.SetAuto(0, true);
-    std::atomic<bool> recording{true};  // recording the whole time
-    AutofocusService service(
-        focuser, state, tap, nullptr, [&recording] { return recording.load(); }, FastConfig());
-    ::unsetenv("SST_AF_DURING_RECORDING");  // captured at construction
-    service.Start();
-
-    WaitForWriteQuiescence(focuser);
-    const auto last = focuser.LastWrite();
-    ASSERT_TRUE(last.has_value());
-    // NOLINTNEXTLINE(bugprone-unchecked-optional-access) // floor-ok: ASSERT/guard above
-    EXPECT_EQ(last->second, kCam0Peak);  // hunted and converged mid-recording
+    EXPECT_EQ(focuser.WriteCount(), held);  // ...but the env flag gates any re-sweep
     service.Stop();
 }
 
@@ -437,7 +447,7 @@ TEST(AutofocusServiceTest, I2cWriteFailureBacksOffWithoutCrashing) {
     SyntheticSceneTap tap(focuser);
     tap.SetPeak(0, kCam0Peak);
     FocusState state;
-    state.SetAuto(0, true);
+    state.SetAuto(1, false);  // isolate camera 0's backoff cadence
     AutofocusService service(focuser, state, tap, nullptr, nullptr, FastConfig());
     service.Start();
 
@@ -473,21 +483,13 @@ TEST(AutofocusServiceTest, DispatcherFocusModeRoundTripFlipsTheLoop) {
     SyntheticSceneTap tap(focuser);
     tap.SetPeak(0, kCam0Peak);
     FocusState state;
+    state.SetAuto(1, false);  // isolate camera 0
     sst::control::CommandDispatcher dispatcher;
     dispatcher.Register(std::make_shared<sst::control::CameraFocusHandler>(focuser, state));
     AutofocusService service(focuser, state, tap, nullptr, nullptr, FastConfig());
     service.Start();
 
-    // Boot default is manual — the loop is off until the app commands AUTO.
-    std::this_thread::sleep_for(kSettleWindow);
-    EXPECT_EQ(focuser.WriteCount(), 0U);
-
-    // AUTO over the wire → the loop starts hunting.
-    sst_cam::Command auto_cmd;
-    auto_cmd.mutable_camera_focus()->set_mode(sst_cam::CameraFocusMode::FOCUS_MODE_AUTO);
-    auto_cmd.mutable_camera_focus()->set_camera_index(0);
-    const auto auto_resp = dispatcher.Dispatch(auto_cmd);
-    EXPECT_EQ(auto_resp.status(), sst_cam::ResponseStatus::OK);
+    // Boot default is AUTO — the loop hunts immediately, no app command needed.
     ASSERT_TRUE(WaitForWriteCountAtLeast(focuser, 1));
 
     // MANUAL over the wire → the loop stands down; the manual write is applied.
@@ -502,6 +504,15 @@ TEST(AutofocusServiceTest, DispatcherFocusModeRoundTripFlipsTheLoop) {
     std::this_thread::sleep_for(kSettleWindow * 2);
     EXPECT_EQ(focuser.WriteCount(), settled);  // no hunting after MANUAL
     EXPECT_FALSE(state.IsAuto(0));
+
+    // AUTO over the wire → the loop resumes hunting camera 0.
+    sst_cam::Command auto_cmd;
+    auto_cmd.mutable_camera_focus()->set_mode(sst_cam::CameraFocusMode::FOCUS_MODE_AUTO);
+    auto_cmd.mutable_camera_focus()->set_camera_index(0);
+    const auto auto_resp = dispatcher.Dispatch(auto_cmd);
+    EXPECT_EQ(auto_resp.status(), sst_cam::ResponseStatus::OK);
+    EXPECT_TRUE(state.IsAuto(0));
+    ASSERT_TRUE(WaitForWriteCountAtLeast(focuser, settled + 1));
     // (The deterministic "manual position is the last write" assertion lives in
     // ManualCommandMidSweepAbortsSweepAndManualHolds, which lock-steps the loop.)
     service.Stop();

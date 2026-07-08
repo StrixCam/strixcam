@@ -34,9 +34,10 @@ class FocusState {
     }
 
    private:
-    // Default-initialized: false (manual) + position 0. Manual is the safe boot
-    // default until the app enables AUTO — no surprise hunting on a fixed scene.
-    std::array<std::atomic<bool>, kCameras> auto_{};
+    // Boot default: AUTO for every camera (matches the proto FOCUS_MODE_AUTO
+    // default) — continuous AF runs from boot without waiting for an app
+    // command. The CameraFocus handler flips a camera to manual on demand.
+    std::array<std::atomic<bool>, kCameras> auto_{true, true};
     std::array<std::atomic<std::uint32_t>, kCameras> position_{};
 };
 

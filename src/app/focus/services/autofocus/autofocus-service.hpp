@@ -40,10 +40,12 @@ struct AutofocusConfig {
     int retrigger_consecutive{kDefaultRetriggerConsecutive};
     // Backoff after a failed VCM I2C write before that camera is retried.
     std::chrono::milliseconds i2c_backoff{kDefaultI2cBackoffMs};
-    // AF while a recording session is active. Default OFF — focus hunting
-    // mid-match is worse than fixed focus (origin R15); metal validation
-    // decides the flip. Env SST_AF_DURING_RECORDING=1 overrides at boot.
-    bool af_during_recording{false};
+    // AF while a recording/streaming session is active. Default ON (metal
+    // validation flipped the original R15 stance): converge-and-hold with
+    // hysteresis doesn't hunt mid-match, and a match that drifts out of focus
+    // is worse than a rare re-sweep. Env SST_AF_DISABLE_DURING_RECORDING=1
+    // restores the old pause-while-recording behavior at boot (rollback hatch).
+    bool af_during_recording{true};
     std::size_t camera_count{FocusState::kCameras};
 
    private:
@@ -68,8 +70,10 @@ struct AutofocusConfig {
 //   - Fixed lens (focuser unavailable): the loop idles entirely — no I2C.
 //   - MANUAL mode (FocusState per-camera atomic): any in-flight sweep aborts;
 //     the manual position was already applied by the CameraFocus handler.
-//   - Recording active (unless af_during_recording): sweeps abort, holds keep
-//     their position; sweeping resumes when recording stops.
+//   - Recording active with af_during_recording disabled (non-default —
+//     SST_AF_DISABLE_DURING_RECORDING=1): sweeps abort, holds keep their
+//     position; sweeping resumes when recording stops. By default AF stays
+//     active through record/stream.
 //   - Camera health != OK: hunting a stalled camera is pointless I2C churn —
 //     that camera is skipped until frame truth says it recovered.
 //   - A failed VCM write backs the camera off i2c_backoff (log, no crash).
@@ -83,8 +87,8 @@ class AutofocusService {
     using RecordingActiveProvider = std::function<bool()>;
 
     // health / recording_active may be empty (treated as "always OK" / "never
-    // recording"). Reads SST_AF_DURING_RECORDING=1 as a boot-time override of
-    // config.af_during_recording.
+    // recording"). Reads SST_AF_DISABLE_DURING_RECORDING=1 as a boot-time
+    // override of config.af_during_recording (pause AF while recording).
     AutofocusService(IFocuser& focuser, FocusState& focus_state,
                      sst::pipeline::ICameraFrameTap& frame_tap, HealthProvider health,
                      RecordingActiveProvider recording_active, AutofocusConfig config = {});
