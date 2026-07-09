@@ -22,11 +22,17 @@ inline constexpr std::chrono::minutes kDefaultAutoStopWindow{30};
 // Auto-stop timing knobs. Production uses the defaults; tests shrink both so
 // timer scenarios run in milliseconds without changing the arming logic.
 struct SessionTiming {
-    // Applied when the session config carries no auto_stop_minutes (or there is
-    // no session — the idle-with-group teardown uses the same timer).
+    // Applied when an active session carries no auto_stop_minutes.
     std::chrono::milliseconds default_auto_stop{kDefaultAutoStopWindow};
     // Real duration of one config "minute" (auto_stop_minutes * this).
     std::chrono::milliseconds config_minute{std::chrono::minutes{1}};
+    // Grace before an idle preview-only WiFi-Direct group is torn down after the
+    // app disconnects. Short so BLE advertising — starved by the 2.4GHz P2P group
+    // on the RTL8822CE combo radio (rtk_btcoex) — recovers quickly for
+    // rediscovery, but long enough that a brief reconnect blip keeps the group
+    // and avoids a disruptive P2P reform (Argus INVALID_SETTINGS). Tests shrink
+    // it alongside the auto-stop knobs.
+    std::chrono::milliseconds idle_group_grace{std::chrono::seconds{20}};
 };
 
 // Concrete session state as three orthogonal axes (see ISessionManager).
@@ -75,9 +81,18 @@ class SessionManager final : public ISessionManager {
     // states ApplyMatchUpdate / OnOverlayConfigured build on).
     [[nodiscard]] auto HasActiveConfigLocked() const -> bool;
 
-    // Arm (or re-arm) the auto-stop deadline from the session config (default
-    // when unset) and wake the timer thread. Caller holds mtx_.
+    // Arm (or re-arm) the deadline `timeout` from now and wake the timer thread.
+    // Shared backing for the auto-stop and idle-group-grace timers; the fire
+    // handler branches on the live state, not on which duration armed it. Caller
+    // holds mtx_.
+    auto ArmTimerLocked(std::chrono::milliseconds timeout) -> void;
+    // Arm the auto-stop deadline from the session config (default when unset) —
+    // the unattended-active-session safety net. Caller holds mtx_.
     auto ArmAutoStopLocked() -> void;
+    // Arm the short idle-group teardown grace (timing_.idle_group_grace) so an
+    // idle preview-only WiFi group is dropped soon after the app leaves, freeing
+    // BLE advertising for rediscovery. Caller holds mtx_.
+    auto ArmIdleGroupGraceLocked() -> void;
     // Drop a pending deadline and wake the timer thread. Caller holds mtx_.
     auto CancelAutoStopLocked() -> void;
 

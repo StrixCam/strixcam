@@ -97,12 +97,26 @@ auto SessionManager::OnDisconnect() -> void {
         spdlog::info("SessionManager: app disconnected during finalize");
         return;
     }
-    if (state_.phase != SessionPhase::kIdle || state_.wifi_group_up) {
-        // Session (and/or group) survives the disconnect; the auto-stop safety
-        // net bounds how long it runs unattended.
+    if (state_.phase != SessionPhase::kIdle) {
+        // An active session (Configured/Ready/Recording) must survive the
+        // disconnect; the auto-stop safety net bounds how long it runs unattended.
         ArmAutoStopLocked();
-        spdlog::info("SessionManager: app disconnected — session={} group={} kept, auto-stop armed",
-                     state_.phase, state_.wifi_group_up ? "up" : "down");
+        spdlog::info("SessionManager: app disconnected — session={} kept, auto-stop armed",
+                     state_.phase);
+        return;
+    }
+    if (state_.wifi_group_up) {
+        // Idle, but the WiFi-Direct group is still up (preview only). It serves
+        // only the now-gone app AND starves BLE advertising on the shared 2.4GHz
+        // combo radio (RTL8822CE coexistence), so the camera cannot be
+        // rediscovered while it lingers. Arm a SHORT grace, not the 30-min
+        // auto-stop: a quick reconnect (OnConnect cancels it) keeps the group so
+        // preview resumes without a disruptive P2P reform; a real disconnect lets
+        // it tear down within seconds and advertising recovers.
+        ArmIdleGroupGraceLocked();
+        spdlog::info(
+            "SessionManager: app disconnected (idle, group up) — group-teardown grace armed ({}s)",
+            std::chrono::duration_cast<std::chrono::seconds>(timing_.idle_group_grace).count());
         return;
     }
     spdlog::info("SessionManager: app disconnected (idle, no group)");
@@ -278,12 +292,20 @@ auto SessionManager::HasActiveConfigLocked() const -> bool {
            state_.phase != SessionPhase::kFinalizing;
 }
 
+auto SessionManager::ArmTimerLocked(std::chrono::milliseconds timeout) -> void {
+    auto_stop_deadline_ = SteadyClock::now() + timeout;
+    timer_cv_.notify_all();
+}
+
 auto SessionManager::ArmAutoStopLocked() -> void {
     const auto timeout = (state_.config && state_.config->auto_stop_minutes > 0)
                              ? state_.config->auto_stop_minutes * timing_.config_minute
                              : timing_.default_auto_stop;
-    auto_stop_deadline_ = SteadyClock::now() + timeout;
-    timer_cv_.notify_all();
+    ArmTimerLocked(timeout);
+}
+
+auto SessionManager::ArmIdleGroupGraceLocked() -> void {
+    ArmTimerLocked(timing_.idle_group_grace);
 }
 
 auto SessionManager::CancelAutoStopLocked() -> void {
@@ -324,9 +346,9 @@ auto SessionManager::HandleAutoStopLocked(std::unique_lock<std::mutex>& lock) ->
         return;
     }
     if (state_.phase == SessionPhase::kIdle && state_.wifi_group_up) {
-        // Preview-only group with no app: tear the group down, no session ended
-        // so no summary is written.
-        spdlog::info("SessionManager: auto-stop fired — tearing down idle WiFi group");
+        // Preview-only group with no app: tear the group down (frees BLE
+        // advertising for rediscovery); no session ended so no summary is written.
+        spdlog::info("SessionManager: idle group-teardown grace elapsed — tearing down WiFi group");
         lock.unlock();
         SafeStep("TeardownWifiDirect", [this] { cleanup_.TeardownWifiDirect(); });
         lock.lock();

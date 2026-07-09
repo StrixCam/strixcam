@@ -53,7 +53,9 @@ constexpr std::chrono::seconds kFireWait{5};
 constexpr std::chrono::milliseconds kPollInterval{5};
 
 auto TestTiming() -> SessionTiming {
-    return SessionTiming{.default_auto_stop = kAutoStop, .config_minute = kConfigMinute};
+    return SessionTiming{.default_auto_stop = kAutoStop,
+                         .config_minute = kConfigMinute,
+                         .idle_group_grace = kAutoStop};
 }
 
 // Poll `pred` until true or `timeout` elapses. Returns the final value.
@@ -390,8 +392,9 @@ TEST(SessionManagerTest, AutoStopWindowFromSessionConfig) {
     fs::remove_all(root);
 }
 
-// Edge: disconnect with NO session but a live group → the same timer tears the
-// group down; no session ended, so no summary is written.
+// Edge: disconnect with NO session but a live preview group → the short
+// idle-group grace tears the group down (freeing BLE advertising for
+// rediscovery); no session ended, so no summary is written.
 TEST(SessionManagerTest, IdleGroupTornDownAfterTimeoutWithoutSummary) {
     FakeCleanup cleanup;
     FakeStore store;
@@ -409,6 +412,30 @@ TEST(SessionManagerTest, IdleGroupTornDownAfterTimeoutWithoutSummary) {
     EXPECT_EQ(cleanup.stop_streaming.load(), 0);
     EXPECT_FALSE(after.last_summary.has_value());
     EXPECT_TRUE(store.Persisted().empty());
+}
+
+// Blip: an idle preview group + a reconnect INSIDE the grace keeps the group
+// (OnConnect cancels the teardown) — no P2P reform, so preview resumes intact
+// and Argus is never disturbed.
+TEST(SessionManagerTest, IdleGroupKeptWhenAppReconnectsWithinGrace) {
+    FakeCleanup cleanup;
+    SessionManager manager(cleanup, nullptr, TestTiming());
+
+    ASSERT_TRUE(manager.OnConnect());
+    ASSERT_TRUE(manager.OnWifiReady());
+    manager.OnDisconnect();  // arms the idle-group teardown grace
+
+    // Reconnect before the grace elapses: the pending teardown is cancelled.
+    std::this_thread::sleep_for(kBeforeTimeout);
+    EXPECT_TRUE(manager.OnConnect());
+
+    // Past the original grace deadline: the group is still up, never torn down.
+    std::this_thread::sleep_for(kSettleWait);
+    const auto after = manager.Snapshot();
+    EXPECT_TRUE(after.app_connected);
+    EXPECT_TRUE(after.wifi_group_up);
+    EXPECT_EQ(after.phase, SessionPhase::kIdle);
+    EXPECT_EQ(cleanup.teardown_wifi.load(), 0);
 }
 
 // Edge: disconnect from Idle with nothing up is a no-op — no timer, no fan-out.
