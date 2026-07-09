@@ -144,3 +144,10 @@ state whether or not the prior session was torn down. `P2P_GROUP_REMOVE *`,
   — the *second* blast radius of this same `StartP2pGroupOwner` radio reform: on
   this single-radio device the reform also disrupts CSI/VI and kills the Argus
   camera capture pipeline. Same trigger site, different subsystem.
+- `docs/solutions/integration-issues/camera-undiscoverable-ble-after-connect-2026-07-09.md`
+  — the *third* blast radius: a lingering idle P2P-GO starves BLE advertising
+  (RTL8822CE coexistence) so the camera can't be rediscovered. Note: that fix
+  now bounds the **idle** case with a 20s teardown grace, so the "group lingers
+  for the whole session" assumption below no longer holds for idle paths — but
+  the idempotent-start defense here is still required on a hard force-kill (the
+  in-process grace timer never fires).

@@ -110,6 +110,7 @@ Why serialize the restart: startup starts cameras sequentially on the main threa
 
 ## Related Issues
 - `docs/solutions/integration-issues/wifi-direct-data-plane-idempotency-2026-06-26.md` — the *other* blast radius of the same `StartP2pGroupOwner` radio reform: there it breaks the WiFi data plane's own re-establishment; here it collaterally kills camera capture. Same trigger site, different subsystem.
+- `docs/solutions/integration-issues/camera-undiscoverable-ble-after-connect-2026-07-09.md` — the *third* blast radius: a lingering idle P2P-GO starves BLE advertising (RTL8822CE coexistence). Its fix bounds idle groups to a 20s teardown grace, which increases P2P-reform frequency — i.e. more of the Argus restarts *this* watchdog exists to absorb.
 - `docs/solutions/architecture-patterns/non-blocking-sink-with-async-stop-2026-06-10.md` — producer/control-thread lock discipline in this same orchestrator; "see also" for the restart-mutex reasoning.
 - `docs/solutions/architecture-patterns/bound-every-subprocess-on-the-dispatcher-thread-2026-06-29.md` — thematic precedent: don't assume a disruptable operation self-heals.
 - `docs/solutions/tooling-decisions/software-h264-encode-ceiling-no-nvenc-2026-07-01.md` — the CPU-ceiling context behind the recurring Argus starvation.
