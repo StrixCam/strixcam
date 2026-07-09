@@ -71,24 +71,21 @@ class BluezBleTransport final : public sst::control::IBleTransport {
     auto OnDeviceProperties(sdbus::Message& msg) -> void;
     // Body of the owned disconnect worker thread: waits for tickets queued by
     // HandleCentralGone, delivers each (generation-validated) disconnect and
-    // re-advertises. Doubles as the advertising watchdog: while no central is
-    // present it re-asserts the advertisement every kAdvRefreshInterval,
-    // because the controller can silently terminate the advertising set
-    // (kernel: "Unexpected advertising set terminated event") while BlueZ
-    // still reports it active — there is no D-Bus signal to react to, so the
-    // advertisement is periodically re-registered rather than trusted.
-    // Started by Start(), joined by Stop() BEFORE the event loop goes away
-    // (its re-advertise futures are serviced by that loop).
+    // re-advertises on that edge. The condition variable also wakes on a periodic
+    // timeout (kAdvRefreshInterval) purely to re-check state — it no longer
+    // re-registers the advertisement. That blind periodic re-register churned a
+    // healthy advert and wedged the RTL8822CE controller (HCI 0x12); see
+    // kAdvRefreshInterval. Started by Start(), joined by Stop() BEFORE the event
+    // loop goes away (its re-advertise futures are serviced by that loop).
     auto DisconnectWorkerLoop() -> void;
     // Joins the worker; returns a still-undelivered ticket (queued disconnect
     // the worker never got to) so Stop() can deliver it synchronously.
     auto StopDisconnectWorker() -> std::optional<std::uint64_t>;
     // Re-register the LE advertisement so BlueZ resumes advertising (it pauses
     // our connectable advert on connect and does not auto-resume on disconnect).
-    // `from_watchdog` only tunes the success log level (periodic re-asserts log
-    // at debug, event-driven re-advertises at info). MUST run off the
-    // event-loop thread.
-    auto ReAdvertise(bool from_watchdog) -> void;
+    // Edge-triggered only (a real disconnect), never on a blind timer — see
+    // kAdvRefreshInterval. MUST run off the event-loop thread.
+    auto ReAdvertise() -> void;
     // Demux a Command-Write characteristic write: either an inbound command
     // ChunkedPayload (total_chunks >= 1) or a ChunkAck (total_chunks == 0,
     // wire-compatible on fields 1/2) acking an outbound response chunk.
@@ -136,8 +133,9 @@ class BluezBleTransport final : public sst::control::IBleTransport {
     // One unregister+register cycle per disconnect: the two central-gone
     // signals (StopNotify + Device1 Connected=false) otherwise queue two
     // back-to-back cycles whose interleaved async BlueZ calls can leave the
-    // advertisement down until the watchdog (field 147 on manual reconnect).
-    // Only touched from the disconnect-worker thread.
+    // advertisement down (field 147 on manual reconnect). Critical now that
+    // re-advertise is edge-only — no periodic re-register backstops a lost
+    // assert. Only touched from the disconnect-worker thread.
     ReAdvertiseThrottle readvertise_throttle_;
     std::atomic<bool> running_{false};
     // Atomic: ReAdvertise() re-arms the advertisement flag from the disconnect

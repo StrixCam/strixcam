@@ -24,21 +24,31 @@ namespace {
 
 constexpr auto kCallTimeout = std::chrono::seconds{20};
 
-// Advertising watchdog cadence: while no central is connected, the worker
-// re-asserts the LE advertisement on this interval. The controller can
-// silently terminate an advertising set (observed on the Realtek RTL8822CE:
-// kernel logs "Unexpected advertising set terminated event" and drops it)
-// while BlueZ still reports the instance active — no D-Bus signal ever
-// reaches us, so a periodic re-register is the only host-side recovery.
+// Disconnect-worker re-check cadence. The worker sleeps on its condition
+// variable and wakes on demand (central gone / stop / explicit re-advertise) or
+// on this timeout. The timeout is only a periodic wake-and-re-check — it does
+// NOT re-register the advertisement. An earlier build re-asserted the LE advert
+// on every timeout to recover a supposedly silently-terminated advertising set,
+// but on the Realtek RTL8822CE that destructive Unregister→Register churn of a
+// *healthy* advert is itself what wedges the controller: after a few cycles a
+// Set Extended Advertising Enable returns Invalid HCI Command Parameters (0x12),
+// advertising dies for good, and BlueZ still reports the instance active (so the
+// next re-register "succeeds" at the D-Bus layer while the radio stays dark).
+// btmon proved this with ZERO disconnects — the timer alone killed it ~2 min
+// after a clean start. Re-advertising is now strictly edge-triggered (a real
+// disconnect), so a healthy advert is never churned. If a genuine spontaneous
+// drop ever surfaces on-device, it needs a real HCI-level liveness detector, not
+// blind churn — BlueZ's ActiveInstances lies here.
 constexpr auto kAdvRefreshInterval = std::chrono::seconds{30};
 
 // Suppress a repeat re-advertise this close to the previous one: one
 // disconnect fires both central-gone signals (StopNotify + Device1
 // Connected=false) ~15 ms apart, and the second unregister+register cycle can
 // race the first cycle's in-flight async RegisterAdvertisement inside BlueZ,
-// leaving the advert down until the watchdog (metal 2026-07-07: manual
-// reconnect died with GATT_CONNECTION_TIMEOUT/147 until the next watchdog
-// pass). Well below both the watchdog cadence and any realistic
+// leaving the advert down (metal 2026-07-07: manual reconnect died with
+// GATT_CONNECTION_TIMEOUT/147). Coalescing the duplicate signal to a single
+// rebuild matters even more now that re-advertise is edge-only — there is no
+// periodic re-register to paper over a dropped assert. Well below any realistic
 // disconnect→reconnect gap, so only the duplicate signal is coalesced.
 constexpr auto kReAdvertiseSuppressWindow = std::chrono::seconds{2};
 
@@ -428,21 +438,21 @@ auto BluezBleTransport::OnDeviceProperties(sdbus::Message& msg) -> void {
 auto BluezBleTransport::DisconnectWorkerLoop() -> void {
     for (;;) {
         std::optional<std::uint64_t> ticket;
-        bool watchdog_pass = false;
+        bool readvertise_edge = false;
         {
             std::unique_lock lock(worker_mtx_);
-            // Wake on demand (central gone / stop) or on the watchdog cadence:
-            // a silently-terminated advertising set produces no signal at all
-            // (see kAdvRefreshInterval), so while idle the advertisement is
-            // re-asserted on a timer rather than trusted.
-            const bool woken = worker_cv_.wait_for(lock, kAdvRefreshInterval, [this] {
+            // Wake on demand (central gone / stop / explicit re-advertise) or on
+            // the periodic timeout. The timeout is only a re-check hook — it no
+            // longer re-registers the advertisement (blindly rebuilding a healthy
+            // advert on a timer wedged the RTL8822CE; see kAdvRefreshInterval).
+            worker_cv_.wait_for(lock, kAdvRefreshInterval, [this] {
                 return worker_stop_ || pending_ticket_.has_value() || readvertise_requested_;
             });
             if (worker_stop_) {
                 return;  // Stop() takes over delivery of any still-pending ticket
             }
-            watchdog_pass = !woken;
             std::swap(ticket, pending_ticket_);
+            readvertise_edge = readvertise_requested_;
             readvertise_requested_ = false;
         }
         if (ticket) {
@@ -459,10 +469,15 @@ auto BluezBleTransport::DisconnectWorkerLoop() -> void {
                     "BluezBleTransport: stale disconnect superseded by a newer connect — dropped");
             }
         }
-        // Skip the re-advertise churn when a central is already back (BlueZ
-        // pauses a connectable advert while connected anyway).
-        if (!supervisor_.CentralPresent()) {
-            ReAdvertise(watchdog_pass);
+        // Re-advertise ONLY on a real disconnect edge — a delivered disconnect
+        // ticket or an explicit re-advertise request. Never on a bare timer wake:
+        // the edge path is throttled and reliable (ReAdvertiseThrottle, one assert
+        // per disconnect), so a healthy advert is left untouched and never churned
+        // into the 0x12 wedge (see kAdvRefreshInterval). Also skip when a central
+        // is already back (BlueZ pauses a connectable advert while connected).
+        const bool disconnect_edge = ticket.has_value() || readvertise_edge;
+        if (disconnect_edge && !supervisor_.CentralPresent()) {
+            ReAdvertise();
         }
     }
 }
@@ -486,7 +501,7 @@ auto BluezBleTransport::StopDisconnectWorker() -> std::optional<std::uint64_t> {
     return undelivered;
 }
 
-auto BluezBleTransport::ReAdvertise(bool from_watchdog) -> void {
+auto BluezBleTransport::ReAdvertise() -> void {
     if (!running_ || !connection_) {
         return;
     }
@@ -523,13 +538,8 @@ auto BluezBleTransport::ReAdvertise(bool from_watchdog) -> void {
         CallManagerAsync(*bluez, kIfaceLeAdvManager, "RegisterAdvertisement",
                          sdbus::ObjectPath{adv_path_});
         advertisement_registered_ = true;
-        if (from_watchdog) {
-            spdlog::debug("BluezBleTransport: advertising watchdog re-asserted \"{}\"",
-                          advertised_name_);
-        } else {
-            spdlog::info("BluezBleTransport: re-advertising as \"{}\" after central disconnect",
-                         advertised_name_);
-        }
+        spdlog::info("BluezBleTransport: re-advertising as \"{}\" after central disconnect",
+                     advertised_name_);
     } catch (const sdbus::Error& e) {
         spdlog::warn("BluezBleTransport: re-advertise failed: {}", e.what());
     }
