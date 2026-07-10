@@ -51,8 +51,10 @@ auto BuildRecorderLaunch(const std::string& output_mp4, const sst::common::Video
     // a rebuild — the "cheap camera" look is mostly x264 ultrafast starved at
     // 8 Mbps. Bitrate is a pure quality lever (no CPU cost); a slower preset costs
     // CPU on the shared software encoder, so it stays overridable + is validated on
-    // metal (must still sustain 30fps or the leaky queue drops frames). tune stays
-    // zerolatency so Stop finalizes cleanly (no big reorder buffer to drain).
+    // metal (must still sustain 30fps or the leaky queue drops frames). tune=
+    // zerolatency is DROPPED for a small B-frame + lookahead reorder budget (the
+    // quality profile, see recorder-launch.hpp) — record isn't latency-sensitive
+    // and the few-frame reorder drains well inside the Stop finalize timeout.
     // superfast is the validated default: it holds 1080p30 under the full
     // pipeline load (2× capture + preview + stream) where veryfast+ drop frames,
     // and looks markedly better than ultrafast. Override with SST_X264_PRESET.
@@ -72,13 +74,14 @@ auto BuildRecorderLaunch(const std::string& output_mp4, const sst::common::Video
         "appsrc name={src} is-live=true format=time do-timestamp=true ! "
         "{caps} ! "
         "queue leaky=downstream max-size-buffers={qbuf} max-size-time=0 max-size-bytes=0 ! "
-        "x264enc name={enc} speed-preset={preset} tune=zerolatency "
+        "x264enc name={enc} speed-preset={preset} bframes={bf} b-adapt=1 rc-lookahead={rl} "
         "bitrate={kbps} key-int-max={gik} ! "
         "h264parse config-interval=-1 ! mp4mux ! filesink location={loc}",
         fmt::arg("src", kRecorderAppsrcName), fmt::arg("enc", kRecorderEncoderName),
         fmt::arg("caps", format_caps), fmt::arg("qbuf", kRecorderQueueMaxBuffers),
-        fmt::arg("preset", preset), fmt::arg("kbps", bitrate), fmt::arg("gik", key_int_max),
-        fmt::arg("loc", output_mp4));
+        fmt::arg("preset", preset), fmt::arg("bf", kRecorderBframes),
+        fmt::arg("rl", kRecorderRcLookahead), fmt::arg("kbps", bitrate),
+        fmt::arg("gik", key_int_max), fmt::arg("loc", output_mp4));
 }
 
 }  // namespace sst::adapters::storage

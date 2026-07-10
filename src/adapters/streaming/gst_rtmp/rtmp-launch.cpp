@@ -2,6 +2,9 @@
 
 #include <fmt/format.h>
 
+#include <cstdlib>
+#include <string>
+
 namespace sst::adapters::streaming {
 
 auto BuildRtmpLocation(const sst::streaming::PlatformStreamConfig& cfg) -> std::string {
@@ -33,6 +36,14 @@ auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg, bool use_v
                       "! video/x-raw,format=I420,width={w},height={h},framerate={fps}/1",
                       fmt::arg("w", cfg.width), fmt::arg("h", cfg.height),
                       fmt::arg("fps", cfg.framerate));
+    // Stream bitrate + preset are env-dialable on-device without a rebuild
+    // (the handler doesn't set bitrate from proto, so cfg.bitrate_kbps carries the
+    // raised kDefaultBitrateKbps). SST_X264_PRESET is the shared preset knob.
+    const char* br_env = std::getenv("SST_STREAM_BITRATE_KBPS");
+    const int bitrate = (br_env != nullptr) ? std::atoi(br_env) : cfg.bitrate_kbps;
+    const char* preset_env = std::getenv("SST_X264_PRESET");
+    const std::string preset = (preset_env != nullptr) ? preset_env : kRtmpDefaultPreset;
+
     // Software H.264 (the Orin Nano has no NVENC): x264enc reads system memory,
     // so the nvvidconv/NVMM hop is dropped. rtmp2sink replaces the deprecated
     // rtmpsink — it takes a clean location URL. The uplink queue is leaky-
@@ -53,7 +64,8 @@ auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg, bool use_v
         "appsrc name={src} is-live=true format=time do-timestamp=true "
         " ! {cs} "
         " ! queue leaky=downstream max-size-buffers={qbuf} max-size-time=0 max-size-bytes=0 "
-        " ! x264enc speed-preset=ultrafast tune=zerolatency bitrate={brk} key-int-max={gik} "
+        " ! x264enc speed-preset={preset} bframes={bf} b-adapt=1 rc-lookahead={rl} "
+        "bitrate={brk} key-int-max={gik} "
         " ! h264parse config-interval=-1 "
         " ! queue leaky=downstream max-size-buffers=3 ! mux.video "
         // Silent AAC track — YouTube et al. reject video-only FLV. Both pads must
@@ -61,7 +73,8 @@ auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg, bool use_v
         "audiotestsrc is-live=true wave=silence do-timestamp=true "
         " ! audioconvert ! voaacenc ! aacparse ! queue ! mux.audio ",
         fmt::arg("src", kRtmpAppsrcName), fmt::arg("cs", convert_scale),
-        fmt::arg("qbuf", kRtmpPreEncodeQueueBuffers), fmt::arg("brk", cfg.bitrate_kbps),
+        fmt::arg("qbuf", kRtmpPreEncodeQueueBuffers), fmt::arg("preset", preset),
+        fmt::arg("bf", kRtmpBframes), fmt::arg("rl", kRtmpRcLookahead), fmt::arg("brk", bitrate),
         fmt::arg("gik", cfg.framerate * 2), fmt::arg("loc", BuildRtmpLocation(cfg)));
 }
 

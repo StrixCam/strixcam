@@ -82,4 +82,20 @@ TEST(RecorderLaunchTest, VicUnsetQualityStillConvertsToI420) {
     EXPECT_FALSE(Contains(vic, "videoscale"));
 }
 
+// Record runs the QUALITY profile: tune=zerolatency dropped, B-frames + lookahead
+// added, superfast/14 Mbps kept. Record isn't latency-sensitive so the small
+// reorder is pure quality gain; the pre-encode queue stays shallow.
+TEST(RecorderLaunchTest, UsesQualityProfileNotZerolatency) {
+    const auto launch = BuildRecorderLaunch("/videos/m/m.mp4", {1920, 1080, 30});
+    EXPECT_FALSE(Contains(launch, "tune=zerolatency"));
+    EXPECT_TRUE(Contains(launch, "bframes="));
+    EXPECT_TRUE(Contains(launch, "rc-lookahead="));
+    EXPECT_TRUE(Contains(launch, "speed-preset=superfast"));
+    EXPECT_TRUE(Contains(launch, "bitrate=14000"));
+    EXPECT_TRUE(Contains(launch, "x264enc name=enc"));
+    EXPECT_TRUE(Contains(launch, "mp4mux"));
+    // Shallow pre-encode queue (no deep time-based buffer).
+    EXPECT_TRUE(Contains(launch, "max-size-time=0"));
+}
+
 }  // namespace

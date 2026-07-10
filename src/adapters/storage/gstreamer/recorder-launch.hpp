@@ -12,6 +12,14 @@ namespace sst::adapters::storage {
 inline constexpr int kRecorderDefaultFramerate = 30;
 inline constexpr int kRecorderBitrateKbps = 14000;
 
+// Quality profile: drop tune=zerolatency and spend a small reorder budget on
+// B-frames + rate-control lookahead — the biggest quality-per-bit levers with no
+// NVENC. The reorder buffer is only a few frames (not a deep hold), so Stop's
+// moov finalize drains it well within kFinalizeTimeoutSeconds. Record isn't
+// latency-sensitive (it's a file), so this is pure quality gain.
+inline constexpr int kRecorderBframes = 3;
+inline constexpr int kRecorderRcLookahead = 20;
+
 // Bound on the leaky pre-encoder queue (~0.5s at 60fps). Drop-oldest under
 // encode overload keeps the encoder realtime so the MP4 always finalizes a valid
 // moov, at the cost of dropped frames rather than a corrupt file.
