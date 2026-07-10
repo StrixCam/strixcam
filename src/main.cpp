@@ -89,8 +89,8 @@ namespace sst::runtime_defaults {
 
 constexpr std::uint16_t kCamera0Index = 0;
 constexpr std::uint16_t kCamera1Index = 1;
-constexpr std::uint32_t kOverlayWidth = 1280;  // matches postprocess output
-constexpr std::uint32_t kOverlayHeight = 720;
+constexpr std::uint32_t kOverlayWidth = 1920;  // matches postprocess output (kDefaultOutputWidth)
+constexpr std::uint32_t kOverlayHeight = 1080;
 constexpr std::uint32_t kPreviewPort = 8554;   // RTSP preview (wifi.proto)
 constexpr std::uint32_t kDownloadPort = 8080;  // HTTP downloads
 constexpr std::uint64_t kDownloadTokenTtlSeconds = 3600;

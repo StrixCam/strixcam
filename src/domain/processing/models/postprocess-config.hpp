@@ -6,9 +6,14 @@
 
 namespace sst::processing {
 
-// Default output resolution: 720p (1280x720).
-inline constexpr std::uint32_t kDefaultOutputWidth{1280};
-inline constexpr std::uint32_t kDefaultOutputHeight{720};
+// Default output resolution: 1080p (1920x1080) — the single master resolution
+// the postprocess stage emits to every consumer (record, RTMP, RTSP preview). It
+// was 720p, which capped record + stream detail: they target 1080p and were
+// UPSCALING 720p->1080p (soft/pixelated regardless of bitrate). Native 1080p is
+// the real quality lever; the VIC convert stays cheap, the added CPU is
+// colour-correction + overlay compositing at 2.25x the pixels.
+inline constexpr std::uint32_t kDefaultOutputWidth{1920};
+inline constexpr std::uint32_t kDefaultOutputHeight{1080};
 
 // Shipping defaults, dialed in on-device against the ArduCAM RBPCV3 IMX477.
 // WB gains neutralize the magenta; the tone values fix the washed-out look.
