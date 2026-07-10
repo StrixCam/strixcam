@@ -77,7 +77,7 @@ TEST(OpenCvPostprocessorTest, CropAndResizeProducesExpectedDimsAndFormat) {
 // Builds an NV12 frame with a BRIGHT top band (bright_y, bright_u/v) over a DARK
 // bottom band (dark_y, dark_u/v) — a lit surface above a shadow. Test data
 // builder; the Y/U/V band bytes are passed explicitly by name at the call site.
-// NOLINTBEGIN(bugprone-easily-swappable-parameters)
+// NOLINTBEGIN(bugprone-easily-swappable-parameters) floor-ok: test builder, args by name
 auto MakeTwoBandNv12(std::uint32_t width, std::uint32_t height, std::uint8_t bright_y,
                      std::uint8_t bright_u, std::uint8_t bright_v, std::uint8_t dark_y,
                      std::uint8_t dark_u, std::uint8_t dark_v) -> sst::capture::Frame {
