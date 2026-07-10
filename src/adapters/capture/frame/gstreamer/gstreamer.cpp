@@ -38,6 +38,11 @@ GStreamerAdapter::GStreamerAdapter(const CameraConfig& camera_config, std::strin
 
 auto GStreamerAdapter::CreatePipeline() -> std::string {
     const std::string sensor_id = std::to_string(camera_index_);
+    // Sensor readout geometry (selects the Argus 4K mode) vs the delivered working
+    // geometry (VIC-downscaled 1080p). Reading 4K and downscaling supersamples for
+    // sharpness/noise with no CPU-side cost — see CameraConfig.
+    const std::string sensor_width = std::to_string(camera_config_.sensor_width);
+    const std::string sensor_height = std::to_string(camera_config_.sensor_height);
     const std::string width = std::to_string(camera_config_.width);
     const std::string height = std::to_string(camera_config_.height);
     const std::string fps = std::to_string(camera_config_.fps);
@@ -59,14 +64,13 @@ auto GStreamerAdapter::CreatePipeline() -> std::string {
     const std::string isp_tuning =
         (isp_env != nullptr) ? isp_env : "tnr-mode=2 tnr-strength=0.5 ee-mode=1 ee-strength=0.4";
 
-    // Downstream frame-rate cap. The IMX477 only offers 1080p at 60fps (no 1080p30
-    // sensor mode), so the sensor is driven at camera_config_.fps, but the whole
-    // CPU-side pipeline — NV12->BGR postprocess (per camera), record x264, preview
-    // x264 and the raw proxy — pays per delivered frame. At 60fps x2 cameras that
-    // saturates the 6-core Orin Nano and every encoder starves (0-byte record,
-    // blank preview). videorate drops to the target rate right after capture so the
-    // expensive stages only see 30fps. Env-tunable so it can be raised on-device
-    // once headroom is measured; never exceeds the sensor rate.
+    // Downstream frame-rate cap. The sensor runs 4K mode 0 at 30fps (VIC-
+    // downscaled to the delivered 1080p in the caps above), so the whole CPU-side
+    // pipeline — NV12->BGR postprocess (per camera), record x264, preview x264 and
+    // the raw proxy — pays per delivered frame at 30fps. videorate is the belt-and-
+    // braces cap (drop-only, never above the sensor rate) in case fps is raised;
+    // the expensive stages must never exceed the target rate or every encoder
+    // starves (0-byte record, blank preview) on the 6-core Orin Nano. Env-tunable.
     constexpr int kDefaultPipelineFps = 30;
     const char* fps_env = std::getenv("SST_PIPELINE_FPS");
     int pipeline_fps = (fps_env != nullptr) ? std::atoi(fps_env) : kDefaultPipelineFps;
@@ -79,11 +83,12 @@ auto GStreamerAdapter::CreatePipeline() -> std::string {
     switch (*model_version) {
         case 1:
             gst_pipeline = "nvarguscamerasrc sensor-id=" + sensor_id + " " + isp_tuning +
-                           " ! video/x-raw(memory:NVMM),width=" + width + ",height=" + height +
-                           ",framerate=" + fps + "/1,format=NV12" +
+                           " ! video/x-raw(memory:NVMM),width=" + sensor_width +
+                           ",height=" + sensor_height + ",framerate=" + fps + "/1,format=NV12" +
                            " ! nvvidconv"
                            " ! video/x-raw,format=" +
-                           format + " ! videorate drop-only=true max-rate=" + out_fps +
+                           format + ",width=" + width + ",height=" + height +
+                           " ! videorate drop-only=true max-rate=" + out_fps +
                            " ! video/x-raw,framerate=" + out_fps + "/1" +
                            " ! appsink name=" + gst_sink_name_ + " sync=false";
             break;

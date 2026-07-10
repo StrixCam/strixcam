@@ -81,10 +81,25 @@ auto OpenCvPostprocessor::Process(const sst::capture::Frame& source,
     // Sample the PRE-correction average (BGR) for auto-white-balance. Measuring
     // before the gain means the auto-WB handler sees the raw cast, not an
     // already-corrected frame. cv::mean returns Scalar(B,G,R).
+    //
+    // White-patch (highlight-weighted): estimate the illuminant from the LIT,
+    // non-clipped pixels — the surfaces that carry the light's colour — instead of
+    // the whole-frame average. Plain grey-world is fooled whenever the scene's
+    // colour is unbalanced (e.g. green walls offset by red shadows average to
+    // neutral, so no correction is applied and the cast survives). Falls back to
+    // the whole frame when too few bright pixels qualify (a genuinely dark scene).
     if (frame_stats_ != nullptr) {
+        constexpr double kHighlightClipCeiling = 250.0;  // exclude blown highlights
+        constexpr int kMinHighlightPixels = 256;         // else fall back to full-frame
+        cv::Mat grey;
+        cv::cvtColor(resized, grey, cv::COLOR_BGR2GRAY);
+        const double luma_floor = cv::mean(grey)[0];  // brighter-than-average = lit
+        cv::Mat highlight_mask;
+        cv::inRange(grey, luma_floor, kHighlightClipCeiling, highlight_mask);
+        const bool use_highlights = cv::countNonZero(highlight_mask) >= kMinHighlightPixels;
         cv::Scalar mean;
         cv::Scalar stddev;
-        cv::meanStdDev(resized, mean, stddev);
+        cv::meanStdDev(resized, mean, stddev, use_highlights ? highlight_mask : cv::noArray());
         const auto spread = static_cast<float>((stddev[0] + stddev[1] + stddev[2]) / 3.0);
         frame_stats_->Set(static_cast<float>(mean[0]), static_cast<float>(mean[1]),
                           static_cast<float>(mean[2]), spread);
