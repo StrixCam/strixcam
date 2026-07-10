@@ -6,9 +6,16 @@
 
 namespace sst::processing {
 
-// Default output resolution: 720p (1280x720).
-inline constexpr std::uint32_t kDefaultOutputWidth{1280};
-inline constexpr std::uint32_t kDefaultOutputHeight{720};
+// Default output resolution: 1080p (1920x1080). This is the single master
+// resolution the postprocess stage emits, fanned out to every consumer (record,
+// RTMP stream, RTSP preview) with no per-consumer resize on the hot path. It was
+// 720p, which capped record + stream detail: they target 1080p and were
+// UPSCALING 720p->1080p (soft/pixelated regardless of bitrate). Emitting native
+// 1080p is the real quality lever; the VIC does the NV12->BGR convert + scale in
+// hardware, so the added CPU is the color-correction + overlay compositing at
+// 2.25x the pixels — budgeted on metal against the Argus/encode headroom.
+inline constexpr std::uint32_t kDefaultOutputWidth{1920};
+inline constexpr std::uint32_t kDefaultOutputHeight{1080};
 
 // Shipping defaults. The R/G/B gains seed NEUTRAL (1.0): the continuous
 // auto-WB loop (AutoColorService) owns them at runtime, converging each

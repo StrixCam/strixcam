@@ -155,7 +155,7 @@ TEST(RtmpLaunchTest, QueueDepthEnvOverride) {
 // the record master stays 1080p.
 TEST(RtmpLaunchTest, SevenTwentyFallbackFollowsConfigDimensions) {
     auto cfg = MakeConfig();
-    cfg.width = kWidth;   // 720p: stream scale target follows cfg dims (record master stays 1080p)
+    cfg.width = kWidth;  // 720p: stream scale target follows cfg dims (record master stays 1080p)
     cfg.height = kHeight;
     const auto launch = BuildRtmpLaunch(cfg);
     EXPECT_TRUE(Contains(launch, "width=1280")) << launch;

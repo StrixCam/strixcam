@@ -50,6 +50,67 @@ TEST(AutoColorMathTest, ChromaCastMeasuresInTheRightDirection) {
     EXPECT_GT(blueish.b, blueish.g);
 }
 
+// Builds an NV12 frame with two horizontal bands: a BRIGHT top band (luma
+// `bright_y`, chroma bright_u/bright_v) over a DARK bottom band (luma `dark_y`,
+// chroma dark_u/dark_v). Used to prove the white-patch estimator locks onto the
+// LIT band's illuminant and ignores the dark shadow.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters) test builder, args by name
+inline auto MakeTwoBandNv12(std::uint32_t width, std::uint32_t height, std::uint8_t bright_y,
+                            std::uint8_t bright_u, std::uint8_t bright_v, std::uint8_t dark_y,
+                            std::uint8_t dark_u, std::uint8_t dark_v) -> sst::capture::Frame {
+    // NOLINTEND(bugprone-easily-swappable-parameters)
+    const std::size_t y_size = static_cast<std::size_t>(width) * height;
+    const std::size_t uv_size = static_cast<std::size_t>(width) * (height / 2);
+    auto buf = std::make_shared<std::vector<std::uint8_t>>(y_size + uv_size);
+    const std::uint32_t split = height / 2;  // top half bright, bottom half dark
+    for (std::uint32_t row = 0; row < height; ++row) {
+        const std::uint8_t band_y = (row < split) ? bright_y : dark_y;
+        for (std::uint32_t col = 0; col < width; ++col) {
+            (*buf)[static_cast<std::size_t>(row) * width + col] = band_y;
+        }
+    }
+    for (std::uint32_t row = 0; row < height / 2; ++row) {
+        const bool bright = (row < split / 2);
+        const std::uint8_t chroma_u = bright ? bright_u : dark_u;
+        const std::uint8_t chroma_v = bright ? bright_v : dark_v;
+        for (std::uint32_t col = 0; col < width; col += 2) {
+            (*buf)[y_size + static_cast<std::size_t>(row) * width + col + 0] = chroma_u;
+            (*buf)[y_size + static_cast<std::size_t>(row) * width + col + 1] = chroma_v;
+        }
+    }
+    sst::capture::Frame frame;
+    frame.frame_id = 1;
+    frame.format = sst::common::PixelFormat::NV12;
+    frame.memory = sst::common::MemoryType::CPU;
+    frame.geometry = {width, height};
+    frame.captured_at = sst::common::Timestamp{sst::tests::processing::kSyntheticCaptureTime};
+    frame.planes.push_back(
+        sst::capture::FramePlane{.stride = width, .data = buf->data(), .size = y_size});
+    frame.planes.push_back(
+        sst::capture::FramePlane{.stride = width, .data = buf->data() + y_size, .size = uv_size});
+    frame.owner = std::shared_ptr<void>(buf);
+    return frame;
+}
+
+// White-patch: the illuminant estimate comes from the BRIGHT (lit) band, not the
+// whole-frame average. A green-lit top over a red-shadow bottom that averages
+// near-neutral (the grey-world failure mode we hit on metal) must still report a
+// GREEN cast so the loop actually corrects it.
+TEST(AutoColorMathTest, HighlightWeightingLocksOntoLitBandNotDarkShadow) {
+    // Bright top: green cast (U<128 and V<128 raise G, lower R and B in BT.601).
+    // Dark bottom: red cast (V>128 raises R) — offsets the green in a full-frame
+    // average, which is exactly what fooled grey-world.
+    const auto frame = MakeTwoBandNv12(64, 64, /*bright_y=*/200, /*bright_u=*/100, /*bright_v=*/100,
+                                       /*dark_y=*/36, /*dark_u=*/128, /*dark_v=*/168);
+    const auto measured = MeasureFrameMeans(frame);
+    ASSERT_TRUE(measured.has_value());
+    const ChannelMeans means = measured.value_or(ChannelMeans{});
+    // Estimator reflects the lit band -> green dominant (would be ~neutral if it
+    // averaged the whole frame).
+    EXPECT_GT(means.g, means.r) << "g=" << means.g << " r=" << means.r;
+    EXPECT_GT(means.g, means.b) << "g=" << means.g << " b=" << means.b;
+}
+
 TEST(AutoColorMathTest, StridedNv12MeasuresSameAsContiguous) {
     const ChannelMeans strided =
         MeasureFrameMeans(MakeNv12Frame(48, 48, 100, 140, 120, /*stride=*/64))

@@ -131,6 +131,24 @@ TEST_F(CaptureLaunchTest, BothSensorsGetIdenticalColorInit) {
     EXPECT_EQ(launch0, launch1);
 }
 
+// 4K supersampling: the sensor is read out at 3840x2160 (mode 0) and the VIC
+// (nvvidconv) downscales to the delivered 1080p BEFORE the CPU-side pipeline —
+// sharper + lower-noise than the 1080p60 binned mode, with no extra CPU cost
+// because downstream only ever sees the delivered 1080p.
+TEST_F(CaptureLaunchTest, ReadsSensorAt4kAndVicDownscalesToDelivered1080p) {
+    const CameraConfig cfg{};  // defaults: sensor 3840x2160, delivered 1920x1080
+    const auto launch = BuildCaptureLaunch(cfg, kModel, 0, kSink);
+    ASSERT_FALSE(launch.empty());
+    // Sensor caps (NVMM, off the argus source) carry the 4K readout geometry.
+    EXPECT_TRUE(Contains(launch, "video/x-raw(memory:NVMM),width=3840,height=2160")) << launch;
+    // nvvidconv (VIC) downscales to the delivered 1080p before the appsink.
+    const auto nvvidconv_at = launch.find("nvvidconv");
+    const auto delivered_at = launch.find("width=1920,height=1080");
+    ASSERT_NE(nvvidconv_at, std::string::npos) << launch;
+    ASSERT_NE(delivered_at, std::string::npos) << launch;
+    EXPECT_LT(nvvidconv_at, delivered_at) << launch;  // downscale is on the VIC, post-source
+}
+
 TEST_F(CaptureLaunchTest, UnparseableModelYieldsEmptyLaunch) {
     const CameraConfig cfg{};
     EXPECT_TRUE(BuildCaptureLaunch(cfg, "garbage", 0, kSink).empty());
