@@ -45,6 +45,32 @@ Run record + stream + live preview concurrently over a match-length interval, th
    live stream must never freeze during a record stop (`RecordingService::Push`
    stays `try_to_lock`-drop-frame).
 
+## Measured on metal (2026-07-09, Jetson 10.10.1.30, 6-core, IMX477 real ISP)
+
+Headless combined-load spike `scripts/spike/quality-profile-combined-load.sh`:
+real `nvarguscamerasrc` source teed to record + RTMP (both quality profile:
+no zerolatency, bframes=3/b-adapt=1/rc-lookahead=20, 14 Mbps, 3s deep leaky
+queue) + a 1080p preview + 2×480p15 proxies; RTMP pushed to
+`rtmp://10.10.1.96/live/spike`. Preset walk (record valid-moov = sustained):
+
+| Preset | Total CPU (of 600%) | Record sustained | Verdict |
+|--------|---------------------|------------------|---------|
+| `superfast` | ~533% (89%) | valid full-length moov | **SUSTAINS with headroom — chosen** |
+| `veryfast` | ~595% (99%) | valid, but pinned at ceiling | edge, no margin |
+| `faster` | ~598% (100%) | no valid moov (dropped) | FAILS |
+
+Egress confirmed: `ss` showed `ESTAB 10.10.1.30 -> 10.10.1.96:1935`; 0 Argus
+`INVALID_SETTINGS`, no RTMP/flvmux errors. **Committed defaults hold as-is:
+`superfast` + bframes=3 + rc-lookahead=20 + 14 Mbps.** `faster`/slower is not
+sustainable with all five software encodes; if a full match thermally throttles
+into drops, use the 720p-stream fallback (R10) before dropping preset quality.
+
+Caveats (still want the app path): this drives raw pipelines, not the firmware's
+BLE-commanded start/**Stop()** — so the U5 match-end-flush / "live stream never
+freezes on stop" contract is not exercised here; and the spike's preview runs
+full 1080p (conservative — the real RTSP preview may be lighter, giving slightly
+more headroom).
+
 ## After sign-off
 
 Replace the starting constants above with the measured values and capture the
