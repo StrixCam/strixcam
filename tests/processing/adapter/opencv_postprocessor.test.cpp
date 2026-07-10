@@ -74,6 +74,65 @@ TEST(OpenCvPostprocessorTest, CropAndResizeProducesExpectedDimsAndFormat) {
     EXPECT_GT(center[2], 150);  // R
 }
 
+// Builds an NV12 frame with a BRIGHT top band (bright_y, bright_u/v) over a DARK
+// bottom band (dark_y, dark_u/v) — a lit surface above a shadow. Test data
+// builder; the Y/U/V band bytes are passed explicitly by name at the call site.
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
+auto MakeTwoBandNv12(std::uint32_t width, std::uint32_t height, std::uint8_t bright_y,
+                     std::uint8_t bright_u, std::uint8_t bright_v, std::uint8_t dark_y,
+                     std::uint8_t dark_u, std::uint8_t dark_v) -> sst::capture::Frame {
+    // NOLINTEND(bugprone-easily-swappable-parameters)
+    const std::size_t y_size = static_cast<std::size_t>(width) * height;
+    const std::size_t uv_size = static_cast<std::size_t>(width) * (height / 2);
+    auto buf = std::make_shared<std::vector<std::uint8_t>>(y_size + uv_size);
+    const std::uint32_t split = height / 2;
+    for (std::uint32_t row = 0; row < height; ++row) {
+        const std::uint8_t band_y = (row < split) ? bright_y : dark_y;
+        for (std::uint32_t col = 0; col < width; ++col) {
+            (*buf)[static_cast<std::size_t>(row) * width + col] = band_y;
+        }
+    }
+    for (std::uint32_t row = 0; row < height / 2; ++row) {
+        const bool bright = (row < split / 2);
+        for (std::uint32_t col = 0; col < width; col += 2) {
+            (*buf)[y_size + static_cast<std::size_t>(row) * width + col + 0] =
+                bright ? bright_u : dark_u;
+            (*buf)[y_size + static_cast<std::size_t>(row) * width + col + 1] =
+                bright ? bright_v : dark_v;
+        }
+    }
+    sst::capture::Frame frame;
+    frame.frame_id = 1;
+    frame.format = sst::common::PixelFormat::NV12;
+    frame.memory = sst::common::MemoryType::CPU;
+    frame.geometry = {width, height};
+    frame.captured_at = sst::common::Timestamp{sst::tests::processing::kSyntheticCaptureTime};
+    frame.planes.push_back(
+        sst::capture::FramePlane{.stride = width, .data = buf->data(), .size = y_size});
+    frame.planes.push_back(
+        sst::capture::FramePlane{.stride = width, .data = buf->data() + y_size, .size = uv_size});
+    frame.owner = std::shared_ptr<void>(buf);
+    return frame;
+}
+
+// White-patch: the auto-WB frame-stats sample estimates the illuminant from the
+// LIT band, not the whole-frame average. This scene's full-frame average is
+// RED-dominant (dark red shadow drags it), but the lit band is GREEN — so a
+// green-dominant stat proves the sample is highlight-weighted, not full-frame.
+TEST(OpenCvPostprocessorTest, AutoWbSampleIsHighlightWeightedNotFullFrame) {
+    sst::processing::FrameColorStats stats;
+    OpenCvPostprocessor post{PostprocessConfig{.output_width = 64, .output_height = 64}, nullptr,
+                             &stats};
+    // Bright top: green cast (U<128,V<128 raise G). Dark bottom: red cast (V>128).
+    auto src = MakeTwoBandNv12(64, 64, /*bright_y=*/200, /*bright_u=*/100, /*bright_v=*/100,
+                               /*dark_y=*/40, /*dark_u=*/128, /*dark_v=*/170);
+    ASSERT_TRUE(post.Process(src, CropRect{0, 0, 64, 64}).has_value());
+    const auto means = stats.Get();
+    ASSERT_TRUE(means.valid);
+    EXPECT_GT(means.g, means.r) << "g=" << means.g << " r=" << means.r;  // lit band, not avg
+    EXPECT_GT(means.g, means.b) << "g=" << means.g << " b=" << means.b;
+}
+
 TEST(OpenCvPostprocessorTest, RespectsSourceStride) {
     OpenCvPostprocessor post{PostprocessConfig{.output_width = 16, .output_height = 16}};
     auto strided = MakeNv12Frame(64, 64, 100, 128, 128, /*stride=*/96);
