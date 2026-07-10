@@ -13,6 +13,16 @@ inline constexpr const char* kRtmpAppsrcName = "src";
 // when it falls behind realtime (no NVENC).
 inline constexpr int kRtmpPreEncodeQueueBuffers = 30;
 
+// Quality profile (mirrors the recorder): superfast preset, drop tune=
+// zerolatency, and spend a small reorder budget on B-frames + rate-control
+// lookahead — the biggest quality-per-bit levers with no NVENC. The reorder is
+// only a few frames, and the pre-encode queue stays SHALLOW (no deep time-based
+// buffer), so live-stream latency stays low. The operator prefers quality over
+// minimal latency for the platform stream.
+inline constexpr int kRtmpBframes = 3;
+inline constexpr int kRtmpRcLookahead = 20;
+inline constexpr const char* kRtmpDefaultPreset = "superfast";
+
 // Builds the "<url>/<key>" location rtmp2sink expects — most ingest endpoints
 // accept the stream key as the final path segment. rtmp:// and rtmps:// use the
 // same element; only the URL scheme differs.

@@ -95,4 +95,34 @@ TEST(RtmpLaunchTest, LocationAppendsKeyAsFinalSegment) {
     EXPECT_EQ(BuildRtmpLocation(cfg), "secretkey");
 }
 
+// Stream runs the QUALITY profile: superfast, tune=zerolatency dropped, B-frames
+// + lookahead added — but the pre-encode queue stays SHALLOW (no deep time-based
+// buffer) so live-stream latency stays low.
+TEST(RtmpLaunchTest, UsesQualityProfileLowBuffer) {
+    const auto launch = BuildRtmpLaunch(MakeConfig());
+    EXPECT_FALSE(Contains(launch, "tune=zerolatency"));
+    EXPECT_TRUE(Contains(launch, "bframes="));
+    EXPECT_TRUE(Contains(launch, "rc-lookahead="));
+    EXPECT_TRUE(Contains(launch, "speed-preset=superfast"));
+    EXPECT_TRUE(Contains(launch, "max-size-time=0"));  // shallow: no deep lag buffer
+    EXPECT_TRUE(Contains(launch, "voaacenc"));         // silent AAC preserved
+}
+
+// The raised platform-stream default bitrate reaches the encode when the app
+// supplies no explicit bitrate (the handler never sets it from proto).
+TEST(RtmpLaunchTest, RaisedDefaultBitrateReachesEncode) {
+    PlatformStreamConfig cfg;  // defaults, incl. bitrate_kbps = kDefaultBitrateKbps
+    cfg.url = "rtmp://ingest.example/live";
+    cfg.stream_key = "k";
+    EXPECT_TRUE(Contains(BuildRtmpLaunch(cfg), "bitrate=14000"));
+}
+
+// SST_STREAM_BITRATE_KBPS dials the stream bitrate on-device without a rebuild.
+TEST(RtmpLaunchTest, StreamBitrateEnvOverride) {
+    ::setenv("SST_STREAM_BITRATE_KBPS", "12000", /*overwrite=*/1);
+    const auto launch = BuildRtmpLaunch(MakeConfig());
+    ::unsetenv("SST_STREAM_BITRATE_KBPS");
+    EXPECT_TRUE(Contains(launch, "bitrate=12000"));
+}
+
 }  // namespace
