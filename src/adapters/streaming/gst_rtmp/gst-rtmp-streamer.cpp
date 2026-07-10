@@ -82,8 +82,11 @@ auto GstRtmpStreamer::Start(const sst::streaming::PlatformStreamConfig& config) 
     if (running_) {
         return true;
     }
-    if (config.url.empty() || config.stream_key.empty()) {
-        spdlog::error("GstRtmpStreamer::Start rejected: url/stream_key required ({})", config);
+    // Only `url` is required. The app contract inlines the stream key into the
+    // URL and sends no separate key (stream_key stays empty); BuildRtmpLocation
+    // uses the URL verbatim in that case.
+    if (config.url.empty()) {
+        spdlog::error("GstRtmpStreamer::Start rejected: url required ({})", config);
         return false;
     }
     config_ = config;

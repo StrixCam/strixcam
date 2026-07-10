@@ -95,4 +95,13 @@ TEST(RtmpLaunchTest, LocationAppendsKeyAsFinalSegment) {
     EXPECT_EQ(BuildRtmpLocation(cfg), "secretkey");
 }
 
+TEST(RtmpLaunchTest, LocationUsesUrlVerbatimWhenKeyInlined) {
+    // The app inlines the key into the URL and sends no separate stream_key —
+    // the location must be the URL as-is, never "<url>/" (a different stream).
+    auto cfg = MakeConfig();
+    cfg.url = "rtmp://ingest.example/live/mykey";
+    cfg.stream_key.clear();
+    EXPECT_EQ(BuildRtmpLocation(cfg), "rtmp://ingest.example/live/mykey");
+}
+
 }  // namespace

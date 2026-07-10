@@ -8,6 +8,14 @@
 namespace sst::adapters::streaming {
 
 auto BuildRtmpLocation(const sst::streaming::PlatformStreamConfig& cfg) -> std::string {
+    // The app contract inlines the stream key into the URL and sends no separate
+    // key, so an empty stream_key means `url` is already the complete ingest
+    // location — use it verbatim. Appending "/" here would push to "<url>/",
+    // a DIFFERENT stream name on the ingest server (e.g. nginx-rtmp sees the
+    // trailing-slash path as another stream).
+    if (cfg.stream_key.empty()) {
+        return cfg.url;
+    }
     if (cfg.url.empty()) {
         return cfg.stream_key;
     }
