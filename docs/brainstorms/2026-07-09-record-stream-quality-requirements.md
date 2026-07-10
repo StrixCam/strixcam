@@ -46,6 +46,15 @@ quality and delay are fine and are **out of scope / must not change**.
    (scoreboard composited on the stream branch). Their pixel content differs, so
    a single shared encode is rejected — the clean master is required. Net: no
    CPU-halving from sharing; the preset ceiling is tighter (still 3 encodes).
+   - **The stream overlay MUST be burned into the pixels** — streaming targets are
+     YouTube-class platforms that show exactly the sent frames, so a viewer-side /
+     client-composited overlay is impossible. This also rules out the alternative
+     of "one clean encode teed to both + client-side scoreboard." Two full
+     burned-in encodes is the settled shape.
+   - **CPU lever if two 1080p encodes can't hold realtime with preview:** the
+     stream may drop to **720p** while the record master stays **1080p** (the 2nd
+     encode is ~2× cheaper, still burned-in / platform-friendly). Prefer both
+     1080p; fall back to 720p-stream only if metal measurement forces it.
 2. **Drop `tune=zerolatency`** on the record + stream (quality-path) encodes →
    enable B-frames + lookahead + a real rate-control window. Biggest quality gain
    per bit, near-zero extra CPU; the delay budget pays for it. **Preview keeps
