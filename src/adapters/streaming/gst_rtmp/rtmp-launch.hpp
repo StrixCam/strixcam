@@ -13,6 +13,22 @@ inline constexpr const char* kRtmpAppsrcName = "src";
 // when it falls behind realtime (no NVENC).
 inline constexpr int kRtmpPreEncodeQueueBuffers = 30;
 
+// Quality-profile tuning for the stream encode (mirrors the recorder). The
+// stream drops tune=zerolatency and spends the operator's accepted 30–60 s
+// output delay on B-frames + rate-control lookahead — the biggest
+// quality-per-bit levers with no NVENC. Starting values; the slowest sustainable
+// point is measured on metal (record + stream + preview concurrently) and these
+// are the committed defaults, dialable at runtime via SST_STREAM_BITRATE_KBPS /
+// SST_STREAM_QUEUE_MS.
+inline constexpr int kRtmpBframes = 3;
+inline constexpr int kRtmpRcLookahead = 20;
+
+// Time-based deepening (ms) of the leaky pre-encode queue so a brief sub-realtime
+// dip is absorbed as buffered frames rather than dropped; leaky=downstream stays
+// the sustained-overload backstop. Kept well below a literal 30 s raw hold (RAM +
+// match-end flush time bound it). Dialable on metal via SST_STREAM_QUEUE_MS.
+inline constexpr int kRtmpPreEncodeQueueMaxTimeMs = 3000;
+
 // Builds the "<url>/<key>" location rtmp2sink expects — most ingest endpoints
 // accept the stream key as the final path segment. rtmp:// and rtmps:// use the
 // same element; only the URL scheme differs.

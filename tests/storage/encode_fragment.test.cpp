@@ -156,6 +156,62 @@ TEST(EncodeFragmentTest, EnvPresetOverrideIsUniform) {
     EXPECT_TRUE(Contains(defaulted, "speed-preset=superfast"));
 }
 
+// Quality profile (low_latency=false): tune=zerolatency is dropped and the
+// reorder-based B-frame + lookahead levers are emitted. This is what the record
+// and stream paths opt into for quality-per-bit at the cost of output latency.
+TEST(EncodeFragmentTest, QualityProfileDropsZerolatencyAddsBframes) {
+    auto params = Params();
+    params.target = {1920, 1080, 30};
+    params.low_latency = false;
+    params.bframes = 3;
+    params.rc_lookahead = 20;
+    const auto frag = BuildEncodeFragment(params);
+    EXPECT_FALSE(Contains(frag, "tune=zerolatency")) << frag;
+    EXPECT_TRUE(Contains(frag, "bframes=3")) << frag;
+    EXPECT_TRUE(Contains(frag, "rc-lookahead=20")) << frag;
+    EXPECT_TRUE(Contains(frag, "b-adapt=1")) << frag;
+    // I420 is still pinned before x264enc on the quality profile (decodability).
+    EXPECT_TRUE(Contains(frag, "format=I420")) << frag;
+}
+
+// bframes=0 on the quality profile is valid: still no zerolatency, no garbage
+// tokens (P-only but still reorder-capable rate control).
+TEST(EncodeFragmentTest, QualityProfileZeroBframesStillValid) {
+    auto params = Params();
+    params.low_latency = false;
+    params.bframes = 0;
+    params.rc_lookahead = 0;
+    const auto frag = BuildEncodeFragment(params);
+    EXPECT_FALSE(Contains(frag, "tune=zerolatency")) << frag;
+    EXPECT_TRUE(Contains(frag, "bframes=0")) << frag;
+    EXPECT_TRUE(Contains(frag, "rc-lookahead=0")) << frag;
+}
+
+// The default (unset low_latency) profile is byte-compatible with today: it
+// still carries tune=zerolatency and NO bframes token — the R8 guard that the
+// three unchanged callers (preview, proxy) are unaffected.
+TEST(EncodeFragmentTest, LowLatencyDefaultUnchanged) {
+    const auto frag = BuildEncodeFragment(Params());
+    EXPECT_TRUE(Contains(frag, "tune=zerolatency")) << frag;
+    EXPECT_FALSE(Contains(frag, "bframes=")) << frag;
+    EXPECT_FALSE(Contains(frag, "rc-lookahead=")) << frag;
+}
+
+// queue_max_time_ms deepens the leaky queue in TIME while keeping leaky=downstream
+// (the sustained-overload moov backstop). 0 keeps the historical max-size-time=0.
+TEST(EncodeFragmentTest, QueueMaxTimeDeepensQueueKeepsLeaky) {
+    auto params = Params();
+    params.queue_max_time_ms = 3000;  // 3s → 3_000_000_000 ns
+    const auto deep = BuildEncodeFragment(params);
+    EXPECT_TRUE(Contains(deep, "leaky=downstream")) << deep;
+    EXPECT_TRUE(Contains(deep, "max-size-time=3000000000")) << deep;
+
+    params.queue_max_time_ms = 0;
+    const auto shallow = BuildEncodeFragment(params);
+    EXPECT_TRUE(Contains(shallow, "leaky=downstream")) << shallow;
+    EXPECT_TRUE(Contains(shallow, "max-size-time=0")) << shallow;
+}
+
 // NOLINTEND(readability-magic-numbers)
 
 }  // namespace

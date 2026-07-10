@@ -54,12 +54,30 @@ auto BuildEncodeFragment(const EncodeFragmentParams& params) -> std::string {
     const std::string encoder_name =
         params.encoder_name.empty() ? std::string{} : fmt::format("name={} ", params.encoder_name);
 
+    // Encode profile. Low-latency (default) keeps tune=zerolatency — no reorder
+    // buffer, the mandatory preview/proxy behavior. Quality drops zerolatency and
+    // opts into B-frames + lookahead (b-adapt=1 lets x264 place them
+    // adaptively) — the quality-per-bit levers the record/stream paths pay for
+    // with output latency.
+    const std::string profile =
+        params.low_latency
+            ? std::string{"tune=zerolatency"}
+            : fmt::format("bframes={bf} b-adapt=1 rc-lookahead={rc}",
+                          fmt::arg("bf", params.bframes), fmt::arg("rc", params.rc_lookahead));
+
+    // Leaky (drop-oldest) pre-encoder queue is mandatory on every profile (moov
+    // safety). queue_max_time_ms>0 additionally deepens it in TIME so brief
+    // sub-realtime dips buffer rather than drop; leaky stays the sustained-
+    // overload backstop. 0 keeps the byte-for-byte buffer-count-only queue.
+    const int64_t queue_max_time_ns = static_cast<int64_t>(params.queue_max_time_ms) * 1'000'000;
+
     return fmt::format(
         "{cs} ! "
-        "queue leaky=downstream max-size-buffers={qbuf} max-size-time=0 max-size-bytes=0 ! "
-        "x264enc {name}speed-preset={preset} tune=zerolatency bitrate={kbps} key-int-max={gik}",
+        "queue leaky=downstream max-size-buffers={qbuf} max-size-time={qtime} max-size-bytes=0 ! "
+        "x264enc {name}speed-preset={preset} {profile} bitrate={kbps} key-int-max={gik}",
         fmt::arg("cs", BuildConvertScale(params)), fmt::arg("qbuf", params.queue_max_buffers),
-        fmt::arg("name", encoder_name), fmt::arg("preset", preset),
+        fmt::arg("qtime", queue_max_time_ns), fmt::arg("name", encoder_name),
+        fmt::arg("preset", preset), fmt::arg("profile", profile),
         fmt::arg("kbps", params.bitrate_kbps), fmt::arg("gik", key_int_max));
 }
 

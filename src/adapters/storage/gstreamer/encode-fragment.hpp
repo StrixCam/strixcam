@@ -59,6 +59,35 @@ struct EncodeFragmentParams {
     // docs/solutions/tooling-decisions/software-h264-encode-ceiling-no-nvenc-2026-07-01.md).
     int queue_max_buffers{kFragmentDefaultQueueMaxBuffers};
 
+    // Low-latency (default) vs quality encode profile. true keeps
+    // tune=zerolatency (no reorder buffer to drain at stop) — the mandatory
+    // profile for the live RTSP preview and the training proxy, where output
+    // latency is the product. false drops tune=zerolatency and opts into the
+    // reorder-based quality levers below (B-frames + lookahead); the record and
+    // stream paths use it because the operator accepts a 30–60 s output delay in
+    // exchange for markedly better quality-per-bit. The default reproduces
+    // today's byte-for-byte string for every unchanged consumer.
+    bool low_latency{true};
+
+    // B-frame count and rate-control lookahead depth, only emitted on the
+    // quality profile (low_latency == false). Both are the single biggest
+    // quality-per-bit levers tune=zerolatency forbids; ignored (not emitted)
+    // when low_latency is true so the low-latency string is unchanged. bframes=0
+    // on the quality profile is valid (P-only, but still no zerolatency).
+    int bframes{0};
+    int rc_lookahead{0};
+
+    // Time-based bound (milliseconds) on the leaky pre-encoder queue, ON TOP of
+    // queue_max_buffers. 0 (default) keeps today's buffer-count-only queue
+    // (max-size-time=0). >0 deepens the quality-path queue so a brief
+    // sub-realtime encode dip is absorbed as buffered raw frames rather than
+    // dropped — while leaky=downstream stays the backstop for SUSTAINED overload
+    // (drop, never corrupt the moov). Bounded by RAM + match-end flush time (the
+    // buffered raw backlog must encode before mp4mux closes the moov), so it
+    // stays well below a literal 30 s raw hold. See the record/stream quality
+    // rework plan + the software-h264-encode-ceiling learning.
+    int queue_max_time_ms{0};
+
     // Non-empty names the x264enc element (name=<x>) so the consumer can look
     // it up after gst_parse_launch. Empty leaves it unnamed.
     std::string_view encoder_name;
@@ -76,7 +105,9 @@ struct EncodeFragmentParams {
 // (SST_REC_BITRATE_KBPS stays recorder-only: the other consumers' bitrates are
 // app/config-supplied, not firmware defaults.)
 //
-// x264enc always runs tune=zerolatency (no reorder buffer to drain at stop) and
+// x264enc runs tune=zerolatency on the low-latency profile (params.low_latency,
+// the default — no reorder buffer to drain at stop) or B-frames + rc-lookahead
+// on the quality profile (low_latency == false, record/stream). Either way it
 // receives system-memory I420 — 4:2:0 is pinned before the encoder because BGR
 // input otherwise encodes High 4:4:4, which most decoders reject.
 [[nodiscard]] auto BuildEncodeFragment(const EncodeFragmentParams& params) -> std::string;

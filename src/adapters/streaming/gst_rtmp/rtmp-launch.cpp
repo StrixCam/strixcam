@@ -2,6 +2,8 @@
 
 #include <fmt/format.h>
 
+#include <cstdlib>
+
 #include "adapters/storage/gstreamer/encode-fragment.hpp"
 #include "domain/common/models/video-quality.hpp"
 
@@ -32,14 +34,31 @@ auto BuildRtmpLaunch(const sst::streaming::PlatformStreamConfig& cfg, bool use_v
     // record and raw branches), I420 is pinned before x264enc, and the
     // drop-oldest pre-encoder queue bounds the backlog when the software encode
     // falls behind realtime (no NVENC).
+    // Stream runs the QUALITY profile like the recorder: drop tune=zerolatency,
+    // add B-frames + lookahead, deepen the pre-encode queue in time. SST_STREAM_
+    // BITRATE_KBPS mirrors the recorder's SST_REC_BITRATE_KBPS so stream bitrate
+    // is dialable on metal without a rebuild; when unset cfg.bitrate_kbps carries
+    // the raised kDefaultBitrateKbps (StreamingHandler never sets it from proto).
+    const char* stream_bitrate_env = std::getenv("SST_STREAM_BITRATE_KBPS");
+    const int bitrate_kbps =
+        (stream_bitrate_env != nullptr) ? std::atoi(stream_bitrate_env) : cfg.bitrate_kbps;
+
+    const char* queue_ms_env = std::getenv("SST_STREAM_QUEUE_MS");
+    const int queue_max_time_ms =
+        (queue_ms_env != nullptr) ? std::atoi(queue_ms_env) : kRtmpPreEncodeQueueMaxTimeMs;
+
     const std::string fragment = sst::adapters::storage::BuildEncodeFragment({
         .input = sst::adapters::storage::EncodeInput::kBgr,
         .target = sst::common::VideoQuality{cfg.width, cfg.height, cfg.framerate},
         .framerate = cfg.framerate,
         .use_vic = use_vic,
-        .default_preset = "ultrafast",
-        .bitrate_kbps = cfg.bitrate_kbps,
+        .default_preset = "superfast",
+        .bitrate_kbps = bitrate_kbps,
         .queue_max_buffers = kRtmpPreEncodeQueueBuffers,
+        .low_latency = false,
+        .bframes = kRtmpBframes,
+        .rc_lookahead = kRtmpRcLookahead,
+        .queue_max_time_ms = queue_max_time_ms,
         .encoder_name = {},
     });
 

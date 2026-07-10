@@ -82,4 +82,33 @@ TEST(RecorderLaunchTest, VicUnsetQualityStillConvertsToI420) {
     EXPECT_FALSE(Contains(vic, "videoscale"));
 }
 
+// Record runs the QUALITY profile: no tune=zerolatency, B-frames + lookahead
+// present, superfast preset and 14 Mbps kept, the named encoder for post-parse
+// force-key-unit, and the deepened-but-leaky pre-encode queue. The clean master
+// (no overlay here) is preserved upstream in the orchestrator.
+TEST(RecorderLaunchTest, UsesQualityProfileNotZerolatency) {
+    const auto launch = BuildRecorderLaunch("/videos/m/m.mp4", {1920, 1080, 30});
+    EXPECT_FALSE(Contains(launch, "tune=zerolatency"));
+    EXPECT_TRUE(Contains(launch, "bframes="));
+    EXPECT_TRUE(Contains(launch, "rc-lookahead="));
+    EXPECT_TRUE(Contains(launch, "speed-preset=superfast"));
+    EXPECT_TRUE(Contains(launch, "bitrate=14000"));
+    EXPECT_TRUE(Contains(launch, "x264enc name=enc"));
+    EXPECT_TRUE(Contains(launch, "mp4mux"));
+    EXPECT_TRUE(Contains(launch, "queue leaky=downstream"));
+    // Deepened pre-encode buffer (time-based) for dip absorption.
+    EXPECT_FALSE(Contains(launch, "max-size-time=0 "));
+    // Still I420-pinned and is-live appsrc.
+    EXPECT_TRUE(Contains(launch, "format=I420"));
+    EXPECT_TRUE(Contains(launch, "is-live=true"));
+}
+
+// The pre-encode buffer depth is dialable on metal via SST_REC_QUEUE_MS.
+TEST(RecorderLaunchTest, QueueDepthEnvOverride) {
+    setenv("SST_REC_QUEUE_MS", "5000", /*overwrite=*/1);
+    const auto launch = BuildRecorderLaunch("/videos/m/m.mp4", {1920, 1080, 30});
+    unsetenv("SST_REC_QUEUE_MS");
+    EXPECT_TRUE(Contains(launch, "max-size-time=5000000000"));
+}
+
 }  // namespace

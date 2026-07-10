@@ -16,10 +16,16 @@ namespace sst::adapters::storage {
 namespace {
 
 // Bound the wait for mp4mux to flush its moov atom on Stop() so a stuck pipeline
-// can't hang shutdown indefinitely. Generous enough to drain a small residual
-// backlog on a slow software encode (the leaky pre-encoder queue caps how large
-// that backlog can get); a too-short wait leaves an unfinalized, unplayable MP4.
-constexpr int kFinalizeTimeoutSeconds = 10;
+// can't hang shutdown indefinitely. On the quality profile the record path now
+// runs a deepened, time-based leaky pre-encode queue (queue_max_time_ms, a few
+// seconds) so at EOS mp4mux must ENCODE that buffered raw backlog before it can
+// close the moov — the finalize wait therefore scales with the pre-encode buffer
+// depth (coupled: buffer depth ↔ this timeout ↔ RAM, per the non-blocking-sink
+// learning). 20 s covers a ~3 s buffer draining on a sub-realtime software
+// encode with margin; the leaky=downstream backstop still bounds how large the
+// backlog can grow under sustained overload, and a too-short wait leaves an
+// unfinalized, unplayable MP4.
+constexpr int kFinalizeTimeoutSeconds = 20;
 
 // Shared helper (adapters/common/gstreamer); "BGR" is this adapter's
 // historical fallback for an out-of-enum format.

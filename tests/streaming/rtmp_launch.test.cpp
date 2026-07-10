@@ -104,4 +104,62 @@ TEST(RtmpLaunchTest, LocationUsesUrlVerbatimWhenKeyInlined) {
     EXPECT_EQ(BuildRtmpLocation(cfg), "rtmp://ingest.example/live/mykey");
 }
 
+// The stream runs the QUALITY profile (U3): tune=zerolatency is dropped and
+// B-frames + lookahead are added — the same quality-per-bit levers as the
+// recorder, paid for by the operator's accepted stream delay.
+TEST(RtmpLaunchTest, UsesQualityProfileNotZerolatency) {
+    const auto launch = BuildRtmpLaunch(MakeConfig());
+    EXPECT_FALSE(Contains(launch, "tune=zerolatency")) << launch;
+    EXPECT_TRUE(Contains(launch, "bframes=")) << launch;
+    EXPECT_TRUE(Contains(launch, "rc-lookahead=")) << launch;
+    // Dip-absorption buffer: time-deepened but still leaky (moov/backlog guard).
+    EXPECT_FALSE(Contains(launch, "max-size-time=0 ")) << launch;
+    EXPECT_TRUE(Contains(launch, "queue leaky=downstream")) << launch;
+    // Silent-AAC branch preserved (video-only FLV is rejected downstream).
+    EXPECT_TRUE(Contains(launch, "voaacenc")) << launch;
+}
+
+// The raised platform-stream default bitrate (kDefaultBitrateKbps 4000→14000)
+// reaches the encode when the app supplies no explicit bitrate — the handler
+// never sets bitrate_kbps from proto, so the constant is the real control point.
+TEST(RtmpLaunchTest, RaisedDefaultBitrateReachesEncode) {
+    PlatformStreamConfig cfg;  // all defaults, incl. bitrate_kbps=14000
+    cfg.url = "rtmp://ingest.example/live";
+    cfg.stream_key = "k";
+    const auto launch = BuildRtmpLaunch(cfg);
+    EXPECT_TRUE(Contains(launch, "bitrate=14000")) << launch;
+}
+
+// SST_STREAM_BITRATE_KBPS dials stream bitrate on metal without a rebuild
+// (mirrors the recorder's SST_REC_BITRATE_KBPS); unset falls back to the config.
+TEST(RtmpLaunchTest, StreamBitrateEnvOverride) {
+    setenv("SST_STREAM_BITRATE_KBPS", "12000", /*overwrite=*/1);
+    const auto overridden = BuildRtmpLaunch(MakeConfig());
+    unsetenv("SST_STREAM_BITRATE_KBPS");
+    EXPECT_TRUE(Contains(overridden, "bitrate=12000")) << overridden;
+
+    const auto defaulted = BuildRtmpLaunch(MakeConfig());  // cfg's explicit 4000
+    EXPECT_TRUE(Contains(defaulted, "bitrate=4000")) << defaulted;
+}
+
+// The pre-encode dip buffer depth is dialable on metal via SST_STREAM_QUEUE_MS.
+TEST(RtmpLaunchTest, QueueDepthEnvOverride) {
+    setenv("SST_STREAM_QUEUE_MS", "5000", /*overwrite=*/1);
+    const auto launch = BuildRtmpLaunch(MakeConfig());
+    unsetenv("SST_STREAM_QUEUE_MS");
+    EXPECT_TRUE(Contains(launch, "max-size-time=5000000000")) << launch;
+}
+
+// 720p-stream fallback (R10) is config-only: the scale target follows
+// cfg.width/height, so no code path is needed to drop the stream to 720p while
+// the record master stays 1080p.
+TEST(RtmpLaunchTest, SevenTwentyFallbackFollowsConfigDimensions) {
+    auto cfg = MakeConfig();
+    cfg.width = kWidth;   // 720p: stream scale target follows cfg dims (record master stays 1080p)
+    cfg.height = kHeight;
+    const auto launch = BuildRtmpLaunch(cfg);
+    EXPECT_TRUE(Contains(launch, "width=1280")) << launch;
+    EXPECT_TRUE(Contains(launch, "height=720")) << launch;
+}
+
 }  // namespace

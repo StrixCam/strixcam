@@ -12,10 +12,24 @@ namespace sst::adapters::storage {
 inline constexpr int kRecorderDefaultFramerate = 30;
 inline constexpr int kRecorderBitrateKbps = 14000;
 
+// Quality-profile encode levers (record drops tune=zerolatency — the operator
+// accepts a 30–60 s output delay on the recording). B-frames + rate-control
+// lookahead are the biggest quality-per-bit gains with no NVENC; these are the
+// starting values dialed to the sustained-realtime envelope on metal (U6).
+inline constexpr int kRecorderBframes = 3;
+inline constexpr int kRecorderRcLookahead = 20;
+
 // Bound on the leaky pre-encoder queue (~0.5s at 60fps). Drop-oldest under
 // encode overload keeps the encoder realtime so the MP4 always finalizes a valid
 // moov, at the cost of dropped frames rather than a corrupt file.
 inline constexpr int kRecorderQueueMaxBuffers = 30;
+
+// Time-based deepening of the leaky pre-encoder queue (milliseconds) so brief
+// sub-realtime encode dips buffer instead of dropping frames. Well below a
+// literal 30 s raw hold (RAM + match-end flush bounded — the backlog must encode
+// before mp4mux closes the moov, so kFinalizeTimeoutSeconds covers it).
+// Overridable via SST_REC_QUEUE_MS to dial on metal without a rebuild (U4/U6).
+inline constexpr int kRecorderQueueMaxTimeMs = 3000;
 
 // Names the appsrc and encoder elements so GstContinuousRecorder can look them
 // up after gst_parse_launch.

@@ -24,6 +24,15 @@ auto BuildRecorderLaunch(const std::string& output_mp4, const sst::common::Video
     const int bitrate_kbps =
         (bitrate_env != nullptr) ? std::atoi(bitrate_env) : kRecorderBitrateKbps;
 
+    // Pre-encode buffer depth is dialable on metal (U6) without a rebuild.
+    const char* queue_ms_env = std::getenv("SST_REC_QUEUE_MS");
+    const int queue_max_time_ms =
+        (queue_ms_env != nullptr) ? std::atoi(queue_ms_env) : kRecorderQueueMaxTimeMs;
+
+    // Record runs the QUALITY profile: drop tune=zerolatency, add B-frames +
+    // lookahead, and deepen the pre-encode queue in time to ride out brief dips.
+    // The clean 1080p master is preserved upstream (the orchestrator pushes clean
+    // frames to record_sink_ before compositing) — nothing here overlays.
     const std::string fragment = BuildEncodeFragment({
         .input = EncodeInput::kBgr,
         .target = quality,
@@ -32,6 +41,10 @@ auto BuildRecorderLaunch(const std::string& output_mp4, const sst::common::Video
         .default_preset = "superfast",
         .bitrate_kbps = bitrate_kbps,
         .queue_max_buffers = kRecorderQueueMaxBuffers,
+        .low_latency = false,
+        .bframes = kRecorderBframes,
+        .rc_lookahead = kRecorderRcLookahead,
+        .queue_max_time_ms = queue_max_time_ms,
         .encoder_name = kRecorderEncoderName,
     });
 
